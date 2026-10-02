@@ -1,0 +1,358 @@
+{
+  "total_test_cases": 6,
+  "cases_with_abstentions_or_guarded_failures": 6,
+  "results": [
+    {
+      "case_id": "CASE-01-STANDARD-ADMISSION",
+      "title": "Comprehensive Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
+      "expected_behavior": "Success with Primary I50.21, Secondaries E11.9, I10. Historical PMH excluded.",
+      "status": "SUCCESS",
+      "primary_diagnosis": {
+        "code": "I50.21",
+        "description": "Acute systolic heart failure",
+        "confidence_score": 1.0
+      },
+      "secondary_diagnoses": [
+        {
+          "code": "I10",
+          "description": "Essential primary hypertension",
+          "confidence_score": 0.8798
+        },
+        {
+          "code": "E11.9",
+          "description": "Type 2 diabetes mellitus without complications",
+          "confidence_score": 0.9004
+        }
+      ],
+      "abstention_count": 0,
+      "abstentions": [],
+      "audit_trail_sample": [
+        {
+          "document_id": "CASE-01-STANDARD-ADMISSION",
+          "diagnosis_id": "cond-1",
+          "raw_term": "Acute systolic heart failure",
+          "evidence": "Acute systolic heart failure - Patient admitted with acute exacerbation of systolic congestive heart failure.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "ACUTE"
+          },
+          "classification": {
+            "role": "PRIMARY",
+            "is_billable": true,
+            "reason": "Selected as unique Primary Diagnosis (score=5.0): Documented as chief complaint or direct reason for admission (+4.0); Confirmed diagnostic certainty (+1.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "I50.21",
+              "description": "Acute systolic heart failure",
+              "score": 0.9116
+            },
+            {
+              "code": "I50.23",
+              "description": "Acute on chronic systolic heart failure",
+              "score": 0.7991
+            },
+            {
+              "code": "I50.22",
+              "description": "Chronic systolic heart failure",
+              "score": 0.6873
+            },
+            {
+              "code": "I50.31",
+              "description": "Acute diastolic heart failure",
+              "score": 0.636
+            },
+            {
+              "code": "I50.33",
+              "description": "Acute on chronic diastolic heart failure",
+              "score": 0.5549
+            },
+            {
+              "code": "I50",
+              "description": "Heart failure category header",
+              "score": 0.4764
+            },
+            {
+              "code": "I50.9",
+              "description": "Heart failure unspecified",
+              "score": 0.4586
+            },
+            {
+              "code": "I50.32",
+              "description": "Chronic diastolic heart failure",
+              "score": 0.3905
+            },
+            {
+              "code": "N17.9",
+              "description": "Acute kidney injury unspecified",
+              "score": 0.3857
+            }
+          ],
+          "selected_candidate": {
+            "code": "I50.21",
+            "description": "Acute systolic heart failure",
+            "confidence": 1.0,
+            "reason": "Candidate 'I50.21' (Acute systolic heart failure) best supported by documentation (acute acuity match).",
+            "decision": "ACCEPTED"
+          },
+          "validation": {
+            "status": "PASSED",
+            "checks": [
+              {
+                "rule_name": "CatalogExistence",
+                "passed": true,
+                "details": "Code 'I50.21' exists in local authoritative catalog."
+              },
+              {
+                "rule_name": "TerminalSpecificity",
+                "passed": true,
+                "details": "Code 'I50.21' is at terminal billable specificity."
+              }
+            ]
+          },
+          "final_result": {
+            "code": "I50.21",
+            "description": "Acute systolic heart failure",
+            "role": "PRIMARY"
+          }
+        },
+        {
+          "document_id": "CASE-01-STANDARD-ADMISSION",
+          "diagnosis_id": "cond-3",
+          "raw_term": "Essential primary hypertension",
+          "evidence": "Essential primary hypertension - Blood pressure monitored on telemetry; stable.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "SECONDARY",
+            "is_billable": true,
+            "reason": "Co-existing condition managed during admission (score=1.0): Confirmed diagnostic certainty (+1.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "I10",
+              "description": "Essential primary hypertension",
+              "score": 0.7298
+            }
+          ],
+          "selected_candidate": {
+            "code": "I10",
+            "description": "Essential primary hypertension",
+            "confidence": 0.8798,
+            "reason": "Candidate 'I10' (Essential primary hypertension) best supported by documentation (evidence overlap).",
+            "decision": "ACCEPTED"
+          },
+          "validation": {
+            "status": "PASSED",
+            "checks": [
+              {
+                "rule_name": "CatalogExistence",
+                "passed": true,
+                "details": "Code 'I10' exists in local authoritative catalog."
+              },
+              {
+                "rule_name": "TerminalSpecificity",
+                "passed": true,
+                "details": "Code 'I10' is at terminal billable specificity."
+              }
+            ]
+          },
+          "final_result": {
+            "code": "I10",
+            "description": "Essential primary hypertension",
+            "role": "SECONDARY"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
+      "title": "General Heart Failure Mention Without Subtype Specificity",
+      "expected_behavior": "Guardrail 11: Candidate ranking must align with I50.9 (unspecified) or abstain; never force I50.21.",
+      "status": "PARTIAL_SUCCESS",
+      "primary_diagnosis": null,
+      "secondary_diagnoses": [
+        {
+          "code": "I50.9",
+          "description": "Heart failure unspecified",
+          "confidence_score": 0.918
+        }
+      ],
+      "abstention_count": 1,
+      "abstentions": [
+        {
+          "diagnosis": null,
+          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
+          "detail": "No defensible primary diagnosis identified for the encounter.",
+          "stage": "CLASSIFICATION"
+        }
+      ],
+      "audit_trail_sample": [
+        {
+          "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
+          "diagnosis_id": "cond-1",
+          "raw_term": "Heart failure",
+          "evidence": "Heart failure - Patient has documented history of heart failure.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "SECONDARY",
+            "is_billable": true,
+            "reason": "Active condition managed during stay, but does not meet criteria for primary diagnosis: Confirmed diagnostic certainty (+1.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "I50",
+              "description": "Heart failure category header",
+              "score": 0.8403
+            },
+            {
+              "code": "I50.9",
+              "description": "Heart failure unspecified",
+              "score": 0.818
+            },
+            {
+              "code": "I50.22",
+              "description": "Chronic systolic heart failure",
+              "score": 0.6835
+            },
+            {
+              "code": "I50.32",
+              "description": "Chronic diastolic heart failure",
+              "score": 0.6639
+            },
+            {
+              "code": "I50.31",
+              "description": "Acute diastolic heart failure",
+              "score": 0.6617
+            },
+            {
+              "code": "I50.21",
+              "description": "Acute systolic heart failure",
+              "score": 0.6571
+            },
+            {
+              "code": "I50.23",
+              "description": "Acute on chronic systolic heart failure",
+              "score": 0.6043
+            },
+            {
+              "code": "I50.33",
+              "description": "Acute on chronic diastolic heart failure",
+              "score": 0.5812
+            }
+          ],
+          "selected_candidate": {
+            "code": "I50.9",
+            "description": "Heart failure unspecified",
+            "confidence": 0.918,
+            "reason": "Candidate 'I50.9' (Heart failure unspecified) best supported by documentation (evidence overlap).",
+            "decision": "ACCEPTED"
+          },
+          "validation": {
+            "status": "PASSED",
+            "checks": [
+              {
+                "rule_name": "CatalogExistence",
+                "passed": true,
+                "details": "Code 'I50.9' exists in local authoritative catalog."
+              },
+              {
+                "rule_name": "TerminalSpecificity",
+                "passed": true,
+                "details": "Code 'I50.9' is at terminal billable specificity."
+              }
+            ]
+          },
+          "final_result": {
+            "code": "I50.9",
+            "description": "Heart failure unspecified",
+            "role": "SECONDARY"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "CASE-03-RULED-OUT-CONDITION",
+      "title": "Ruled-Out Acute Condition (Myocardial Infarction)",
+      "expected_behavior": "Guardrail 4: Ruled-out MI cannot be coded as confirmed or primary; triggers abstention or exclusion.",
+      "status": "ABSTAINED",
+      "primary_diagnosis": null,
+      "secondary_diagnoses": [],
+      "abstention_count": 1,
+      "abstentions": [
+        {
+          "diagnosis": null,
+          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
+          "detail": "No clinical diagnosis mentions identified in document.",
+          "stage": "EXTRACTION"
+        }
+      ],
+      "audit_trail_sample": []
+    },
+    {
+      "case_id": "CASE-04-HISTORICAL-PMH-ONLY",
+      "title": "Past Medical History Without Inpatient Care (Remote CVA)",
+      "expected_behavior": "Guardrail 5: Historical-only conditions cannot automatically become coded secondary diagnoses.",
+      "status": "ABSTAINED",
+      "primary_diagnosis": null,
+      "secondary_diagnoses": [],
+      "abstention_count": 1,
+      "abstentions": [
+        {
+          "diagnosis": null,
+          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
+          "detail": "No clinical diagnosis mentions identified in document.",
+          "stage": "EXTRACTION"
+        }
+      ],
+      "audit_trail_sample": []
+    },
+    {
+      "case_id": "CASE-05-EMPTY-DOCUMENT",
+      "title": "Empty / Whitespace-Only Document",
+      "expected_behavior": "Guardrail 12: Missing/insufficient text causes explicit document-level abstention/abortion.",
+      "status": "ABSTAINED",
+      "primary_diagnosis": null,
+      "secondary_diagnoses": [],
+      "abstention_count": 1,
+      "abstentions": [
+        {
+          "diagnosis": null,
+          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
+          "detail": "Input document text and PDF source are both empty or missing.",
+          "stage": "VALIDATION"
+        }
+      ],
+      "audit_trail_sample": []
+    },
+    {
+      "case_id": "CASE-06-NON-CLINICAL-GIBBERISH",
+      "title": "Non-Clinical Gibberish Text",
+      "expected_behavior": "Guardrail 12: Insufficient clinical evidence triggers graceful extraction abstention.",
+      "status": "ABSTAINED",
+      "primary_diagnosis": null,
+      "secondary_diagnoses": [],
+      "abstention_count": 1,
+      "abstentions": [
+        {
+          "diagnosis": null,
+          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
+          "detail": "No clinical diagnosis mentions identified in document.",
+          "stage": "EXTRACTION"
+        }
+      ],
+      "audit_trail_sample": []
+    }
+  ]
+}

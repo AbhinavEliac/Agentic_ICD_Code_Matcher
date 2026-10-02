@@ -1,0 +1,12 @@
+{
+  "total_records": 25,
+  "valid_billable_count": 24,
+  "non_billable_count": 1,
+  "unique_categories_count": 11,
+  "duplicates_dropped": 0,
+  "malformed_dropped": 0,
+  "total_inclusion_terms": 40,
+  "total_exclusion_terms": 21,
+  "total_synonyms": 91,
+  "format_type": "tabular"
+}

@@ -1,0 +1,2 @@
+# Directory for persisted FAISS index files and BM25 token index cache
+# e.g., faiss_icd10.index, bm25_icd10.pkl, metadata.parquet
