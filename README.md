@@ -370,7 +370,6 @@ For every matched condition, the engine outputs deterministic structured JSON ad
 
 ```json
 {
-  "code": "I50.21",
   "description": "Acute systolic (congestive) heart failure",
   "role": "PRIMARY",
   "acuity": "ACUTE",
@@ -388,7 +387,6 @@ If an oncology morphology or procedure is matched, the corresponding `icdo` or `
 
 ```json
 {
-  "code": "C50.911",
   "description": "Malignant neoplasm of unspecified site of right female breast",
   "role": "PRIMARY",
   "acuity": "UNSPECIFIED",

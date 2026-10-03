@@ -59,4 +59,5 @@ def test_code_pdf_success_endpoint(test_client: TestClient) -> None:
     assert "document_id" in data
     assert data["status"] in ("SUCCESS", "PARTIAL_SUCCESS")
     assert data["primary_diagnosis"] is not None
-    assert data["primary_diagnosis"]["code"] == "I50.21"
+    assert data["primary_diagnosis"]["icd10cm"] == "I50.21"
+    assert "code" not in data["primary_diagnosis"]

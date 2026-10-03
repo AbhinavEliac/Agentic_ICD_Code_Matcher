@@ -795,7 +795,6 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         cpt_val = item.cpt if item.cpt else (item.code if is_cpt else None)
 
         resp = CodedDiagnosisResponse(
-            code=item.code,
             description=item.description,
             role=item.role,
             acuity=Acuity.ACUTE

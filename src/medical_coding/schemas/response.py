@@ -16,8 +16,7 @@ from medical_coding.schemas.validation import AbstentionRecord
 class CodedDiagnosisResponse(BaseModel):
     """External deterministic representation of an evidence-backed ICD code decision."""
 
-    code: str = Field(description="Authoritative ICD-10-CM code verified against catalog.")
-    description: str = Field(description="Official ICD-10-CM description.")
+    description: str = Field(description="Official clinical description matching the code.")
     role: DiagnosisRole = Field(description="PRIMARY or SECONDARY.")
     acuity: Acuity = Field(description="Acuity status (e.g. ACUTE, CHRONIC).")
     certainty: Certainty = Field(description="Certainty status (e.g. CONFIRMED, SUSPECTED).")
@@ -45,6 +44,26 @@ class CodedDiagnosisResponse(BaseModel):
         default=None,
         description="Matched CPT procedural code if matched, None if not.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def handle_legacy_code(cls, data: Any) -> Any:
+        """Allow legacy 'code' kwarg to seamlessly map to appropriate system field without being redundant in output."""
+        if isinstance(data, dict):
+            code_val = data.pop("code", None)
+            if code_val and not data.get("icd10cm") and not data.get("icdo") and not data.get("cpt"):
+                if str(code_val).startswith("M") and len(str(code_val)) >= 5:
+                    data["icdo"] = code_val
+                elif str(code_val).isdigit() and len(str(code_val)) in (4, 5):
+                    data["cpt"] = code_val
+                else:
+                    data["icd10cm"] = code_val
+        return data
+
+    @property
+    def code(self) -> str:
+        """Dynamic code property resolving primary matched code for backward compatibility."""
+        return self.icd10cm or self.icdo or self.cpt or ""
 
 
 class CodingResult(BaseModel):

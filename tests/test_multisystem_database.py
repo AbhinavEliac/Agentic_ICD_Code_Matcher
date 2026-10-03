@@ -107,16 +107,16 @@ def test_json_output_format_with_multisystem_fields() -> None:
     )
 
     dumped = diag.model_dump()
-    assert dumped["code"] == "I50.21"
+    assert "code" not in dumped
     assert dumped["icd10cm"] == "I50.21"
     assert dumped["icdo"] is None
     assert dumped["cpt"] is None
     assert dumped["is_terminal_billable"] is True
     assert dumped["confidence_score"] == 0.96
+    assert diag.code == "I50.21"
 
     # Test oncology scenario with morphology code
     diag_onc = CodedDiagnosisResponse(
-        code="C50.911",
         description="Malignant neoplasm of unspecified site of right female breast",
         role=DiagnosisRole.PRIMARY,
         acuity=Acuity.UNSPECIFIED,
@@ -130,7 +130,8 @@ def test_json_output_format_with_multisystem_fields() -> None:
     )
 
     dumped_onc = diag_onc.model_dump()
-    assert dumped_onc["code"] == "C50.911"
+    assert "code" not in dumped_onc
     assert dumped_onc["icd10cm"] == "C50.911"
     assert dumped_onc["icdo"] == "M8500.3"
     assert dumped_onc["cpt"] == "19120"
+    assert diag_onc.code == "C50.911"
