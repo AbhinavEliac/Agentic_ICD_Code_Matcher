@@ -5,8 +5,18 @@ import io
 from pathlib import Path
 from typing import Any
 
-import pdfplumber
-import pymupdf  # Modern PyMuPDF import
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
+try:
+    import pymupdf  # Modern PyMuPDF import
+except ImportError:
+    try:
+        import fitz as pymupdf
+    except ImportError:
+        pymupdf = None
 
 from medical_coding.pdf.models import ExtractedPage, PDFExtractionStatus
 from medical_coding.pdf.normalizer import DocumentNormalizer
@@ -54,41 +64,64 @@ class PDFExtractor:
 
     def extract_sync(self, source: Path | bytes | str) -> ExtractorResult:
         """Extract pages synchronously using PyMuPDF, falling back to pdfplumber if necessary."""
-        # 1. Attempt primary extraction using PyMuPDF
-        try:
-            result = self._extract_with_pymupdf(source)
-            # If PyMuPDF returned text, return its result directly
-            if result.status == PDFExtractionStatus.SUCCESS:
-                return result
-            # If PyMuPDF flagged scanned/needs OCR or empty, test pdfplumber before deciding
-            if result.status in (
-                PDFExtractionStatus.NEEDS_OCR,
-                PDFExtractionStatus.INSUFFICIENT_TEXT,
-            ):
-                logger.info("PyMuPDF yielded low text count. Attempting pdfplumber fallback...")
-                fallback_result = self._extract_with_pdfplumber(source)
-                if fallback_result.status == PDFExtractionStatus.SUCCESS:
-                    logger.info("pdfplumber fallback succeeded with valid text.")
-                    return fallback_result
-            return result
-
-        except Exception as exc:
-            logger.warning(
-                "PyMuPDF raised exception on '%s': %s. Attempting pdfplumber fallback...",
-                source,
-                exc,
-            )
+        # 1. Attempt primary extraction using PyMuPDF if available
+        if pymupdf is not None:
             try:
-                return self._extract_with_pdfplumber(source)
-            except Exception as fb_exc:
-                logger.error("Both PyMuPDF and pdfplumber failed on '%s': %s", source, fb_exc)
+                result = self._extract_with_pymupdf(source)
+                # If PyMuPDF returned text, return its result directly
+                if result.status == PDFExtractionStatus.SUCCESS:
+                    return result
+                # If PyMuPDF flagged scanned/needs OCR or empty, test pdfplumber before deciding
+                if result.status in (
+                    PDFExtractionStatus.NEEDS_OCR,
+                    PDFExtractionStatus.INSUFFICIENT_TEXT,
+                ):
+                    if pdfplumber is not None:
+                        logger.info("PyMuPDF yielded low text count. Attempting pdfplumber fallback...")
+                        fallback_result = self._extract_with_pdfplumber(source)
+                        if fallback_result.status == PDFExtractionStatus.SUCCESS:
+                            logger.info("pdfplumber fallback succeeded with valid text.")
+                            return fallback_result
+                return result
+
+            except Exception as exc:
+                logger.warning(
+                    "PyMuPDF raised exception on '%s': %s. Attempting pdfplumber fallback...",
+                    source,
+                    exc,
+                )
+                if pdfplumber is not None:
+                    try:
+                        return self._extract_with_pdfplumber(source)
+                    except Exception as fb_exc:
+                        logger.error("Both PyMuPDF and pdfplumber failed on '%s': %s", source, fb_exc)
+                        return ExtractorResult(
+                            status=PDFExtractionStatus.MALFORMED_PDF,
+                            pages=[],
+                            full_raw_text="",
+                            full_normalized_text="",
+                            error_message=f"Failed to parse PDF document: {exc}; Fallback error: {fb_exc}",
+                            extractor_used="fallback",
+                        )
                 return ExtractorResult(
                     status=PDFExtractionStatus.MALFORMED_PDF,
                     pages=[],
                     full_raw_text="",
                     full_normalized_text="",
-                    error_message=f"Failed to parse PDF document: {exc}; Fallback error: {fb_exc}",
+                    error_message=f"Failed to parse PDF document: {exc}",
+                    extractor_used="pymupdf",
                 )
+        elif pdfplumber is not None:
+            return self._extract_with_pdfplumber(source)
+        else:
+            return ExtractorResult(
+                status=PDFExtractionStatus.EXTRACTION_ERROR,
+                pages=[],
+                full_raw_text="",
+                full_normalized_text="",
+                error_message="Neither PyMuPDF nor pdfplumber is available in current environment.",
+                extractor_used="none",
+            )
 
     def _extract_with_pymupdf(self, source: Path | bytes | str) -> ExtractorResult:
         """Execute extraction using PyMuPDF (fitz)."""
@@ -245,6 +278,17 @@ class PDFExtractor:
 
     def _extract_with_pdfplumber(self, source: Path | bytes | str) -> ExtractorResult:
         """Fallback extraction using pdfplumber."""
+        if pdfplumber is None:
+            logger.info("pdfplumber library is not installed; skipping fallback extraction.")
+            return ExtractorResult(
+                status=PDFExtractionStatus.EXTRACTION_ERROR,
+                pages=[],
+                full_raw_text="",
+                full_normalized_text="",
+                error_message="pdfplumber library is not installed.",
+                extractor_used="pdfplumber",
+            )
+
         file_obj: Any = None
         pdf: Any = None
         try:
