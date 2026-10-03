@@ -130,6 +130,9 @@ class DiagnosisRecord(Base):
     confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     is_terminal_billable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     evidence_quote: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    icd10cm: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    icdo: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cpt: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -147,6 +150,9 @@ class DiagnosisRecord(Base):
             "id": self.id,
             "document_id": self.document_id,
             "code": self.code,
+            "icd10cm": self.icd10cm,
+            "icdo": self.icdo,
+            "cpt": self.cpt,
             "description": self.description,
             "role": self.role,
             "acuity": self.acuity,
@@ -235,4 +241,126 @@ class ValidationCheckModel(Base):
             "passed": self.passed,
             "details": self.details,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class PipelineThreadModel(Base):
+    """Database representation of an end-to-end pipeline execution thread for history and auditing."""
+
+    __tablename__ = "pipeline_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    document_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="RUNNING", index=True, nullable=False)
+    current_step_name: Mapped[str] = mapped_column(String(64), default="Starting", nullable=False)
+    current_step_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_steps: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    progress_pct: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    failed_step: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_traceback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_source: Mapped[str] = mapped_column(String(255), default="clinical_note.txt", nullable=False)
+    raw_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    steps: Mapped[list["PipelineExecutionStepModel"]] = relationship(
+        "PipelineExecutionStepModel",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="PipelineExecutionStepModel.step_index",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert pipeline thread record to dictionary representation."""
+        import json
+
+        result_data = None
+        if self.result_json:
+            try:
+                result_data = json.loads(self.result_json)
+            except Exception:
+                result_data = None
+
+        return {
+            "id": self.id,
+            "thread_id": self.thread_id,
+            "document_id": self.document_id,
+            "status": self.status,
+            "current_step_name": self.current_step_name,
+            "current_step_index": self.current_step_index,
+            "total_steps": self.total_steps,
+            "progress_pct": self.progress_pct,
+            "failed_step": self.failed_step,
+            "error_message": self.error_message,
+            "error_traceback": self.error_traceback,
+            "input_source": self.input_source,
+            "raw_text": self.raw_text,
+            "duration_ms": self.duration_ms,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "result": result_data,
+            "steps": [s.to_dict() for s in self.steps],
+        }
+
+
+class PipelineExecutionStepModel(Base):
+    """Database representation of an individual execution stage/node within a pipeline thread."""
+
+    __tablename__ = "pipeline_execution_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("pipeline_threads.thread_id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    step_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="SUCCESS", nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    log_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    details_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    thread: Mapped["PipelineThreadModel"] = relationship(
+        "PipelineThreadModel",
+        back_populates="steps",
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert step record to dictionary representation."""
+        import json
+
+        details = {}
+        if self.details_json:
+            try:
+                details = json.loads(self.details_json)
+            except Exception:
+                details = {}
+
+        return {
+            "id": self.id,
+            "thread_id": self.thread_id,
+            "step_name": self.step_name,
+            "step_index": self.step_index,
+            "status": self.status,
+            "duration_ms": self.duration_ms,
+            "log_message": self.log_message,
+            "details": details,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
         }

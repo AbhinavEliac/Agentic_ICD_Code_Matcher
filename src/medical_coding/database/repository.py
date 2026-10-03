@@ -12,6 +12,8 @@ from medical_coding.database.connection import get_db_session, init_db
 from medical_coding.database.models import (
     AbstentionRecordModel,
     DiagnosisRecord,
+    PipelineExecutionStepModel,
+    PipelineThreadModel,
     ProcessedDocument,
     ValidationCheckModel,
 )
@@ -118,6 +120,9 @@ class MedicalCodingRepository:
                         confidence_score=p_diag.confidence_score,
                         is_terminal_billable=p_diag.is_terminal_billable,
                         evidence_quote=p_diag.evidence_quote,
+                        icd10cm=p_diag.icd10cm or p_diag.code,
+                        icdo=p_diag.icdo,
+                        cpt=p_diag.cpt,
                         created_at=datetime.now(UTC),
                     )
                 )
@@ -135,6 +140,9 @@ class MedicalCodingRepository:
                         confidence_score=s_diag.confidence_score,
                         is_terminal_billable=s_diag.is_terminal_billable,
                         evidence_quote=s_diag.evidence_quote,
+                        icd10cm=s_diag.icd10cm or s_diag.code,
+                        icdo=s_diag.icdo,
+                        cpt=s_diag.cpt,
                         created_at=datetime.now(UTC),
                     )
                 )
@@ -379,3 +387,214 @@ class MedicalCodingRepository:
         with get_db_session() as session:
             count = session.query(ProcessedDocument).delete()
             return count
+
+    # -------------------------------------------------------------------------
+    # Pipeline Thread & Step Lifecycle Management (Persistence & Audit)
+    # -------------------------------------------------------------------------
+    def create_pipeline_thread(
+        self,
+        thread_id: str,
+        document_id: str,
+        input_source: str = "clinical_note.txt",
+        raw_text: str = "",
+        total_steps: int = 10,
+    ) -> dict[str, Any]:
+        """Initialize and persist a new pipeline execution thread with RUNNING status."""
+        with get_db_session() as session:
+            existing = session.execute(
+                select(PipelineThreadModel).where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+
+            if existing:
+                thread = existing
+                thread.document_id = document_id
+                thread.status = "RUNNING"
+                thread.current_step_name = "Starting"
+                thread.current_step_index = 0
+                thread.total_steps = total_steps
+                thread.progress_pct = 0.0
+                thread.failed_step = None
+                thread.error_message = None
+                thread.error_traceback = None
+                thread.input_source = input_source
+                thread.raw_text = raw_text
+                thread.duration_ms = 0.0
+                thread.start_time = datetime.now(UTC)
+                thread.end_time = None
+                thread.steps.clear()
+            else:
+                thread = PipelineThreadModel(
+                    thread_id=thread_id,
+                    document_id=document_id,
+                    status="RUNNING",
+                    current_step_name="Starting",
+                    current_step_index=0,
+                    total_steps=total_steps,
+                    progress_pct=0.0,
+                    failed_step=None,
+                    error_message=None,
+                    error_traceback=None,
+                    input_source=input_source,
+                    raw_text=raw_text,
+                    duration_ms=0.0,
+                    start_time=datetime.now(UTC),
+                )
+                session.add(thread)
+
+            session.flush()
+            return thread.to_dict()
+
+    def record_pipeline_step(
+        self,
+        thread_id: str,
+        step_index: int,
+        step_name: str,
+        status: str = "SUCCESS",
+        duration_ms: float = 0.0,
+        log_message: str = "",
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Record an execution node step, updating the parent thread's current step and progress."""
+        with get_db_session() as session:
+            thread = session.execute(
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+
+            if not thread:
+                return None
+
+            # Calculate progress percentage
+            pct = round(min(100.0, (step_index / max(1, thread.total_steps)) * 100.0), 1)
+            thread.current_step_name = step_name
+            thread.current_step_index = step_index
+            thread.progress_pct = pct
+
+            step = PipelineExecutionStepModel(
+                thread_id=thread_id,
+                step_name=step_name,
+                step_index=step_index,
+                status=status,
+                duration_ms=round(duration_ms, 2),
+                log_message=log_message,
+                details_json=json.dumps(details or {}),
+                start_time=datetime.now(UTC),
+                end_time=datetime.now(UTC),
+            )
+            thread.steps.append(step)
+            session.flush()
+            return step.to_dict()
+
+    def finish_pipeline_thread_success(
+        self,
+        thread_id: str,
+        result_data: dict[str, Any] | CodingResult,
+        duration_ms: float,
+    ) -> dict[str, Any] | None:
+        """Finalize a thread with SUCCESS status and archive the full output payload."""
+        payload_str = (
+            result_data.model_dump_json()
+            if hasattr(result_data, "model_dump_json")
+            else json.dumps(result_data)
+        )
+        with get_db_session() as session:
+            thread = session.execute(
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+
+            if not thread:
+                return None
+
+            thread.status = "SUCCESS"
+            thread.progress_pct = 100.0
+            thread.current_step_name = "Completed"
+            thread.current_step_index = thread.total_steps
+            thread.duration_ms = round(duration_ms, 2)
+            thread.result_json = payload_str
+            thread.end_time = datetime.now(UTC)
+            session.flush()
+            return thread.to_dict()
+
+    def finish_pipeline_thread_failure(
+        self,
+        thread_id: str,
+        failed_step: str,
+        error_message: str,
+        error_traceback: str,
+        duration_ms: float,
+    ) -> dict[str, Any] | None:
+        """Finalize a thread with FAILED status, recording the exact step and exception trace."""
+        with get_db_session() as session:
+            thread = session.execute(
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+
+            if not thread:
+                return None
+
+            thread.status = "FAILED"
+            thread.failed_step = failed_step
+            thread.error_message = error_message
+            thread.error_traceback = error_traceback
+            thread.duration_ms = round(duration_ms, 2)
+            thread.end_time = datetime.now(UTC)
+            session.flush()
+            return thread.to_dict()
+
+    def get_pipeline_thread(self, thread_id: str) -> dict[str, Any] | None:
+        """Fetch a specific execution thread with its ordered steps and result."""
+        with get_db_session() as session:
+            thread = session.execute(
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+            return thread.to_dict() if thread else None
+
+    def list_pipeline_threads(
+        self,
+        limit: int = 50,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List historical pipeline execution threads with optional status filtering."""
+        with get_db_session() as session:
+            stmt = (
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .order_by(desc(PipelineThreadModel.start_time))
+            )
+            if status and status != "ALL":
+                stmt = stmt.where(PipelineThreadModel.status == status)
+
+            stmt = stmt.limit(limit)
+            threads = session.execute(stmt).scalars().all()
+            return [t.to_dict() for t in threads]
+
+    def get_latest_pipeline_thread(self) -> dict[str, Any] | None:
+        """Fetch the most recent pipeline thread (running or finished)."""
+        with get_db_session() as session:
+            stmt = (
+                select(PipelineThreadModel)
+                .options(selectinload(PipelineThreadModel.steps))
+                .order_by(desc(PipelineThreadModel.start_time))
+                .limit(1)
+            )
+            thread = session.execute(stmt).scalar_one_or_none()
+            return thread.to_dict() if thread else None
+
+    def delete_pipeline_thread(self, thread_id: str) -> bool:
+        """Delete a thread and all associated step logs."""
+        with get_db_session() as session:
+            thread = session.execute(
+                select(PipelineThreadModel).where(PipelineThreadModel.thread_id == thread_id)
+            ).scalar_one_or_none()
+            if not thread:
+                return False
+            session.delete(thread)
+            return True
+

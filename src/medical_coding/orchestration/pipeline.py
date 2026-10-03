@@ -40,6 +40,9 @@ class MedicalCodingPipeline:
         file_path: str | Path | None = None,
         file_bytes: bytes | None = None,
         metadata: dict[str, Any] | None = None,
+        thread_id: str | None = None,
+        progress_callback: Any = None,
+        persist_thread: bool = True,
     ) -> CodingResult:
         """Execute the end-to-end coding pipeline for a single clinical document, image, or text.
 
@@ -51,63 +54,29 @@ class MedicalCodingPipeline:
             file_path: Optional path to any document/image file (.pdf, .txt, .png, .jpg).
             file_bytes: Optional raw file bytes for any supported format.
             metadata: Optional dictionary of clinical metadata.
+            thread_id: Optional unique thread ID for tracking and history persistence.
+            progress_callback: Optional callback func(step_idx, total_steps, node_name, log_message, duration_ms).
+            persist_thread: Whether to archive execution thread and step logs in SQLite.
 
         Returns:
             Deterministic CodingResult adhering to ICD guidelines.
         """
-        start_time = time.perf_counter()
         resolved_bytes = file_bytes if file_bytes is not None else pdf_bytes
         resolved_path = file_path if file_path is not None else pdf_path
 
-        initial_state = create_initial_state(
+        from medical_coding.graph.pipeline import process_clinical_document
+
+        return await process_clinical_document(
+            source=text,
             document_id=document_id,
-            raw_text=text,
-            pdf_path=str(resolved_path) if resolved_path else None,
+            pdf_path=resolved_path,
             pdf_bytes=resolved_bytes,
-            file_path=str(resolved_path) if resolved_path else None,
-            file_bytes=resolved_bytes,
-            source_type="file" if (resolved_path or resolved_bytes) else "text",
-            metadata=metadata or {},
+            metadata=metadata,
+            graph=self.graph,
+            thread_id=thread_id,
+            progress_callback=progress_callback,
+            persist_thread=persist_thread,
         )
-
-        try:
-            logger.info("Invoking coding graph for document_id=%s", document_id)
-            final_state = await self.graph.ainvoke(initial_state)
-
-            result: CodingResult | None = final_state.get("final_result")
-            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-
-            if result is None:
-                logger.warning("Pipeline completed without final_result for %s", document_id)
-                return CodingResult(
-                    document_id=document_id,
-                    status=ExecutionStatus.ABSTAINED
-                    if final_state.get("abstentions")
-                    else ExecutionStatus.ERROR,
-                    primary_diagnosis=None,
-                    secondary_diagnoses=[],
-                    abstentions=final_state.get("abstentions", []),
-                    processing_time_ms=elapsed_ms,
-                    models_used={"llm": "local_gguf", "retrieval": "local_faiss_bm25"},
-                    metadata={"error": "Workflow did not emit final_result"},
-                )
-
-            result.processing_time_ms = round(elapsed_ms, 2)
-            return result
-
-        except Exception as exc:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            logger.exception("Pipeline invocation failed for document %s: %s", document_id, exc)
-            return CodingResult(
-                document_id=document_id,
-                status=ExecutionStatus.ERROR,
-                primary_diagnosis=None,
-                secondary_diagnoses=[],
-                abstentions=[],
-                processing_time_ms=elapsed_ms,
-                models_used={},
-                metadata={"error": str(exc)},
-            )
 
     async def run_batch_documents(
         self,

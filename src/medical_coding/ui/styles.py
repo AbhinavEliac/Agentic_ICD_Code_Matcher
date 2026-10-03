@@ -292,6 +292,127 @@ code, pre, .mono-text {
     margin-right: 6px;
     margin-bottom: 4px;
 }
+
+/* Timeline & Step Oversight */
+.timeline-card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 14px;
+}
+
+.step-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid #1e293b;
+    font-size: 13px;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    transition: background 0.15s ease;
+}
+
+.step-row:hover {
+    background: rgba(30, 41, 59, 0.6);
+}
+
+.step-row-failed {
+    background: rgba(239, 68, 68, 0.12) !important;
+    border: 1px solid rgba(239, 68, 68, 0.4) !important;
+}
+
+.step-row-running {
+    background: rgba(56, 189, 248, 0.08) !important;
+    border-left: 3px solid #38bdf8 !important;
+}
+
+.step-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: #94a3b8;
+    min-width: 28px;
+}
+
+.step-title {
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+.step-latency {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #38bdf8;
+}
+
+/* Failure Diagnostic Card */
+.failure-card {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(153, 27, 27, 0.25) 100%);
+    border: 1.5px solid #ef4444;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.2);
+}
+
+.failure-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: #fca5a5;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.failure-step-badge {
+    background: #ef4444;
+    color: #ffffff;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+/* Real-time Progress Container */
+.progress-container {
+    background: linear-gradient(135deg, #0b1526 0%, #10213d 100%);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 18px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+}
+
+.active-agent-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(56, 189, 248, 0.18);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* History Thread Item */
+.thread-card {
+    background: #131d2e;
+    border: 1px solid #23354d;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    transition: all 0.2s ease;
+}
+
+.thread-card:hover {
+    border-color: #38bdf8;
+    background: #172439;
+}
 </style>
 """
 

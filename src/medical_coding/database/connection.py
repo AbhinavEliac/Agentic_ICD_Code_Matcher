@@ -98,7 +98,27 @@ def get_db_session(settings: Settings | None = None) -> Generator[Session]:
 
 
 def init_db(settings: Settings | None = None) -> None:
-    """Create all configured database tables if they do not already exist."""
+    """Create all configured database tables if they do not already exist and migrate columns."""
+    from sqlalchemy import inspect, text
+
     engine = get_engine(settings=settings)
     Base.metadata.create_all(bind=engine)
+
+    # Safely migrate new columns to diagnosis_records if it was created under previous schema
+    try:
+        inspector = inspect(engine)
+        if "diagnosis_records" in inspector.get_table_names():
+            columns = {col["name"] for col in inspector.get_columns("diagnosis_records")}
+            with engine.connect() as conn:
+                if "icd10cm" not in columns:
+                    conn.execute(text("ALTER TABLE diagnosis_records ADD COLUMN icd10cm VARCHAR(32);"))
+                if "icdo" not in columns:
+                    conn.execute(text("ALTER TABLE diagnosis_records ADD COLUMN icdo VARCHAR(32);"))
+                if "cpt" not in columns:
+                    conn.execute(text("ALTER TABLE diagnosis_records ADD COLUMN cpt VARCHAR(32);"))
+                conn.commit()
+    except Exception as exc:
+        logger.warning("Database column migration check notice: %s", exc)
+
     logger.info("Initialized database schema successfully at %s", engine.url)
+

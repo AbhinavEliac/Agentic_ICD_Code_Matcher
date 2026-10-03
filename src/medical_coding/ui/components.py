@@ -318,3 +318,123 @@ def render_pdf_page_inspector(pages: list[Any]) -> None:
             """,
             unsafe_allow_html=True,
         )
+
+
+NODE_TITLES: dict[str, str] = {
+    "validate_document": "Document Validation",
+    "extract_text": "Multimodal Normalization",
+    "extract_diagnoses": "Clinical Extraction Agent",
+    "analyze_context": "Clinical Context Analysis",
+    "classify_diagnoses": "Classification Agent",
+    "retrieve_candidates": "Multi-System Retrieval",
+    "rank_candidates": "Candidate Ranking Agent",
+    "validate_codes": "Deterministic Validation",
+    "evaluate_confidence": "Confidence & Abstention",
+    "finalize_output": "Final Output Generation",
+}
+
+
+def render_process_oversight_timeline(steps: list[dict[str, Any]], total_duration_ms: float = 0.0) -> None:
+    """Render a comprehensive process oversight timeline showing status and latency for each node."""
+    if not steps:
+        return
+
+    st.markdown("### ⏱️ Process Oversight & Node Latency Timeline")
+    st.caption("Real-time node-by-node execution auditing with microsecond time tracking and invariant verification:")
+
+    tot_ms = total_duration_ms or sum(s.get("duration_ms", 0.0) for s in steps) or 1.0
+
+    timeline_rows = []
+    for s in steps:
+        s_name = s.get("step_name", "unknown")
+        title = NODE_TITLES.get(s_name, s_name)
+        status = s.get("status", "SUCCESS")
+        dur = float(s.get("duration_ms", 0.0))
+        share = min(100.0, round((dur / tot_ms) * 100.0, 1)) if tot_ms > 0 else 0.0
+
+        if status == "SUCCESS":
+            status_badge = '<span class="pill-badge badge-success">✓ PASSED</span>'
+            row_class = "step-row"
+            status_icon = "🟢"
+        elif status == "FAILED":
+            status_badge = '<span class="pill-badge badge-danger">✗ FAILED</span>'
+            row_class = "step-row step-row-failed"
+            status_icon = "🔴"
+        else:
+            status_badge = '<span class="pill-badge badge-info">⏳ RUNNING</span>'
+            row_class = "step-row step-row-running"
+            status_icon = "🔵"
+
+        msg = s.get("log_message", "")
+
+        timeline_rows.append(
+            f"""
+            <div class="{row_class}">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span class="step-num">#{s.get('step_index', 0):02d}</span>
+                    <span style="font-size: 14px;">{status_icon}</span>
+                    <div>
+                        <span class="step-title">{title}</span>
+                        <span style="font-size: 11px; color: #94a3b8; margin-left: 8px;"><code>{s_name}</code></span>
+                        <div style="font-size: 12px; color: #cbd5e1; margin-top: 2px;">{msg}</div>
+                    </div>
+                </div>
+                <div style="text-align: right; min-width: 140px;">
+                    <span class="step-latency">{dur:.1f} ms</span>
+                    <span style="font-size: 11px; color: #64748b; margin-left: 6px;">({share}%)</span>
+                    <div style="margin-top: 4px;">{status_badge}</div>
+                </div>
+            </div>
+            """
+        )
+
+    content_html = "\n".join(timeline_rows)
+    st.markdown(
+        f"""
+        <div class="timeline-card">
+            {content_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_failure_alert(
+    failed_step: str | None,
+    error_message: str | None,
+    error_traceback: str | None = None,
+    duration_ms: float = 0.0,
+) -> None:
+    """Render a prominent diagnostic banner indicating the exact node failure and stack trace."""
+    step_key = failed_step or "unknown_step"
+    title = NODE_TITLES.get(step_key, step_key)
+    err_text = error_message or "Unknown exception during workflow execution"
+
+    st.markdown(
+        f"""
+        <div class="failure-card">
+            <div class="failure-header">
+                <span>🚨</span>
+                <span>Pipeline Execution Halted: Node Failure Encountered</span>
+            </div>
+            <div style="margin: 8px 0 12px 0;">
+                <span style="color: #cbd5e1; font-size: 13px;">Exact Failing Stage:</span>
+                <span class="failure-step-badge" style="margin-left: 6px;">{step_key}</span>
+                <span style="font-weight: 600; color: #ffffff; margin-left: 8px;">({title})</span>
+            </div>
+            <div style="background: rgba(0, 0, 0, 0.3); border-left: 3px solid #ef4444; border-radius: 4px; padding: 10px 14px; margin-bottom: 8px;">
+                <span style="font-size: 12px; font-weight: 600; color: #fca5a5;">ERROR DIAGNOSTIC:</span><br/>
+                <code style="color: #fee2e2; font-size: 13px;">{err_text}</code>
+            </div>
+            <div style="font-size: 11px; color: #94a3b8;">
+                Latency before failure: <strong>{duration_ms:.1f} ms</strong> • Prior completed stages preserved in audit database.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if error_traceback:
+        with st.expander("🛠️ View Detailed Exception Stack Trace", expanded=False):
+            st.code(error_traceback, language="python")
+
