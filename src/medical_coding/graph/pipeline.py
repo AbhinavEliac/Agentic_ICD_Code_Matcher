@@ -130,31 +130,37 @@ async def process_clinical_document(
     resolved_pdf_bytes = pdf_bytes
     source_type = "text"
 
-    if resolved_pdf_path:
-        source_type = "pdf_file"
-    elif resolved_pdf_bytes:
-        source_type = "pdf_bytes"
-    elif isinstance(source, bytes):
-        resolved_pdf_bytes = source
-        source_type = "pdf_bytes"
-    elif isinstance(source, Path):
-        resolved_pdf_path = str(source)
-        source_type = "pdf_file"
-    elif isinstance(source, str):
-        # Determine if string points to an existing file
-        p = Path(source)
-        if p.exists() and p.is_file():
-            resolved_pdf_path = str(p)
-            source_type = "pdf_file"
+    if isinstance(source, str):
+        # Determine if string points to an existing file on disk
+        if len(source) < 300:
+            try:
+                p = Path(source)
+                if p.exists() and p.is_file():
+                    resolved_pdf_path = str(p)
+                    source_type = "file"
+                else:
+                    raw_text = source
+            except Exception:
+                raw_text = source
         else:
             raw_text = source
-            source_type = "text"
+    elif isinstance(source, bytes):
+        resolved_pdf_bytes = source
+        source_type = "file_bytes"
+    elif isinstance(source, Path):
+        resolved_pdf_path = str(source)
+        source_type = "file"
+
+    if metadata and metadata.get("source_type"):
+        source_type = str(metadata["source_type"])
 
     initial_state = create_initial_state(
         document_id=doc_id,
         raw_text=raw_text,
         pdf_path=resolved_pdf_path,
         pdf_bytes=resolved_pdf_bytes,
+        file_path=resolved_pdf_path,
+        file_bytes=resolved_pdf_bytes,
         source_type=source_type,
         metadata=metadata,
     )

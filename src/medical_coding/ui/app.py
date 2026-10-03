@@ -58,15 +58,14 @@ st.markdown(get_css(), unsafe_allow_html=True)
 # Cached Singletons for Performance
 # -----------------------------------------------------------------------------
 @st.cache_resource(show_spinner=False)
-def get_cached_pipeline() -> MedicalCodingPipeline:
+def get_cached_pipeline(version: str = "v3.2") -> MedicalCodingPipeline:
     """Return a cached singleton instance of the medical coding orchestrator."""
     settings = get_settings()
     return MedicalCodingPipeline(settings=settings)
 
 
-@st.cache_resource(show_spinner=False)
 def get_cached_repository() -> MedicalCodingRepository:
-    """Return a cached singleton instance of the database repository."""
+    """Return an initialized instance of the database repository."""
     init_db()
     return MedicalCodingRepository()
 
@@ -271,8 +270,16 @@ with tab1:
     url_thread_id = st.query_params.get("thread_id")
     active_thread_id = st.session_state.get("active_thread_id") or url_thread_id
 
-    active_thread_record = repo.get_pipeline_thread(active_thread_id) if active_thread_id else None
-    recent_threads = repo.list_pipeline_threads(limit=20)
+    active_thread_record = (
+        repo.get_pipeline_thread(active_thread_id)
+        if (active_thread_id and hasattr(repo, "get_pipeline_thread"))
+        else None
+    )
+    recent_threads = (
+        repo.list_pipeline_threads(limit=20)
+        if hasattr(repo, "list_pipeline_threads")
+        else []
+    )
 
     with st.container():
         p_col1, p_col2, p_col3 = st.columns([3, 2, 1])
@@ -367,7 +374,7 @@ with tab1:
         )
 
         if uploaded_file is not None:
-            active_file_bytes = uploaded_file.read()
+            active_file_bytes = uploaded_file.getvalue()
             active_filename = uploaded_file.name
 
             with st.spinner("🔍 Auto-detecting format and parsing clinical document..."):
@@ -467,7 +474,12 @@ with tab1:
                 )
 
             if ingest_result.format != DocumentFormat.IMAGE:
-                clinical_text = st.text_area("Clinical Text Preview (Editable):", value=clinical_text, height=220)
+                clinical_text = st.text_area(
+                    "Clinical Text Preview (Editable):",
+                    value=clinical_text,
+                    height=220,
+                    key=f"txt_preview_{active_filename}",
+                )
 
     elif input_mode == "✍️ Direct Manual Clinical Text Entry":
         clinical_text = st.text_area(
@@ -1074,7 +1086,11 @@ with tab3:
             "Stored persistently in SQLite; ready for PostgreSQL migration without code changes."
         )
 
-        all_threads_list = repo.list_pipeline_threads(limit=100)
+        all_threads_list = (
+            repo.list_pipeline_threads(limit=100)
+            if hasattr(repo, "list_pipeline_threads")
+            else []
+        )
         total_th = len(all_threads_list)
         succ_th = sum(1 for t in all_threads_list if t.get("status") == "SUCCESS")
         fail_th = sum(1 for t in all_threads_list if t.get("status") == "FAILED")
@@ -1140,7 +1156,11 @@ with tab3:
             selected_th_id = st.selectbox("Select Thread ID to Inspect:", th_ids, key="sel_th_inspect")
 
             if selected_th_id:
-                sel_thread = repo.get_pipeline_thread(selected_th_id)
+                sel_thread = (
+                    repo.get_pipeline_thread(selected_th_id)
+                    if hasattr(repo, "get_pipeline_thread")
+                    else None
+                )
                 if sel_thread:
                     c_act1, c_act2, c_act3 = st.columns([2, 1, 1])
                     with c_act1:

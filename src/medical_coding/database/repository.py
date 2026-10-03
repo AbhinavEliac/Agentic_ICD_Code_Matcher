@@ -5,6 +5,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
+
+try:
+    pd.set_option("future.infer_string", False)
+except Exception:
+    pass
+
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
@@ -380,7 +386,10 @@ class MedicalCodingRepository:
                     "created_at": d["created_at"],
                 }
             )
-        return pd.DataFrame(records)
+        if not records:
+            return pd.DataFrame()
+        cols = {k: [r[k] for r in records] for k in records[0]}
+        return pd.DataFrame(cols)
 
     def purge_all_documents(self) -> int:
         """Delete all documents (primarily used for test cleanup)."""
@@ -548,13 +557,17 @@ class MedicalCodingRepository:
 
     def get_pipeline_thread(self, thread_id: str) -> dict[str, Any] | None:
         """Fetch a specific execution thread with its ordered steps and result."""
-        with get_db_session() as session:
-            thread = session.execute(
-                select(PipelineThreadModel)
-                .options(selectinload(PipelineThreadModel.steps))
-                .where(PipelineThreadModel.thread_id == thread_id)
-            ).scalar_one_or_none()
-            return thread.to_dict() if thread else None
+        try:
+            with get_db_session() as session:
+                thread = session.execute(
+                    select(PipelineThreadModel)
+                    .options(selectinload(PipelineThreadModel.steps))
+                    .where(PipelineThreadModel.thread_id == thread_id)
+                ).scalar_one_or_none()
+                return thread.to_dict() if thread else None
+        except Exception as exc:
+            logger.warning("Error fetching pipeline thread %s: %s", thread_id, exc)
+            return None
 
     def list_pipeline_threads(
         self,
@@ -562,30 +575,38 @@ class MedicalCodingRepository:
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         """List historical pipeline execution threads with optional status filtering."""
-        with get_db_session() as session:
-            stmt = (
-                select(PipelineThreadModel)
-                .options(selectinload(PipelineThreadModel.steps))
-                .order_by(desc(PipelineThreadModel.start_time))
-            )
-            if status and status != "ALL":
-                stmt = stmt.where(PipelineThreadModel.status == status)
+        try:
+            with get_db_session() as session:
+                stmt = (
+                    select(PipelineThreadModel)
+                    .options(selectinload(PipelineThreadModel.steps))
+                    .order_by(desc(PipelineThreadModel.start_time))
+                )
+                if status and status != "ALL":
+                    stmt = stmt.where(PipelineThreadModel.status == status)
 
-            stmt = stmt.limit(limit)
-            threads = session.execute(stmt).scalars().all()
-            return [t.to_dict() for t in threads]
+                stmt = stmt.limit(limit)
+                threads = session.execute(stmt).scalars().all()
+                return [t.to_dict() for t in threads]
+        except Exception as exc:
+            logger.warning("Error querying pipeline threads: %s", exc)
+            return []
 
     def get_latest_pipeline_thread(self) -> dict[str, Any] | None:
         """Fetch the most recent pipeline thread (running or finished)."""
-        with get_db_session() as session:
-            stmt = (
-                select(PipelineThreadModel)
-                .options(selectinload(PipelineThreadModel.steps))
-                .order_by(desc(PipelineThreadModel.start_time))
-                .limit(1)
-            )
-            thread = session.execute(stmt).scalar_one_or_none()
-            return thread.to_dict() if thread else None
+        try:
+            with get_db_session() as session:
+                stmt = (
+                    select(PipelineThreadModel)
+                    .options(selectinload(PipelineThreadModel.steps))
+                    .order_by(desc(PipelineThreadModel.start_time))
+                    .limit(1)
+                )
+                thread = session.execute(stmt).scalar_one_or_none()
+                return thread.to_dict() if thread else None
+        except Exception as exc:
+            logger.warning("Error fetching latest pipeline thread: %s", exc)
+            return None
 
     def delete_pipeline_thread(self, thread_id: str) -> bool:
         """Delete a thread and all associated step logs."""

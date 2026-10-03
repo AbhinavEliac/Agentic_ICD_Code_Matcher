@@ -1,7 +1,13 @@
 """Pytest shared fixtures and test configuration."""
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
+
+try:
+    pd.set_option("future.infer_string", False)
+except Exception:
+    pass
 
 from medical_coding.api.app import create_app
 from medical_coding.config.settings import Settings

@@ -101,8 +101,8 @@ models/embeddings/*
 !models/gguf/.gitkeep
 
 # Large External Datasets & User Uploads
-Database/
-database/
+/Database/
+/database/
 *.xls
 *.xlsx
 data/icd10/*.txt

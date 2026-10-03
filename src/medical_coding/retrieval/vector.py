@@ -4,7 +4,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-import faiss
+try:
+    import faiss
+    HAS_FAISS = True
+except (ImportError, Exception):
+    faiss = None
+    HAS_FAISS = False
+
 import numpy as np
 
 from medical_coding.models.base import BaseLocalEmbeddings
@@ -17,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class FAISSICDRetriever(BaseICDRetriever):
-    """Semantic vector retriever using local offline embeddings and FAISS IndexFlatIP."""
+    """Semantic vector retriever using local offline embeddings and FAISS IndexFlatIP (with NumPy fallback)."""
 
     def __init__(
         self,
@@ -26,13 +32,14 @@ class FAISSICDRetriever(BaseICDRetriever):
     ) -> None:
         self.embeddings = embeddings
         self.index_path = Path(index_path) if index_path else None
-        self._faiss_index: faiss.IndexFlatIP | None = None
+        self._faiss_index: Any = None
+        self._matrix: np.ndarray | None = None
         self._records: list[ICDCodeRecord] = []
         self._dimension: int = 0
 
     @property
     def is_indexed(self) -> bool:
-        return self._faiss_index is not None and len(self._records) > 0
+        return (self._faiss_index is not None or self._matrix is not None) and len(self._records) > 0
 
     def build_index(self, records: list[ICDCodeRecord], batch_size: int = 64) -> None:
         """Embed descriptions and build FAISS IndexFlatIP over authoritative records."""
@@ -51,41 +58,63 @@ class FAISSICDRetriever(BaseICDRetriever):
 
         matrix = np.array(all_embeddings, dtype=np.float32)
         # Ensure L2-normalized so inner product equals cosine similarity
-        faiss.normalize_L2(matrix)
-
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        matrix = matrix / norms
         self._dimension = matrix.shape[1]
-        self._faiss_index = faiss.IndexFlatIP(self._dimension)
-        self._faiss_index.add(matrix)
+        self._matrix = matrix
 
-        logger.info(
-            "Compiled FAISS IndexFlatIP with %d vectors (dimension %d).",
-            self._faiss_index.ntotal,
-            self._dimension,
-        )
+        if HAS_FAISS and faiss is not None:
+            try:
+                faiss_mat = np.ascontiguousarray(matrix, dtype=np.float32)
+                self._faiss_index = faiss.IndexFlatIP(self._dimension)
+                self._faiss_index.add(faiss_mat)
+                logger.info(
+                    "Compiled FAISS IndexFlatIP with %d vectors (dimension %d).",
+                    self._faiss_index.ntotal,
+                    self._dimension,
+                )
+            except Exception as e:
+                logger.warning("FAISS indexing failed (%s), falling back to NumPy matrix.", e)
+                self._faiss_index = None
+        else:
+            logger.info("Using NumPy matrix vector index with %d vectors (dim %d).", len(matrix), self._dimension)
 
     def retrieve(self, query: str, top_k: int = 15) -> list[ICDCandidate]:
-        """Embed query and search nearest semantic neighbors in local FAISS index.
+        """Embed query and search nearest semantic neighbors in local FAISS or NumPy index.
 
         Scoring Calculation:
             Cosine similarity via L2-normalized Inner Product, clamped to [0.0, 1.0].
         """
         if not self.is_indexed:
-            raise RuntimeError("FAISS vector index has not been built or loaded.")
+            raise RuntimeError("FAISS/vector index has not been built or loaded.")
 
         normalized_query = normalize_clinical_query(query)
         if not normalized_query.strip():
             return []
 
         raw_vec = self.embeddings.embed_query(normalized_query)
-        query_matrix = np.array([raw_vec], dtype=np.float32)
-        faiss.normalize_L2(query_matrix)
+        q_vec = np.array(raw_vec, dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm > 0:
+            q_vec = q_vec / q_norm
 
-        assert self._faiss_index is not None
         k_search = min(top_k, len(self._records))
-        distances, indices = self._faiss_index.search(query_matrix, k_search)
+
+        if self._faiss_index is not None and HAS_FAISS and faiss is not None:
+            query_matrix = np.array([q_vec], dtype=np.float32)
+            distances, indices = self._faiss_index.search(query_matrix, k_search)
+            sim_scores = distances[0]
+            sim_indices = indices[0]
+        elif self._matrix is not None:
+            scores = np.dot(self._matrix, q_vec)
+            sim_indices = np.argsort(scores)[::-1][:k_search]
+            sim_scores = scores[sim_indices]
+        else:
+            return []
 
         candidates: list[ICDCandidate] = []
-        for sim, idx in zip(distances[0], indices[0], strict=False):
+        for sim, idx in zip(sim_scores, sim_indices, strict=False):
             if idx < 0 or idx >= len(self._records):
                 continue
 
@@ -98,7 +127,7 @@ class FAISSICDRetriever(BaseICDRetriever):
                     code=record.code,
                     description=record.description,
                     retrieval_score=norm_sim,
-                    retrieval_method="faiss",
+                    retrieval_method="faiss" if self._faiss_index is not None else "vector_numpy",
                     is_valid_billable=record.is_valid_billable,
                     semantic_score=norm_sim,
                     category=record.category,
@@ -119,8 +148,10 @@ class FAISSICDRetriever(BaseICDRetriever):
         index_file = target_dir / "faiss.index"
         records_file = target_dir / "faiss_records.json"
 
-        assert self._faiss_index is not None
-        faiss.write_index(self._faiss_index, str(index_file))
+        if self._faiss_index is not None and HAS_FAISS and faiss is not None:
+            faiss.write_index(self._faiss_index, str(index_file))
+        elif self._matrix is not None:
+            np.save(target_dir / "embeddings_matrix.npy", self._matrix)
 
         metadata: dict[str, Any] = {
             "dimension": self._dimension,
@@ -130,7 +161,7 @@ class FAISSICDRetriever(BaseICDRetriever):
         with open(records_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        logger.info("Saved FAISS index to %s and metadata to %s", index_file, records_file)
+        logger.info("Saved FAISS/vector index to %s and metadata to %s", target_dir, records_file)
 
     def load(self, index_dir: Path | str) -> None:
         """Load FAISS index and metadata from disk."""
@@ -138,21 +169,28 @@ class FAISSICDRetriever(BaseICDRetriever):
         index_file = target_dir / "faiss.index"
         records_file = target_dir / "faiss_records.json"
 
-        if not index_file.exists():
-            raise FileNotFoundError(f"FAISS index file not found at {index_file}")
         if not records_file.exists():
             raise FileNotFoundError(f"FAISS records metadata file not found at {records_file}")
 
-        self._faiss_index = faiss.read_index(str(index_file))
-        self._dimension = self._faiss_index.d
+        if index_file.exists() and HAS_FAISS and faiss is not None:
+            try:
+                self._faiss_index = faiss.read_index(str(index_file))
+                self._dimension = self._faiss_index.d
+            except Exception as e:
+                logger.warning("Failed to read FAISS binary index (%s). Checking matrix...", e)
+                self._faiss_index = None
+
+        if self._faiss_index is None and (target_dir / "embeddings_matrix.npy").exists():
+            self._matrix = np.load(target_dir / "embeddings_matrix.npy")
+            self._dimension = self._matrix.shape[1]
 
         with open(records_file, encoding="utf-8") as f:
             metadata = json.load(f)
 
         self._records = [ICDCodeRecord.model_validate(r) for r in metadata["records"]]
         logger.info(
-            "Loaded FAISS index from %s (%d vectors, dim %d)",
-            index_file,
-            self._faiss_index.ntotal,
+            "Loaded FAISS/vector index from %s (%d records, dim %d)",
+            index_dir,
+            len(self._records),
             self._dimension,
         )
