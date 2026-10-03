@@ -23,5 +23,7 @@ for venv_name in ("env", ".venv", "venv"):
             if sp.exists() and str(sp) not in sys.path:
                 sys.path.insert(0, str(sp))
 
-# Import and execute main Streamlit UI
-from medical_coding.ui.app import *  # noqa: E402, F401, F403
+# Import and execute main Streamlit UI reliably across browser refreshes
+import runpy
+
+runpy.run_module("medical_coding.ui.app", run_name="__main__")
