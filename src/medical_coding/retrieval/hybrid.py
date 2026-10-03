@@ -56,6 +56,7 @@ class HybridICDRetriever(BaseICDRetriever):
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
+        system: str | None = None,
     ) -> list[ICDCandidate]:
         """Execute hybrid search, merge candidates, score, deduplicate, and rank.
 
@@ -63,6 +64,7 @@ class HybridICDRetriever(BaseICDRetriever):
             query: Normalized clinical diagnosis or condition description.
             top_k: Maximum candidate pool size to return (defaults to configured top_k).
             min_score: Minimum threshold override; candidates below this are pruned.
+            system: Optional filter to restrict candidates to a specific coding system ('ICD-10-CM', 'ICD-O', 'CPT').
 
         Returns:
             Ranked list of ICDCandidate objects sourced exclusively from the local catalog.
@@ -87,6 +89,11 @@ class HybridICDRetriever(BaseICDRetriever):
             # Enforce local catalog existence if catalog is attached
             if self.catalog and not self.catalog.is_valid_code(hit.code):
                 continue
+            cat_rec = self.catalog.get_by_code(hit.code) if self.catalog else None
+            hit_system = getattr(hit, "coding_system", None) or (cat_rec.coding_system if cat_rec else "ICD-10-CM")
+            if system and hit_system != system:
+                continue
+
             merged[hit.code] = {
                 "code": hit.code,
                 "description": hit.description,
@@ -94,11 +101,17 @@ class HybridICDRetriever(BaseICDRetriever):
                 "category": hit.category,
                 "lexical_score": hit.retrieval_score,
                 "semantic_score": 0.0,
+                "coding_system": hit_system,
             }
 
         for hit in vector_hits:
             if self.catalog and not self.catalog.is_valid_code(hit.code):
                 continue
+            cat_rec = self.catalog.get_by_code(hit.code) if self.catalog else None
+            hit_system = getattr(hit, "coding_system", None) or (cat_rec.coding_system if cat_rec else "ICD-10-CM")
+            if system and hit_system != system:
+                continue
+
             if hit.code in merged:
                 merged[hit.code]["semantic_score"] = hit.retrieval_score
                 # Keep most descriptive text
@@ -112,6 +125,7 @@ class HybridICDRetriever(BaseICDRetriever):
                     "category": hit.category,
                     "lexical_score": 0.0,
                     "semantic_score": hit.retrieval_score,
+                    "coding_system": hit_system,
                 }
 
         if not merged:
@@ -151,6 +165,7 @@ class HybridICDRetriever(BaseICDRetriever):
                     semantic_score=round(sem, 4),
                     lexical_score=round(lex, 4),
                     category=info["category"],
+                    coding_system=info.get("coding_system", "ICD-10-CM"),
                 )
             )
 
@@ -162,10 +177,25 @@ class HybridICDRetriever(BaseICDRetriever):
         if not top_candidates:
             logger.info(
                 "Hybrid retrieval: %d candidates found but none met min_score threshold %.2f for query '%s' (abstaining).",
-                len(merged),
+                len(candidate_pool),
                 threshold,
                 clean_query,
             )
-            return []
-
         return top_candidates
+
+    def retrieve_multi_system(
+        self,
+        query: str,
+        top_k: int = 5,
+        min_score: float | None = None,
+    ) -> dict[str, list[ICDCandidate]]:
+        """Retrieve candidates partitioned by coding system (ICD-10-CM, ICD-O, CPT).
+
+        Returns:
+            Dictionary with keys 'ICD-10-CM', 'ICD-O', and 'CPT' containing top matching candidates.
+        """
+        return {
+            "ICD-10-CM": self.retrieve(query, top_k=top_k, min_score=min_score, system="ICD-10-CM"),
+            "ICD-O": self.retrieve(query, top_k=top_k, min_score=min_score, system="ICD-O"),
+            "CPT": self.retrieve(query, top_k=top_k, min_score=min_score, system="CPT"),
+        }

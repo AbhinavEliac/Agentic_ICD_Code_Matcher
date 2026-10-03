@@ -515,6 +515,10 @@ with tab1:
                 # Deterministic Rule Audit Trail
                 render_validation_audit_trail(coding_result.primary_diagnosis, coding_result.secondary_diagnoses)
 
+                # Interactive JSON Viewer Expander
+                with st.expander("🔍 View Structured JSON Response Payload", expanded=False):
+                    st.json(coding_result.model_dump())
+
                 # Download Buttons
                 st.markdown("---")
                 d_col1, d_col2 = st.columns(2)
@@ -533,7 +537,10 @@ with tab1:
                         export_rows.append({
                             "Encounter": document_id,
                             "Role": "PRIMARY",
-                            "ICD_Code": coding_result.primary_diagnosis.code,
+                            "Code": coding_result.primary_diagnosis.code,
+                            "ICD10CM": coding_result.primary_diagnosis.icd10cm,
+                            "ICD_O": coding_result.primary_diagnosis.icdo,
+                            "CPT": coding_result.primary_diagnosis.cpt,
                             "Description": coding_result.primary_diagnosis.description,
                             "Confidence": coding_result.primary_diagnosis.confidence_score,
                             "Billable": coding_result.primary_diagnosis.is_terminal_billable,
@@ -543,7 +550,10 @@ with tab1:
                         export_rows.append({
                             "Encounter": document_id,
                             "Role": "SECONDARY",
-                            "ICD_Code": s.code,
+                            "Code": s.code,
+                            "ICD10CM": s.icd10cm,
+                            "ICD_O": s.icdo,
+                            "CPT": s.cpt,
                             "Description": s.description,
                             "Confidence": s.confidence_score,
                             "Billable": s.is_terminal_billable,

@@ -33,6 +33,18 @@ class CodedDiagnosisResponse(BaseModel):
         default=True,
         description="Confirms code is at terminal specificity required for submission.",
     )
+    icd10cm: str | None = Field(
+        default=None,
+        description="Matched ICD-10-CM code if matched, None if not.",
+    )
+    icdo: str | None = Field(
+        default=None,
+        description="Matched ICD-O oncology/morphology code if matched, None if not.",
+    )
+    cpt: str | None = Field(
+        default=None,
+        description="Matched CPT procedural code if matched, None if not.",
+    )
 
 
 class CodingResult(BaseModel):

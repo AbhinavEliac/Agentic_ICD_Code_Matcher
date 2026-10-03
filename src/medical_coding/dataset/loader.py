@@ -446,14 +446,161 @@ class CMSOrderFileLoader(BaseICDDatasetLoader):
         return self._records, self._stats
 
 
+class ExcelWorkbookLoader(BaseICDDatasetLoader):
+    """Parses multi-sheet medical code workbooks containing ICD-10-CM, ICD-O, and CPT datasets.
+
+    Supports reading .xlsx and .xls workbooks (such as Database_2.xlsx and Database_1.xls),
+    segregating codes into their respective coding systems ('ICD-10-CM', 'ICD-O', 'CPT'),
+    normalizing whitespace, and populating authoritative ICDCodeRecord models.
+    """
+
+    def __init__(self, file_or_dir_path: Path | str, **kwargs: Any) -> None:
+        p = Path(file_or_dir_path)
+        if p.is_dir():
+            target = p / "Database_2.xlsx"
+            if not target.exists():
+                candidates = sorted(list(p.glob("*.xlsx")) + list(p.glob("*.xls")))
+                if candidates:
+                    target = candidates[0]
+                else:
+                    raise FileNotFoundError(f"No Excel workbooks found in {p}")
+            self.file_path = target
+        else:
+            self.file_path = p
+
+        self._records: dict[str, ICDCodeRecord] = {}
+        self._stats: ICDDatasetStats | None = None
+        self._is_loaded: bool = False
+
+    def get_total_records(self) -> int:
+        return len(self._records)
+
+    def get_stats(self) -> ICDDatasetStats | None:
+        return self._stats
+
+    def load(self) -> tuple[dict[str, ICDCodeRecord], ICDDatasetStats]:
+        if self._is_loaded:
+            return self._records, self._stats or ICDDatasetStats(
+                total_records=len(self._records),
+                valid_billable_count=len(self._records),
+                non_billable_count=0,
+                unique_categories_count=0,
+                format_type="excel_workbook",
+            )
+
+        import re
+
+        import pandas as pd
+
+        logger.info("Opening Excel workbook for multi-system clinical ingestion: %s", self.file_path)
+        xl = pd.ExcelFile(self.file_path)
+
+        records: dict[str, ICDCodeRecord] = {}
+        duplicates_count = 0
+        malformed_count = 0
+        categories: set[str] = set()
+
+        for sheet_name in xl.sheet_names:
+            logger.info("Parsing sheet [%s] from %s", sheet_name, self.file_path.name)
+            df = xl.parse(sheet_name)
+            if df.empty or "code" not in df.columns or "description" not in df.columns:
+                logger.warning("Skipping sheet [%s]: missing code or description column", sheet_name)
+                continue
+
+            is_cpt_sheet = "cpt" in sheet_name.lower()
+
+            for _, row in df.iterrows():
+                if "active_yesno" in row and pd.notna(row["active_yesno"]):
+                    try:
+                        if int(row["active_yesno"]) == 0:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                raw_code = str(row["code"]).strip() if pd.notna(row["code"]) else ""
+                raw_desc = str(row["description"]).strip() if pd.notna(row["description"]) else ""
+
+                if not raw_code or not raw_desc or raw_code.lower() == "nan" or raw_desc.lower() == "nan":
+                    malformed_count += 1
+                    continue
+
+                if is_cpt_sheet or (raw_code.isdigit() and len(raw_code) in (4, 5)):
+                    coding_system = "CPT"
+                    cat_id = row.get("ichi_code_cat1_id", "")
+                    cat = f"CPT-{cat_id}" if pd.notna(cat_id) else "CPT"
+                elif re.match(r"^M[89][0-9]{3}", raw_code, re.IGNORECASE):
+                    coding_system = "ICD-O"
+                    cat = "ICD-O-Morphology"
+                else:
+                    coding_system = "ICD-10-CM"
+                    cat3 = row.get("icd10_code_cat3", "")
+                    cat = str(cat3).strip() if pd.notna(cat3) else raw_code[:3]
+
+                formatted_code = format_icd_code(raw_code)
+                lookup_key = formatted_code
+
+                if lookup_key in records:
+                    duplicates_count += 1
+                    continue
+
+                categories.add(cat)
+                rec = ICDCodeRecord(
+                    code=formatted_code,
+                    unformatted_code=unformat_icd_code(raw_code),
+                    description=raw_desc,
+                    short_description=raw_desc,
+                    long_description=raw_desc,
+                    is_valid_billable=True,
+                    category=cat,
+                    coding_system=coding_system,
+                    source_metadata={
+                        "source": "ExcelWorkbook",
+                        "sheet": sheet_name,
+                        "file": str(self.file_path.name),
+                        "row_id": str(row.get("id", "")),
+                    },
+                )
+                records[lookup_key] = rec
+
+        billable_count = sum(1 for r in records.values() if r.is_valid_billable)
+        stats = ICDDatasetStats(
+            total_records=len(records),
+            valid_billable_count=billable_count,
+            non_billable_count=len(records) - billable_count,
+            unique_categories_count=len(categories),
+            duplicates_dropped=duplicates_count,
+            malformed_dropped=malformed_count,
+            format_type="excel_workbook",
+        )
+
+        self._records = records
+        self._stats = stats
+        self._is_loaded = True
+
+        logger.info(
+            "Excel workbook successfully ingested: %d codes (%d categories, %d duplicates filtered)",
+            stats.total_records,
+            stats.unique_categories_count,
+            stats.duplicates_dropped,
+        )
+
+        return self._records, self._stats
+
+
 def load_icd_dataset(
     file_path: Path | str, **kwargs: Any
 ) -> tuple[dict[str, ICDCodeRecord], ICDDatasetStats]:
     """Factory function detecting format from file extension and returning loaded records and stats."""
     path = Path(file_path)
+    if path.is_dir() and (list(path.glob("*.xlsx")) or list(path.glob("*.xls"))):
+        loader: BaseICDDatasetLoader = ExcelWorkbookLoader(path, **kwargs)
+        return loader.load()
+
     suffix = path.suffix.lower()
-    if suffix in {".csv", ".tsv", ".json"}:
-        loader: BaseICDDatasetLoader = TabularICDLoader(path, **kwargs)
+    if suffix in {".xlsx", ".xls"}:
+        loader = ExcelWorkbookLoader(path, **kwargs)
+    elif suffix in {".csv", ".tsv", ".json"}:
+        loader = TabularICDLoader(path, **kwargs)
     elif suffix in {".txt"}:
         loader = CMSOrderFileLoader(path)
     else:

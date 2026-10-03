@@ -272,88 +272,141 @@ Agentic_ICD_Code_Matcher/
 
 ## 6. Installation & Environment Setup
 
-### Prerequisites
-- **Operating System**: Windows 10/11, macOS, or Linux (Ubuntu 22.04+)
-- **Python**: Version `3.13+` (recommended: `3.13.x`)
-- **System Memory**: Minimum 8 GB RAM (16 GB recommended for 7B GGUF models)
-- **Disk Space**: ~500 MB for base dependencies, ~4 GB for GGUF model weights
+### 🚀 Automated Quick-Start Installers (Windows & Linux)
+
+The repository provides cross-platform installer scripts that automate the entire setup:
+- Creates a clean Python virtual environment (`env`)
+- Upgrades `pip`, `setuptools`, and `wheel`
+- Installs all dependencies from `requirements.txt`
+- Configures `.env` from `.env.example`
+- Detects the local `Database/` folder (ICD-10-CM, ICD-O, CPT) and builds/verifies FAISS & BM25 search indexes
+
+> [!IMPORTANT]
+> **Strict Separation of Concerns**: The installer scripts **only** install and configure the environment. They **do not** start the application. Use the dedicated runner scripts to start the app.
+
+#### Windows (Batch or PowerShell):
+```cmd
+:: Using Command Prompt (Batch)
+install.bat
+```
+or
+```powershell
+# Using PowerShell
+.\install.ps1
+```
+
+#### Linux / macOS:
+```bash
+chmod +x install.sh run.sh
+./install.sh
+```
 
 ---
 
-### Step 1: Clone the Repository
+### 🏃 Dedicated Runners (Windows & Linux)
+
+Once installed, use the runner script to start the interface:
+
+#### Windows:
+```cmd
+:: Launch Streamlit Web UI (Default)
+run.bat
+
+:: Or launch in PowerShell
+.\run.ps1
+
+:: Launch FastAPI REST Service
+run.bat --api
+:: Or in PowerShell: .\run.ps1 -Api
+```
+
+#### Linux / macOS:
 ```bash
+:: Launch Streamlit Web UI
+./run.sh
+
+:: Launch FastAPI REST Service
+./run.sh --api
+```
+
+---
+
+### Manual Setup (Alternative)
+
+```bash
+# Clone the repository
 git clone https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher.git
 cd Agentic_ICD_Code_Matcher
-```
 
----
-
-### Step 2: Create and Activate Virtual Environment
-
-**Windows (PowerShell):**
-```powershell
+# Create virtual environment
 python -m venv env
-.\env\Scripts\Activate.ps1
-```
 
-**Linux / macOS:**
-```bash
-python3 -m venv env
+# Activate (Windows)
+.\env\Scripts\activate
+# Activate (Linux/macOS)
 source env/bin/activate
-```
 
----
-
-### Step 3: Install Dependencies
-```bash
-pip install --upgrade pip
+# Install dependencies
+pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
-```
 
----
-
-### Step 4: Configure Environment Variables
-Copy the example environment configuration:
-```bash
+# Copy environment template
 cp .env.example .env
 ```
-Key settings in `.env`:
-```ini
-# Environment
-ENVIRONMENT=development
-LOG_LEVEL=INFO
-
-# Concurrency
-MAX_BATCH_CONCURRENCY=10
-LLM_MAX_CONCURRENCY=1
-
-# Local Retrieval Paths
-ICD_DATA_PATH=./data/icd10/sample_hospital_icd.csv
-INDEX_DIR=./data/indexes
-
-# Offline Model Paths
-GGUF_MODEL_PATH=./models/gguf/mistral-7b-instruct-v0.2.Q4_K_M.gguf
-EMBEDDING_MODEL_PATH=./models/embeddings/bge-small-en-v1.5
-ALLOW_MODEL_DOWNLOAD=false
-
-# Persistence
-DATABASE_URL=sqlite:///./data/medical_coding.db
-```
 
 ---
 
-## 7. Dataset Ingestion & Offline Indexing
+## 7. Local Database & Authoritative Multi-System Matching
 
-The repository comes pre-packaged with verified sample indexes in `data/indexes/` so you can test immediately. To build or re-index your own hospital ICD catalog (CSV, TSV, or CMS text format):
+The engine performs zero-hallucination vector and semantic matching against authoritative medical coding workbooks located in the local `Database/` directory (`Database_1.xls` / `Database_2.xlsx`):
+- **ICD-10-CM**: 74,700+ authoritative clinical diagnosis codes
+- **ICD-O**: 800+ oncology / morphology codes (`^M[89][0-9]{3}`)
+- **CPT**: 7,700+ current procedural terminology codes
+- **Privacy & Security**: The `Database/` directory is strictly kept in local storage and is ignored in version control (`.gitignore`) with zero remote exposure.
 
-```bash
-python scripts/index_icd.py --source data/icd10/sample_hospital_icd.csv --output data/indexes
+### Standardized Structured JSON Output Format
+
+For every matched condition, the engine outputs deterministic structured JSON adhering strictly to:
+
+```json
+{
+  "code": "I50.21",
+  "description": "Acute systolic (congestive) heart failure",
+  "role": "PRIMARY",
+  "acuity": "ACUTE",
+  "certainty": "CONFIRMED",
+  "evidence_quote": "Patient presented with acute decompensated systolic heart failure.",
+  "confidence_score": 0.96,
+  "is_terminal_billable": true,
+  "icd10cm": "I50.21",
+  "icdo": null,
+  "cpt": null
+}
 ```
 
-Options:
-- `--source`: Path to raw CSV/TXT containing columns `code`, `description`, `billable`, `excludes1`
-- `--output`: Destination directory for FAISS vector index and BM25 caches
-- `--force-fast-embeddings`: Generates deterministic fast local embeddings without downloading neural weights
+If an oncology morphology or procedure is matched, the corresponding `icdo` or `cpt` field is populated with the authoritative local code (or `null` if not matched):
+
+```json
+{
+  "code": "C50.911",
+  "description": "Malignant neoplasm of unspecified site of right female breast",
+  "role": "PRIMARY",
+  "acuity": "UNSPECIFIED",
+  "certainty": "CONFIRMED",
+  "evidence_quote": "Biopsy confirmed right breast infiltrating duct carcinoma.",
+  "confidence_score": 0.94,
+  "is_terminal_billable": true,
+  "icd10cm": "C50.911",
+  "icdo": "M8500.3",
+  "cpt": "19120"
+}
+```
+
+### Building & Re-indexing Search Indexes
+```bash
+python scripts/index_icd.py --force-fast-embeddings
+```
+The indexing script automatically checks for `Database/Database_2.xlsx`, ingests all sheets, and serializes the BM25 and FAISS vector index artifacts directly into `data/indexes/`.
 
 ---
 

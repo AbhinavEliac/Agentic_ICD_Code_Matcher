@@ -8,12 +8,16 @@ from medical_coding.utils.text import format_icd_code, unformat_icd_code
 
 
 class ICDCodeRecord(BaseModel):
-    """Authoritative representation of a single code in the local ICD-10-CM dataset."""
+    """Authoritative representation of a single code in the local clinical dataset."""
 
     code: str = Field(
-        min_length=3,
-        max_length=8,
-        description="Formatted ICD-10-CM code (e.g. 'I50.21', 'E11.9').",
+        min_length=2,
+        max_length=12,
+        description="Formatted clinical code (e.g. 'I50.21', 'M8000.0', '1404').",
+    )
+    coding_system: str = Field(
+        default="ICD-10-CM",
+        description="Coding system of this record ('ICD-10-CM', 'ICD-O', 'CPT').",
     )
     description: str = Field(
         default="",
@@ -155,8 +159,12 @@ class ICDDatasetStats(BaseModel):
 class ICDCandidate(BaseModel):
     """An authoritative candidate code retrieved from the local dataset for an extracted diagnosis."""
 
-    code: str = Field(description="Authoritative ICD-10-CM code from local catalog.")
-    description: str = Field(description="Official ICD description matching the code.")
+    code: str = Field(description="Authoritative code from local catalog.")
+    description: str = Field(description="Official clinical description matching the code.")
+    coding_system: str = Field(
+        default="ICD-10-CM",
+        description="Coding system of this candidate ('ICD-10-CM', 'ICD-O', 'CPT').",
+    )
     retrieval_score: float = Field(
         ge=0.0,
         le=1.0,
@@ -182,7 +190,7 @@ class ICDCandidate(BaseModel):
     )
     category: str | None = Field(
         default=None,
-        description="ICD category (3-character prefix).",
+        description="Category prefix or group identifier.",
     )
 
 
@@ -193,11 +201,23 @@ class RankedSelection(BaseModel):
     raw_term: str = Field(default="", description="Original clinical term.")
     selected_code: str | None = Field(
         default=None,
-        description="The chosen ICD-10-CM code strictly from the candidate list; None if abstained.",
+        description="The chosen code strictly from the candidate list; None if abstained.",
     )
     selected_description: str | None = Field(
         default=None,
-        description="Official description of the selected ICD code.",
+        description="Official description of the selected clinical code.",
+    )
+    selected_icd10cm: str | None = Field(
+        default=None,
+        description="Matched ICD-10-CM code if matched, else None.",
+    )
+    selected_icdo: str | None = Field(
+        default=None,
+        description="Matched ICD-O morphology code if matched, else None.",
+    )
+    selected_cpt: str | None = Field(
+        default=None,
+        description="Matched CPT code if matched, else None.",
     )
     ranking_reason: str = Field(
         default="",

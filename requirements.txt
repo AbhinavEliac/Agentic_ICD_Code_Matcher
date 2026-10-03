@@ -39,6 +39,8 @@ rank-bm25
 scikit-learn
 numpy
 pandas
+openpyxl
+xlrd
 
 # ============================================================
 # PDF / DOCUMENT / OCR PROCESSING

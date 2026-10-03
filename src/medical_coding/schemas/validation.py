@@ -34,6 +34,18 @@ class ValidatedDiagnosis(BaseModel):
         default_factory=list,
         description="Complete record of deterministic validation checks executed.",
     )
+    icd10cm: str | None = Field(
+        default=None,
+        description="Matched ICD-10-CM code if matched, else None.",
+    )
+    icdo: str | None = Field(
+        default=None,
+        description="Matched ICD-O oncology morphology code if matched, else None.",
+    )
+    cpt: str | None = Field(
+        default=None,
+        description="Matched CPT procedural code if matched, else None.",
+    )
 
 
 class AbstentionRecord(BaseModel):

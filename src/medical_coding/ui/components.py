@@ -141,6 +141,15 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
 
     conf_pct = int(primary.confidence_score * 100)
 
+    codes_pills = []
+    if primary.icd10cm:
+        codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {primary.icd10cm}</span>')
+    if primary.icdo:
+        codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {primary.icdo}</span>')
+    if primary.cpt:
+        codes_pills.append(f'<span class="pill-badge badge-success">CPT: {primary.cpt}</span>')
+    codes_html = " ".join(codes_pills)
+
     st.markdown(
         f"""
         <div class="primary-card">
@@ -155,10 +164,11 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
                 </div>
             </div>
             <div class="primary-desc">{primary.description}</div>
-            <div style="display: flex; gap: 8px; margin: 10px 0;">
+            <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap;">
                 {acuity_badge}
                 {certainty_badge}
                 <span class="pill-badge badge-info">Chief Reason for Encounter</span>
+                {codes_html}
             </div>
             <div class="evidence-box">
                 <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
@@ -188,19 +198,29 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
         acuity_str = diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity)
         certainty_str = diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty)
 
+        sec_codes_pills = []
+        if diag.icd10cm:
+            sec_codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {diag.icd10cm}</span>')
+        if diag.icdo:
+            sec_codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {diag.icdo}</span>')
+        if diag.cpt:
+            sec_codes_pills.append(f'<span class="pill-badge badge-success">CPT: {diag.cpt}</span>')
+        sec_codes_html = " ".join(sec_codes_pills)
+
         with st.container():
             st.markdown(
                 f"""
                 <div class="secondary-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
                         <div>
                             <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {diag.code}</strong>
                             <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
                         </div>
-                        <div style="display: flex; gap: 6px; align-items: center;">
+                        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                             {billable_badge}
                             <span class="pill-badge badge-secondary">{acuity_str}</span>
                             <span class="pill-badge badge-secondary">{certainty_str}</span>
+                            {sec_codes_html}
                         </div>
                     </div>
                     <div class="evidence-box">

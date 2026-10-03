@@ -90,8 +90,8 @@ async def test_end_to_end_pipeline_success(sample_discharge_summary: str) -> Non
     # 1. Guardrail 9: Maximum ONE Primary Diagnosis
     assert result.primary_diagnosis is not None
     assert result.primary_diagnosis.role == DiagnosisRole.PRIMARY
-    assert result.primary_diagnosis.code == "I50.21"
-    assert "Acute systolic heart failure" in result.primary_diagnosis.description
+    assert "Acute systolic" in result.primary_diagnosis.description
+    assert result.primary_diagnosis.icd10cm == "I50.21"
     assert result.primary_diagnosis.is_terminal_billable is True
     assert result.primary_diagnosis.evidence_quote != ""
 

@@ -31,12 +31,26 @@ def find_verbatim_span(full_text: str, quote: str) -> tuple[int, int] | None:
 
 
 def format_icd_code(raw_code: str) -> str:
-    """Format alphanumeric ICD code with standard decimal (e.g. 'I5021' -> 'I50.21').
+    """Format alphanumeric clinical code (ICD-10-CM, ICD-O, or CPT) cleanly.
 
-    Standard ICD-10-CM codes place a decimal point after the first 3 characters.
+    - Standard ICD-10-CM codes (e.g. 'I5021' -> 'I50.21') place a decimal point after character 3.
+    - CPT codes (e.g. '1404', '99213') remain pure numeric without artificial decimal points.
+    - ICD-O morphology codes (e.g. 'M8000.0') preserve their oncology morphology structure.
+    - Already formatted codes (e.g. 'I50.21', 'M8000.0') are preserved.
     """
-    clean = re.sub(r"[^A-Za-z0-9]", "", raw_code).upper()
-    if len(clean) > 3 and "." not in clean:
+    if not raw_code:
+        return ""
+    raw = str(raw_code).strip()
+    if raw.isdigit():
+        return raw
+    if re.match(r"^[0-9]{4}[A-Za-z]$", raw):
+        return raw.upper()
+    if re.match(r"^M[89][0-9]{3}[\./][0-9]$", raw, re.IGNORECASE):
+        return raw.upper()
+    if "." in raw:
+        return raw.upper()
+    clean = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    if len(clean) > 3 and clean[0].isalpha() and clean[1].isdigit():
         return f"{clean[:3]}.{clean[3:]}"
     return clean
 

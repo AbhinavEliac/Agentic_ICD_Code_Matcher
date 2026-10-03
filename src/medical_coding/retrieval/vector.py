@@ -102,6 +102,7 @@ class FAISSICDRetriever(BaseICDRetriever):
                     is_valid_billable=record.is_valid_billable,
                     semantic_score=norm_sim,
                     category=record.category,
+                    coding_system=record.coding_system,
                 )
             )
 

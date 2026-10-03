@@ -101,10 +101,16 @@ models/embeddings/*
 !models/gguf/.gitkeep
 
 # Large External Datasets & User Uploads
+Database/
+database/
+*.xls
+*.xlsx
 data/icd10/*.txt
 data/icd10/*.xml
 data/samples/*.pdf
 !data/samples/.gitkeep
 !data/icd10/.gitkeep
 !data/icd10/sample_hospital_icd.csv
+# Search Index Artifacts
+data/indexes/*
 !data/indexes/.gitkeep

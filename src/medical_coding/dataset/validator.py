@@ -22,6 +22,11 @@ class LocalICDCatalog:
         self.loader = loader
         self._records_by_clean: dict[str, ICDCodeRecord] = {}
         self._records_by_formatted: dict[str, ICDCodeRecord] = {}
+        self._records_by_system: dict[str, dict[str, ICDCodeRecord]] = {
+            "ICD-10-CM": {},
+            "ICD-O": {},
+            "CPT": {},
+        }
         self._stats: ICDDatasetStats | None = None
         self._initialized: bool = False
 
@@ -38,6 +43,12 @@ class LocalICDCatalog:
         self._records_by_clean[record.unformatted_code] = record
         self._records_by_formatted[record.code] = record
 
+        sys_key = getattr(record, "coding_system", "ICD-10-CM") or "ICD-10-CM"
+        if sys_key not in self._records_by_system:
+            self._records_by_system[sys_key] = {}
+        self._records_by_system[sys_key][record.code] = record
+        self._records_by_system[sys_key][record.unformatted_code] = record
+
     def initialize(self) -> None:
         """Load records from the dataset loader into fast lookup indexes."""
         if self._initialized:
@@ -49,15 +60,26 @@ class LocalICDCatalog:
                 self.add_record(rec)
             self._stats = stats
             logger.info(
-                "LocalICDCatalog initialized with %d codes.", len(self._records_by_formatted)
+                "LocalICDCatalog initialized with %d codes across systems: %s",
+                len(self._records_by_formatted),
+                {k: len(v) // 2 for k, v in self._records_by_system.items() if v},
             )
 
         self._initialized = True
 
-    def get_by_code(self, code: str) -> ICDCodeRecord | None:
+    def get_by_code(self, code: str, system: str | None = None) -> ICDCodeRecord | None:
         """Lookup a code in the local catalog by formatted or unformatted representation."""
         if not code:
             return None
+
+        if system and system in self._records_by_system:
+            sys_dict = self._records_by_system[system]
+            clean = unformat_icd_code(code)
+            if clean in sys_dict:
+                return sys_dict[clean]
+            formatted = format_icd_code(code)
+            return sys_dict.get(formatted)
+
         clean = unformat_icd_code(code)
         if clean in self._records_by_clean:
             return self._records_by_clean[clean]
@@ -65,14 +87,27 @@ class LocalICDCatalog:
         formatted = format_icd_code(code)
         return self._records_by_formatted.get(formatted)
 
-    def is_valid_code(self, code: str) -> bool:
+    def is_valid_code(self, code: str, system: str | None = None) -> bool:
         """Check if code exists in the local authoritative dataset."""
-        return self.get_by_code(code) is not None
+        return self.get_by_code(code, system=system) is not None
 
-    def is_billable_code(self, code: str) -> bool:
+    def is_billable_code(self, code: str, system: str | None = None) -> bool:
         """Check if code exists and is terminal/billable at full specificity."""
-        record = self.get_by_code(code)
+        record = self.get_by_code(code, system=system)
         return record.is_valid_billable if record else False
+
+    def get_codes_by_system(self, system: str) -> list[ICDCodeRecord]:
+        """Return all distinct code records for a specific coding system."""
+        if system in self._records_by_system:
+            seen: dict[str, ICDCodeRecord] = {}
+            for rec in self._records_by_system[system].values():
+                seen[rec.code] = rec
+            return list(seen.values())
+        return []
+
+    def get_available_systems(self) -> list[str]:
+        """Return list of distinct coding systems populated in the catalog."""
+        return [k for k, v in self._records_by_system.items() if v]
 
     def get_all_records(self) -> list[ICDCodeRecord]:
         """Return all distinct ICDCodeRecord entries in the catalog."""

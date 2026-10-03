@@ -136,6 +136,10 @@ class Settings(BaseSettings):
         default=Path("./data/icd10/icd10cm_order_2026.txt"),
         description="Path to authoritative CMS/CDC ICD-10-CM order/tabular flat file.",
     )
+    database_dir: Path = Field(
+        default=Path("./Database"),
+        description="Directory containing local clinical database workbooks (Database_2.xlsx, Database_1.xls).",
+    )
     icd_index_dir: Path = Field(
         default=Path("./data/indexes"),
         description="Directory for persisted FAISS indices and BM25 tokenized caches.",
@@ -236,6 +240,17 @@ class Settings(BaseSettings):
         if path_obj.suffix.lower() == ".gguf":
             return path_obj
         return path_obj / self.model_name
+
+    def get_database_workbook_path(self) -> Path | None:
+        """Resolve the active multi-workbook database file if present."""
+        if self.database_dir.is_dir():
+            target = self.database_dir / "Database_2.xlsx"
+            if target.exists():
+                return target
+            candidates = sorted(list(self.database_dir.glob("*.xlsx")) + list(self.database_dir.glob("*.xls")))
+            if candidates:
+                return candidates[0]
+        return None
 
 
 @lru_cache(maxsize=1)

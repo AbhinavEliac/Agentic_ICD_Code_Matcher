@@ -104,6 +104,7 @@ class BM25ICDRetriever(BaseICDRetriever):
                     is_valid_billable=record.is_valid_billable,
                     lexical_score=clamped_score,
                     category=record.category,
+                    coding_system=record.coding_system,
                 )
             )
 

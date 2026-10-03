@@ -80,10 +80,16 @@ def get_or_initialize_retrieval_system() -> tuple[LocalICDCatalog, HybridICDRetr
     embeddings = FastLocalEmbeddings(dim=384)
     faiss_ret = FAISSICDRetriever(embeddings=embeddings)
 
+    db_wb = settings.get_database_workbook_path()
+
     if catalog_path.exists():
         try:
             catalog = LocalICDCatalog.load_from_json(catalog_path)
-            if (index_dir / "bm25_index.pkl").exists() and (index_dir / "faiss.index").exists():
+            # If authoritative Database exists and cached catalog has fewer than 1000 codes (old sample), reload
+            if db_wb and db_wb.exists() and len(catalog) < 1000:
+                logger.info("Found authoritative Database workbook at %s; reloading catalog.", db_wb)
+                catalog = LocalICDCatalog()
+            elif (index_dir / "bm25_index.pkl").exists() and (index_dir / "faiss.index").exists():
                 bm25.load(index_dir)
                 faiss_ret.load(index_dir)
                 logger.info("Loaded persisted ICD catalog and indices from %s", index_dir)
@@ -97,7 +103,9 @@ def get_or_initialize_retrieval_system() -> tuple[LocalICDCatalog, HybridICDRetr
 
     if len(catalog) == 0:
         data_source = (
-            settings.icd_dataset_path if settings.icd_dataset_path.exists() else sample_csv
+            db_wb
+            if (db_wb and db_wb.exists())
+            else (settings.icd_dataset_path if settings.icd_dataset_path.exists() else sample_csv)
         )
         if data_source.exists():
             records_dict, stats = load_icd_dataset(data_source)
@@ -542,6 +550,46 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
     def _retrieve_for_condition(cond: ClassifiedDiagnosis) -> tuple[str, list[ICDCandidate]]:
         query = cond.raw_term
         hits = retriever.retrieve(query, top_k=10)
+
+        term_lower = query.lower()
+        evidence_lower = (
+            cond.context.evidence.quote.lower()
+            if hasattr(cond, "context") and hasattr(cond.context, "evidence") and cond.context.evidence
+            else ""
+        )
+        combined_text = f"{term_lower} {evidence_lower}"
+
+        is_neoplasm = any(
+            w in combined_text
+            for w in [
+                "cancer", "carcinoma", "sarcoma", "melanoma", "tumor", "tumour",
+                "neoplasm", "lymphoma", "leukemia", "malignant", "infiltrating duct"
+            ]
+        )
+        is_procedure = any(
+            w in combined_text
+            for w in [
+                "biopsy", "excision", "resection", "catheterization", "infusion",
+                "endoscopy", "surgery", "repair", "graft", "consultation", "evaluation",
+                "treatment", "injection", "procedure"
+            ]
+        )
+
+        existing_codes = {h.code for h in hits}
+        if is_neoplasm:
+            icdo_hits = retriever.retrieve(query, top_k=5, system="ICD-O")
+            for o_hit in icdo_hits:
+                if o_hit.code not in existing_codes:
+                    hits.append(o_hit)
+                    existing_codes.add(o_hit.code)
+
+        if is_procedure:
+            cpt_hits = retriever.retrieve(query, top_k=5, system="CPT")
+            for c_hit in cpt_hits:
+                if c_hit.code not in existing_codes:
+                    hits.append(c_hit)
+                    existing_codes.add(c_hit.code)
+
         return cond.diagnosis_id, hits
 
     # Parallelize retrieval across diagnoses within document
@@ -740,6 +788,12 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     secondary_responses: list[CodedDiagnosisResponse] = []
 
     for item in validated:
+        is_icdo = bool(item.icdo or item.code.startswith("M"))
+        is_cpt = bool(item.cpt or (item.code.isdigit() and len(item.code) in (4, 5)))
+        icd10_val = item.icd10cm if item.icd10cm else (item.code if not is_icdo and not is_cpt else None)
+        icdo_val = item.icdo if item.icdo else (item.code if is_icdo else None)
+        cpt_val = item.cpt if item.cpt else (item.code if is_cpt else None)
+
         resp = CodedDiagnosisResponse(
             code=item.code,
             description=item.description,
@@ -753,6 +807,9 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             evidence_quote=item.evidence.quote,
             confidence_score=item.confidence_score,
             is_terminal_billable=True,
+            icd10cm=icd10_val,
+            icdo=icdo_val,
+            cpt=cpt_val,
         )
         if item.role == DiagnosisRole.PRIMARY:
             primary_response = resp

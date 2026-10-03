@@ -354,11 +354,29 @@ class CandidateRankingAgent(BaseAgent):
             decision = parsed.get("decision", "ACCEPTED" if code_str else "ABSTAINED")
             abstention_reason = parsed.get("abstention_reason")
 
+            matching_cand = next((c for c in candidates if c.code == code_str), None)
+            cand_system = getattr(matching_cand, "coding_system", None) if matching_cand else "ICD-10-CM"
+            icd10cm_val = code_str if cand_system == "ICD-10-CM" else None
+            icdo_val = code_str if cand_system == "ICD-O" else None
+            cpt_val = code_str if cand_system == "CPT" else None
+
+            for c in candidates:
+                c_sys = getattr(c, "coding_system", None)
+                if c_sys == "ICD-10-CM" and not icd10cm_val:
+                    icd10cm_val = c.code
+                elif c_sys == "ICD-O" and not icdo_val:
+                    icdo_val = c.code
+                elif c_sys == "CPT" and not cpt_val:
+                    cpt_val = c.code
+
             return RankedSelection(
                 diagnosis_id=diag_id,
                 raw_term=raw_term,
                 selected_code=code_str,
                 selected_description=desc_str,
+                selected_icd10cm=icd10cm_val,
+                selected_icdo=icdo_val,
+                selected_cpt=cpt_val,
                 ranking_reason=reason,
                 supporting_evidence=[evidence_quote],
                 confidence=confidence,
@@ -490,11 +508,28 @@ class CandidateRankingAgent(BaseAgent):
                 decision="REJECTED_LOW_CONFIDENCE",
             )
 
+        cand_system = getattr(top_cand, "coding_system", None) or "ICD-10-CM"
+        icd10cm_val = top_cand.code if cand_system == "ICD-10-CM" else None
+        icdo_val = top_cand.code if cand_system == "ICD-O" else None
+        cpt_val = top_cand.code if cand_system == "CPT" else None
+
+        for c in candidates:
+            c_sys = getattr(c, "coding_system", None)
+            if c_sys == "ICD-10-CM" and not icd10cm_val:
+                icd10cm_val = c.code
+            elif c_sys == "ICD-O" and not icdo_val:
+                icdo_val = c.code
+            elif c_sys == "CPT" and not cpt_val:
+                cpt_val = c.code
+
         return RankedSelection(
             diagnosis_id=diag_id,
             raw_term=raw_term,
             selected_code=top_cand.code,
             selected_description=top_cand.description,
+            selected_icd10cm=icd10cm_val,
+            selected_icdo=icdo_val,
+            selected_cpt=cpt_val,
             selected_candidate=top_cand,
             ranking_reason=f"Candidate '{top_cand.code}' ({top_cand.description}) best supported by documentation ({top_rationale}).",
             supporting_evidence=[evidence_quote],

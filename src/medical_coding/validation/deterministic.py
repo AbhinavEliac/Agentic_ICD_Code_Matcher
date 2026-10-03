@@ -103,6 +103,11 @@ class DeterministicValidator:
                 stage=PipelineStage.VALIDATION,
             )
 
+        cand_sys = getattr(candidate, "coding_system", None) or "ICD-10-CM"
+        icd10cm_val = selection.selected_icd10cm or (code if cand_sys == "ICD-10-CM" else None)
+        icdo_val = selection.selected_icdo or (code if cand_sys == "ICD-O" else None)
+        cpt_val = selection.selected_cpt or (code if cand_sys == "CPT" else None)
+
         validated = ValidatedDiagnosis(
             diagnosis_id=condition.diagnosis_id,
             raw_term=condition.raw_term,
@@ -112,6 +117,9 @@ class DeterministicValidator:
             evidence=condition.context.evidence,
             confidence_score=selection.ranking_score,
             checks=checks,
+            icd10cm=icd10cm_val,
+            icdo=icdo_val,
+            cpt=cpt_val,
         )
         return validated, None
 

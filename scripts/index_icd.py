@@ -175,14 +175,26 @@ def demonstrate_sample_retrieval(hybrid_retriever: HybridICDRetriever) -> None:
 
 
 def main() -> None:
+    settings = get_settings()
+    db_wb = settings.get_database_workbook_path()
+    default_data_path = (
+        str(db_wb)
+        if (db_wb and db_wb.exists())
+        else (
+            str(settings.icd_dataset_path)
+            if settings.icd_dataset_path.exists()
+            else "./data/icd10/sample_hospital_icd.csv"
+        )
+    )
+
     parser = argparse.ArgumentParser(
-        description="Index hospital-supplied local ICD-10-CM dataset into BM25 and FAISS."
+        description="Index hospital-supplied local ICD-10-CM / ICD-O / CPT database into BM25 and FAISS."
     )
     parser.add_argument(
         "--data-path",
         type=str,
-        default="./data/icd10/sample_hospital_icd.csv",
-        help="Path to hospital ICD-10 source file (CSV, TSV, JSON, or CMS TXT).",
+        default=default_data_path,
+        help="Path to hospital ICD/CPT source file (Excel, CSV, TSV, JSON, or CMS TXT).",
     )
     parser.add_argument(
         "--output-dir",
