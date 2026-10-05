@@ -35,6 +35,12 @@ def merge_dicts(existing: dict[str, Any], new_dict: dict[str, Any]) -> dict[str,
     return merged
 
 
+from medical_coding.schemas.evidence import (
+    ClinicalDiagnosisCandidate,
+    ClinicalDiagnosisState,
+    ICDMappingState,
+)
+
 class PipelineGraphState(TypedDict, total=False):
     """Central state passed across all LangGraph nodes in the medical coding pipeline.
 
@@ -53,7 +59,12 @@ class PipelineGraphState(TypedDict, total=False):
     source_type: str
     metadata: dict[str, Any]
 
-    # Clinical Extraction & Context Analysis
+    # Clinical Extraction & Context Analysis (Evidence-First Architecture)
+    clinical_diagnosis_state: ClinicalDiagnosisState | None
+    diagnosis_candidates: list[ClinicalDiagnosisCandidate]
+    icd_mapping_states: list[ICDMappingState]
+
+    # Legacy attributes preserved for backwards compatibility
     extracted_diagnoses: list[ExtractedDiagnosis]
     extracted_conditions: list[ExtractedClinicalCondition]
     context_assessments: list[ContextAssessment]

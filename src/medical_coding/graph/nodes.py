@@ -47,10 +47,24 @@ from medical_coding.schemas.validation import (
 )
 from medical_coding.utils.logging import get_logger
 from medical_coding.utils.text import format_icd_code, normalize_whitespace
+from medical_coding.agents.clinical_extractor import (
+    ClinicalDocumentSection,
+    EvidenceFirstFactExtractor,
+    SectionSegmenter,
+)
+from medical_coding.schemas.evidence import (
+    AuditTrailEntry,
+    ClinicalDiagnosisCandidate,
+    ClinicalDiagnosisState,
+    ICDMappingState,
+    MultiDimensionalScore,
+    StructuredEvidence,
+)
 from medical_coding.validation.deterministic import (
     CandidateRankingDeterministicValidator,
     DeterministicValidator,
 )
+from medical_coding.validation.gates import ValidationGateEngine
 
 logger = get_logger(__name__)
 
@@ -333,19 +347,26 @@ def extract_diagnoses_node(state: PipelineGraphState) -> dict[str, Any]:
         agent = ClinicalExtractionAgent(llm=llm) if llm else None
 
         extracted_conditions: list[ExtractedClinicalCondition] = []
-        if agent is not None:
-            result = agent.extract(raw_text)
-            extracted_conditions = result.conditions
-        else:
-            # Deterministic rule-based extraction fallback for testing/offline environments
-            extracted_conditions = _extract_conditions_deterministically(raw_text)
+        clinical_diag_state: ClinicalDiagnosisState | None = None
 
-        # Guardrail 7: Remove duplicate diagnosis mentions and subsumed generic terms
+        if agent is not None:
+            try:
+                result = agent.extract_clinical_conditions(raw_text, doc_id=doc_id)
+                extracted_conditions = result.conditions
+            except Exception as exc:
+                logger.warning("LLM extraction encountered issue: %s. Using fact extractor.", exc)
+
+        if not extracted_conditions:
+            extracted_conditions, clinical_diag_state = _extract_conditions_deterministically(raw_text, doc_id)
+        else:
+            fact_extractor = EvidenceFirstFactExtractor()
+            clinical_diag_state = fact_extractor.extract_clinical_state(raw_text, doc_id)
+
+        # Generalized subsumption check without hardcoded disease lists
         seen_terms: set[str] = set()
         deduplicated: list[ExtractedClinicalCondition] = []
         legacy_extracted: list[ExtractedDiagnosis] = []
 
-        # Sort so that longer/more specific descriptions come first
         sorted_conditions = sorted(
             extracted_conditions,
             key=lambda c: len(
@@ -363,22 +384,12 @@ def extract_diagnoses_node(state: PipelineGraphState) -> dict[str, Any]:
             if not key:
                 continue
 
-            # Subsumption check: If a more specific condition already subsumes this generic term
             is_subsumed = False
             for seen in seen_terms:
                 if key == seen:
                     is_subsumed = True
                     break
-                if "heart failure" in key and "heart failure" in seen:
-                    is_subsumed = True
-                    break
-                if "kidney disease" in key and "kidney disease" in seen:
-                    is_subsumed = True
-                    break
-                if "diabetes" in key and "diabetes" in seen:
-                    is_subsumed = True
-                    break
-                if "hypertension" in key and "hypertension" in seen:
+                if len(key) < len(seen) and key in seen:
                     is_subsumed = True
                     break
 
@@ -410,6 +421,8 @@ def extract_diagnoses_node(state: PipelineGraphState) -> dict[str, Any]:
             return {
                 "extracted_conditions": [],
                 "extracted_diagnoses": [],
+                "clinical_diagnosis_state": clinical_diag_state,
+                "diagnosis_candidates": clinical_diag_state.all_candidates if clinical_diag_state else [],
                 "abstentions": [abstention],
                 "is_aborted": True,
                 "current_stage": PipelineStage.EXTRACTION,
@@ -418,6 +431,8 @@ def extract_diagnoses_node(state: PipelineGraphState) -> dict[str, Any]:
         return {
             "extracted_conditions": deduplicated,
             "extracted_diagnoses": legacy_extracted,
+            "clinical_diagnosis_state": clinical_diag_state,
+            "diagnosis_candidates": clinical_diag_state.all_candidates if clinical_diag_state else [],
             "current_stage": PipelineStage.EXTRACTION,
         }
     except Exception as e:
@@ -549,7 +564,7 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
 
     def _retrieve_for_condition(cond: ClassifiedDiagnosis) -> tuple[str, list[ICDCandidate]]:
         query = cond.raw_term
-        hits = retriever.retrieve(query, top_k=10)
+        hits = retriever.retrieve(query, top_k=25)
 
         term_lower = query.lower()
         evidence_lower = (
@@ -781,8 +796,10 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     logger.info("Executing Node [10/10]: Final Output Generation for doc_id=%s", doc_id)
 
     validated = state.get("validated_diagnoses", [])
-    abstentions = state.get("abstentions", [])
-    audit_trail = state.get("audit_trail", [])
+    abstentions = list(state.get("abstentions", []))
+    audit_trail = list(state.get("audit_trail", []))
+    classified = state.get("classified_diagnoses", [])
+    diag_state: ClinicalDiagnosisState | None = state.get("clinical_diagnosis_state")
 
     primary_response: CodedDiagnosisResponse | None = None
     secondary_responses: list[CodedDiagnosisResponse] = []
@@ -795,6 +812,8 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         cpt_val = item.cpt if item.cpt else (item.code if is_cpt else None)
 
         resp = CodedDiagnosisResponse(
+            raw_term=item.raw_term,
+            normalized_diagnosis=item.raw_term,
             description=item.description,
             role=item.role,
             acuity=Acuity.ACUTE
@@ -804,6 +823,11 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             else Acuity.UNSPECIFIED,
             certainty=Certainty.CONFIRMED,
             evidence_quote=item.evidence.quote,
+            evidence=[{
+                "quote": item.evidence.quote,
+                "section": getattr(item.evidence, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                "evidence_type": "CLINICAL_EVIDENCE",
+            }],
             confidence_score=item.confidence_score,
             is_terminal_billable=True,
             icd10cm=icd10_val,
@@ -814,6 +838,62 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             primary_response = resp
         elif item.role == DiagnosisRole.SECONDARY:
             secondary_responses.append(resp)
+
+    # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING (Sections 4 & 11)
+    # If primary diagnosis was clinically confirmed and established, but ICD mapping abstained or failed:
+    if primary_response is None:
+        clin_primary = diag_state.primary_diagnosis if (diag_state and diag_state.primary_diagnosis) else None
+        if not clin_primary:
+            for c in classified:
+                if c.role == DiagnosisRole.PRIMARY:
+                    clin_primary = c
+                    break
+
+        if clin_primary:
+            term = getattr(clin_primary, "normalized_diagnosis", None) or getattr(clin_primary, "raw_term", "")
+            quote = (
+                getattr(clin_primary, "primary_evidence_quote", None)
+                or (
+                    clin_primary.context.evidence.quote
+                    if hasattr(clin_primary, "context") and hasattr(clin_primary.context, "evidence")
+                    else ""
+                )
+                or getattr(clin_primary, "evidence_quote", "")
+            )
+            # Diagnosis is clinically ACCEPTED as primary; only ICD mapping is abstained
+            primary_response = CodedDiagnosisResponse(
+                raw_term=getattr(clin_primary, "raw_term", term),
+                normalized_diagnosis=term,
+                description=term,
+                role=DiagnosisRole.PRIMARY,
+                acuity=Acuity.ACUTE
+                if "acute" in term.lower()
+                else Acuity.CHRONIC
+                if "chronic" in term.lower()
+                else Acuity.UNSPECIFIED,
+                certainty=Certainty.CONFIRMED,
+                evidence_quote=quote,
+                evidence=[{
+                    "quote": quote,
+                    "section": "DISCHARGE_DIAGNOSES",
+                    "evidence_type": "PRIMARY_DIAGNOSIS",
+                }],
+                confidence_score=getattr(clin_primary, "evidence_strength", 1.0),
+                is_terminal_billable=False,
+                icd10cm=None,  # ICD code abstained
+                icdo=None,
+                cpt=None,
+            )
+            if not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(clin_primary, "diagnosis_id", "primary"),
+                        raw_term=term,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Clinical diagnosis '{term}' is accepted as primary, but ICD-10-CM mapping is abstained.",
+                        stage=PipelineStage.RANKING,
+                    )
+                )
 
     # Determine execution status
     if primary_response or secondary_responses:
@@ -849,82 +929,42 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 # ------------------------------------------------------------------------------
 
 
-def _extract_conditions_deterministically(text: str) -> list[ExtractedClinicalCondition]:
-    """Pattern-based condition extractor used when running purely deterministic offline test passes."""
-    patterns = [
-        (r"\bacute systolic heart failure\b", "Acute systolic heart failure", "I50.21"),
-        (r"\bchronic systolic heart failure\b", "Chronic systolic heart failure", "I50.22"),
-        (r"\bcongestive heart failure\b", "Congestive heart failure", "I50.9"),
-        (r"\bheart failure\b", "Heart failure", "I50.9"),
-        (r"\btype 2 diabetes mellitus\b", "Type 2 diabetes mellitus", "E11.9"),
-        (r"\btype 2 diabetes\b", "Type 2 diabetes mellitus", "E11.9"),
-        (r"\bessential primary hypertension\b", "Essential primary hypertension", "I10"),
-        (r"\bhypertension\b", "Essential primary hypertension", "I10"),
-        (r"\bchronic kidney disease stage 3\b", "Chronic kidney disease stage 3", "N18.3"),
-        (r"\bchronic kidney disease\b", "Chronic kidney disease", "N18.9"),
-        (r"\bacute kidney injury\b", "Acute kidney injury", "N17.9"),
-        (r"\batrial fibrillation\b", "Atrial fibrillation", "I48.91"),
-        (r"\bpneumonia\b", "Pneumonia", "J18.9"),
-    ]
+def _extract_conditions_deterministically(
+    text: str, doc_id: str = "doc-deterministic"
+) -> tuple[list[ExtractedClinicalCondition], ClinicalDiagnosisState]:
+    """Generalized evidence-first clinical fact extractor replacing hardcoded disease regex tables."""
+    extractor = EvidenceFirstFactExtractor()
+    diag_state = extractor.extract_clinical_state(text, doc_id)
     extracted: list[ExtractedClinicalCondition] = []
-    text_lower = text.lower()
 
-    for pat, norm_name, _ in patterns:
-        import re
+    for cand in diag_state.all_candidates:
+        primary_ev = cand.primary_evidence_quote
+        sec_name = cand.evidence[0].section if cand.evidence else "DOCUMENTATION"
+        cond = ExtractedClinicalCondition(
+            condition_id=cand.diagnosis_id,
+            original_mention=cand.raw_term,
+            normalized_description=cand.normalized_diagnosis,
+            evidence_text=primary_ev or cand.raw_term,
+            evidence_location=EvidenceLocation(
+                section=sec_name,
+                start_char=0,
+                end_char=len(cand.raw_term),
+            ),
+            status=ConditionStatus.HISTORICAL
+            if cand.role == DiagnosisRole.HISTORICAL
+            else ConditionStatus.ACTIVE,
+            certainty=cand.certainty,
+            temporality=cand.temporality,
+            negation=NegationStatus.NEGATED
+            if cand.certainty == Certainty.RULED_OUT
+            else NegationStatus.AFFIRMATIVE,
+            section=sec_name,
+            treatment_evidence=primary_ev if cand.treatment_relevance > 0 else None,
+            confidence_score=cand.scores.evidence_score,
+        )
+        extracted.append(cond)
 
-        match = re.search(pat, text_lower)
-        if match:
-            # Subsumption check
-            norm_lower = norm_name.lower()
-            if any(
-                norm_lower in e.normalized_description.lower()
-                and norm_lower != e.normalized_description.lower()
-                for e in extracted
-            ):
-                continue
-            if "heart failure" in norm_lower and any(
-                "heart failure" in e.normalized_description.lower() for e in extracted
-            ):
-                continue
-            if "kidney disease" in norm_lower and any(
-                "kidney disease" in e.normalized_description.lower() for e in extracted
-            ):
-                continue
-            if "diabetes" in norm_lower and any(
-                "diabetes" in e.normalized_description.lower() for e in extracted
-            ):
-                continue
-            if "hypertension" in norm_lower and any(
-                "hypertension" in e.normalized_description.lower() for e in extracted
-            ):
-                continue
-
-            start, end = match.span()
-            # Extract sentence window as evidence
-            window_start = max(0, text.rfind(".", 0, start) + 1)
-            window_end = text.find(".", end)
-            if window_end == -1:
-                window_end = len(text)
-            sentence = text[window_start : window_end + 1].strip()
-
-            cond = ExtractedClinicalCondition(
-                condition_id=f"cond-{len(extracted) + 1}",
-                original_mention=text[start:end],
-                normalized_description=norm_name,
-                evidence_text=sentence or text[start:end],
-                evidence_location=EvidenceLocation(
-                    section="Documentation", start_char=start, end_char=end
-                ),
-                status=ConditionStatus.ACTIVE,
-                certainty=Certainty.CONFIRMED,
-                temporality=Temporality.CURRENT,
-                negation=NegationStatus.AFFIRMATIVE,
-                section="Discharge Diagnosis",
-                confidence_score=0.95,
-            )
-            extracted.append(cond)
-
-    return extracted
+    return extracted, diag_state
 
 
 def _assess_context_deterministically(
@@ -946,6 +986,7 @@ def _assess_context_deterministically(
         return ContextAssessment(
             diagnosis=term,
             condition_id=diag_id,
+            section=section,
             current_relevance=False,
             coding_candidate=False,
             status=ConditionStatus.RESOLVED,
@@ -953,7 +994,7 @@ def _assess_context_deterministically(
             temporality=Temporality.RESOLVED,
             negation=NegationStatus.NEGATED,
             evidence=quote or f"Negation or rule-out documentation for {term}",
-            reason=f"Condition '{term}' was explicitly ruled out or negated.",
+            reason=f"[{section}] Condition '{term}' was explicitly ruled out or negated.",
             treated_or_managed=False,
             monitored=False,
             affected_clinical_management=False,
@@ -961,7 +1002,14 @@ def _assess_context_deterministically(
         )
 
     # Rule 2: Past medical history without inpatient monitoring/treatment
-    is_pmh = "past medical" in section_lower or "pmh" in section_lower
+    norm_section = section_lower.replace("_", " ")
+    is_pmh = (
+        "past medical" in norm_section
+        or "pmh" in norm_section
+        or "past surgical" in norm_section
+        or "psh" in norm_section
+        or "history" in norm_section
+    )
     has_active_care = any(
         w in quote_lower
         for w in [
@@ -979,6 +1027,7 @@ def _assess_context_deterministically(
         return ContextAssessment(
             diagnosis=term,
             condition_id=diag_id,
+            section=section,
             current_relevance=False,
             coding_candidate=False,
             status=ConditionStatus.HISTORICAL,
@@ -986,7 +1035,7 @@ def _assess_context_deterministically(
             temporality=Temporality.HISTORICAL,
             negation=NegationStatus.AFFIRMATIVE,
             evidence=quote or f"Historical PMH documentation for {term}",
-            reason=f"Condition '{term}' documented solely in Past Medical History without inpatient management.",
+            reason=f"[{section}] Condition '{term}' documented solely in Past Medical History without inpatient management.",
             treated_or_managed=False,
             monitored=False,
             affected_clinical_management=False,
@@ -994,17 +1043,19 @@ def _assess_context_deterministically(
         )
 
     # Rule 3: Active condition
+    is_acute = "acute" in term.lower()
     return ContextAssessment(
         diagnosis=term,
         condition_id=diag_id,
+        section=section,
         current_relevance=True,
         coding_candidate=True,
-        status=ConditionStatus.ACTIVE,
+        status=ConditionStatus.ACUTE if is_acute else ConditionStatus.ACTIVE,
         certainty=Certainty.CONFIRMED,
         temporality=Temporality.CURRENT,
         negation=NegationStatus.AFFIRMATIVE,
         evidence=quote or f"Active clinical evidence for {term}",
-        reason=f"Condition '{term}' active and managed during the inpatient admission.",
+        reason=f"[{section}] Condition '{term}' active and managed during the inpatient admission.",
         treated_or_managed=True,
         monitored=True,
         affected_clinical_management=True,

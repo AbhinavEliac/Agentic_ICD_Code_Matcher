@@ -223,6 +223,10 @@ class ContextAssessment(BaseModel):
     evidence: str = Field(
         description="Verbatim documented evidence quote from the clinical record.",
     )
+    section: str | None = Field(
+        default=None,
+        description="Clinical section where mention occurred (e.g. 'DISCHARGE_DIAGNOSES').",
+    )
     reason: str = Field(
         description="Explicit clinical rationale justifying the relevance and coding decision.",
     )

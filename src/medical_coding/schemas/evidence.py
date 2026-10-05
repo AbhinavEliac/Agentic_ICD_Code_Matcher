@@ -1,0 +1,238 @@
+"""Structured clinical evidence objects, multi-dimensional scores, and decoupled diagnosis/mapping states."""
+
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, Field, model_validator
+
+from medical_coding.schemas.enums import (
+    Certainty,
+    DiagnosisRole,
+    EvidenceType,
+    NegationStatus,
+    Temporality,
+)
+
+
+class StructuredEvidence(BaseModel):
+    """Verbatim documentary evidence object extracted directly from clinical documentation."""
+
+    text: str = Field(
+        min_length=1,
+        description="Verbatim sentence or phrase from the document providing factual proof.",
+    )
+    section: str = Field(
+        default="CLINICAL_DOCUMENT",
+        description="Source clinical section (e.g. 'DISCHARGE_DIAGNOSES', 'HOSPITAL_COURSE', 'RELEVANT_INVESTIGATIONS').",
+    )
+    sentence: str | None = Field(
+        default=None,
+        description="Complete containing sentence if available.",
+    )
+    polarity: NegationStatus = Field(
+        default=NegationStatus.AFFIRMATIVE,
+        description="AFFIRMATIVE, NEGATED, or UNCERTAIN.",
+    )
+    certainty: Certainty = Field(
+        default=Certainty.CONFIRMED,
+        description="CONFIRMED, SUPPORTED, SUSPECTED, POSSIBLE, RULED_OUT.",
+    )
+    temporality: Temporality = Field(
+        default=Temporality.CURRENT,
+        description="CURRENT, HISTORICAL, RESOLVED, FAMILY_HISTORY.",
+    )
+    subject: str = Field(
+        default="PATIENT",
+        description="Subject of clinical finding: 'PATIENT', 'FAMILY_MEMBER', 'DONOR'.",
+    )
+    evidence_type: EvidenceType = Field(
+        default=EvidenceType.DISCHARGE_SUMMARY,
+        description="Type of evidence: DISCHARGE_SUMMARY, ADMISSION_REASON, PROCEDURAL, IMAGING, LAB, HISTORY.",
+    )
+    clinical_relevance: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Clinical relevance weight to the current inpatient encounter.",
+    )
+
+    @property
+    def quote(self) -> str:
+        """Alias for quote compatibility across legacy schemas."""
+        return self.text
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_quote_or_text(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "quote" in data and "text" not in data:
+                data["text"] = data["quote"]
+        return data
+
+
+class MultiDimensionalScore(BaseModel):
+    """Interpretable multi-dimensional scoring dimensions for clinical authorization and coding."""
+
+    evidence_score: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Verbatim textual grounding quality."
+    )
+    diagnostic_certainty: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Certainty score: Confirmed=1.0, Supported=0.8, Suspected=0.5, Ruled_Out=0.0."
+    )
+    encounter_relevance: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Active inpatient management / therapeutic relevance."
+    )
+    role_confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Confidence in role classification hierarchy."
+    )
+    semantic_match: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Clinical semantic alignment with ICD description."
+    )
+    specificity_match: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Laterality, acuity, and etiology alignment."
+    )
+    contradiction_penalty: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Penalty for conflicting, negated, or questioned documentation."
+    )
+    admitting_score: float = Field(
+        default=0.0, description="Composite admitting hierarchy score."
+    )
+
+    def is_authorized(self, min_certainty: float = 0.5, max_contradiction: float = 0.5) -> bool:
+        """Evaluate if clinical candidate passes deterministic clinical authorization."""
+        return (
+            self.evidence_score > 0.0
+            and self.diagnostic_certainty >= min_certainty
+            and self.contradiction_penalty <= max_contradiction
+        )
+
+
+class ClinicalDiagnosisCandidate(BaseModel):
+    """Normalized clinical diagnosis candidate authorized by clinical facts before ICD retrieval."""
+
+    diagnosis_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique diagnosis candidate identifier.",
+    )
+    raw_term: str = Field(
+        min_length=1,
+        description="Exact term as mentioned in source documentation.",
+    )
+    normalized_diagnosis: str = Field(
+        min_length=1,
+        description="Canonical medical description without ICD code assumptions.",
+    )
+    role: DiagnosisRole = Field(
+        default=DiagnosisRole.SECONDARY,
+        description="PRIMARY, SECONDARY, HISTORICAL, SYMPTOM, INCIDENTAL, RULED_OUT, UNCERTAIN.",
+    )
+    certainty: Certainty = Field(
+        default=Certainty.CONFIRMED,
+        description="CONFIRMED, SUPPORTED, SUSPECTED, POSSIBLE, RULED_OUT, NEGATED.",
+    )
+    temporality: Temporality = Field(
+        default=Temporality.CURRENT,
+        description="CURRENT, HISTORICAL, RESOLVED.",
+    )
+    evidence: list[StructuredEvidence] = Field(
+        default_factory=list,
+        description="Collection of verbatim evidence objects supporting this diagnosis.",
+    )
+    evidence_strength: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Aggregate strength of documentary evidence."
+    )
+    clinical_relevance: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Inpatient clinical relevance."
+    )
+    encounter_relevance: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Encounter relevance."
+    )
+    treatment_relevance: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Active medical or surgical treatment relevance."
+    )
+    procedure_relevance: float = Field(
+        default=0.0, ge=0.0, le=1.0, description="Major operative intervention / source control relevance."
+    )
+    scores: MultiDimensionalScore = Field(
+        default_factory=MultiDimensionalScore,
+        description="Interpretable scoring vector.",
+    )
+    is_authorized: bool = Field(
+        default=True,
+        description="True if authorized by clinical documentation to enter coding.",
+    )
+    primary_justification: str | None = Field(
+        default=None,
+        description="Evidence rationale justifying selection as Primary diagnosis.",
+    )
+    classification_reason: str = Field(
+        default="",
+        description="Summary rationale of role assignment.",
+    )
+
+    @property
+    def primary_evidence_quote(self) -> str:
+        """Return the highest priority evidence text quote."""
+        if not self.evidence:
+            return ""
+        # Prefer discharge summary or procedural quotes
+        for ev in self.evidence:
+            if ev.evidence_type in (
+                EvidenceType.DISCHARGE_SUMMARY,
+                EvidenceType.ADMISSION_REASON,
+                EvidenceType.PROCEDURE,
+            ):
+                return ev.text
+        return self.evidence[0].text
+
+
+class ClinicalDiagnosisState(BaseModel):
+    """Encounter clinical diagnosis state established strictly prior to ICD candidate retrieval."""
+
+    document_id: str
+    primary_diagnosis: ClinicalDiagnosisCandidate | None = None
+    secondary_diagnoses: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
+    historical_conditions: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
+    ruled_out_conditions: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
+    uncertain_conditions: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
+    all_candidates: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
+    has_unique_primary: bool = False
+    audit_notes: list[str] = Field(default_factory=list)
+
+
+class ICDMappingState(BaseModel):
+    """State tracking the mapping of an authorized clinical diagnosis to an ICD code."""
+
+    diagnosis_id: str
+    normalized_diagnosis: str
+    role: DiagnosisRole
+    selected_code: str | None = None
+    selected_description: str | None = None
+    selected_icd10cm: str | None = None
+    selected_icdo: str | None = None
+    selected_cpt: str | None = None
+    is_terminal_billable: bool = False
+    confidence_score: float = 0.0
+    mapping_status: str = "PENDING"  # ACCEPTED, ABSTAINED, REJECTED
+    abstention_reason: str | None = None
+    rejection_detail: str | None = None
+    validation_passed: bool = False
+    validation_checks: list[dict[str, Any]] = Field(default_factory=list)
+    candidate_matches: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# Alias for mapping candidate representation
+ICDMappingCandidate = ICDMappingState
+
+
+class AuditTrailEntry(BaseModel):
+    """Verifiable clinical audit trail entry conforming to Section 15 specifications."""
+
+    diagnosis: str
+    role: str
+    evidence: list[dict[str, Any]]
+    reason_for_acceptance: str
+    rejected_alternatives: list[str] = Field(default_factory=list)
+    icd_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    selected_code: str | None = None
+    validation_checks: list[dict[str, Any]] = Field(default_factory=list)

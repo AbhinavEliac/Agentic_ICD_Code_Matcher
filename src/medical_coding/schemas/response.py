@@ -16,12 +16,24 @@ from medical_coding.schemas.validation import AbstentionRecord
 class CodedDiagnosisResponse(BaseModel):
     """External deterministic representation of an evidence-backed ICD code decision."""
 
-    description: str = Field(description="Official clinical description matching the code.")
+    raw_term: str | None = Field(
+        default=None,
+        description="Original clinical term as extracted from documentation.",
+    )
+    normalized_diagnosis: str | None = Field(
+        default=None,
+        description="Canonical clinical diagnosis name authorized before coding.",
+    )
+    description: str = Field(description="Official clinical description matching the code or diagnosis.")
     role: DiagnosisRole = Field(description="PRIMARY or SECONDARY.")
     acuity: Acuity = Field(description="Acuity status (e.g. ACUTE, CHRONIC).")
     certainty: Certainty = Field(description="Certainty status (e.g. CONFIRMED, SUSPECTED).")
     evidence_quote: str = Field(
         description="Exact quote from clinical record providing documentary evidence.",
+    )
+    evidence: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of structured evidence references supporting this diagnosis.",
     )
     confidence_score: float = Field(
         ge=0.0,

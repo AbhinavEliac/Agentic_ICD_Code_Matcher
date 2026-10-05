@@ -25,9 +25,12 @@ class Certainty(StrEnum):
     """Diagnostic certainty according to clinical documentation."""
 
     CONFIRMED = "CONFIRMED"  # Definite clinical diagnosis
+    SUPPORTED = "SUPPORTED"  # Strongly supported diagnosis by objective clinical facts
     SUSPECTED = "SUSPECTED"  # Probable, working, or differential diagnosis under active evaluation
     POSSIBLE = "POSSIBLE"  # Equivocal, possible, or potential condition
+    UNCERTAIN = "UNCERTAIN"  # Ambiguous or questioned diagnostic status
     RULED_OUT = "RULED_OUT"  # Evaluated and definitively excluded / refuted
+    NEGATED = "NEGATED"  # Explicitly negated condition
     UNKNOWN = "UNKNOWN"  # Diagnostic certainty cannot be established
 
 
@@ -70,11 +73,31 @@ class ClinicalEntityType(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class EvidenceType(StrEnum):
+    """Clinical evidence category providing documentary authorization."""
+
+    DISCHARGE_SUMMARY = "DISCHARGE_SUMMARY"
+    ADMISSION_REASON = "ADMISSION_REASON"
+    CHIEF_COMPLAINT = "CHIEF_COMPLAINT"
+    HOSPITAL_COURSE = "HOSPITAL_COURSE"
+    PROCEDURE = "PROCEDURE"
+    IMAGING = "IMAGING"
+    LAB = "LAB"
+    HISTORY = "HISTORY"
+    CLINICAL_NOTE = "CLINICAL_NOTE"
+    OTHER = "OTHER"
+
+
 class DiagnosisRole(StrEnum):
     """ICD-10-CM coding role designation."""
 
     PRIMARY = "PRIMARY"  # Chief condition established after study to be responsible for admission
     SECONDARY = "SECONDARY"  # Co-existing condition actively managed or impacting stay
+    HISTORICAL = "HISTORICAL"  # Past medical condition not occasioning admission
+    SYMPTOM = "SYMPTOM"  # Symptom integral to or secondary to underlying diagnosis
+    INCIDENTAL = "INCIDENTAL"  # Incidental finding not driving inpatient care
+    RULED_OUT = "RULED_OUT"  # Evaluated and excluded
+    UNCERTAIN = "UNCERTAIN"  # Questioned or ambiguous diagnosis
     EXCLUDED = (
         "EXCLUDED"  # Historical, negated, or unsubstantiated condition (omitted from billing)
     )

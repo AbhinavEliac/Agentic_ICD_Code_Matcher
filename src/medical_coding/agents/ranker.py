@@ -453,18 +453,34 @@ class CandidateRankingAgent(BaseAgent):
                 elif is_acute_doc and not is_chronic_doc:
                     score -= 0.25
 
-            # 4. Specificity penalty for unsupported subtypes
-            # Heart failure: systolic / diastolic
-            if "systolic" in desc_lower and not any(
-                w in full_context for w in ["systolic", "hfref", "reduced ejection"]
-            ):
-                score = 0.05
-                rationale_parts.append("unsupported systolic specificity")
-            if "diastolic" in desc_lower and not any(
-                w in full_context for w in ["diastolic", "hfpef", "preserved ejection"]
-            ):
-                score = 0.05
-                rationale_parts.append("unsupported diastolic specificity")
+            # 4. Specificity penalty for unsupported subtypes and etiologies
+            # Etiology support check: transplant, rheumatic, hypertensive, postprocedural, congenital, etc.
+            etiologies = {
+                "transplant": ["transplant", "allograft", "graft"],
+                "rheumatic": ["rheumatic"],
+                "hypertensive": ["hypertension", "hypertensive", "htn", "high blood pressure"],
+                "postprocedural": ["postprocedural", "postoperative", "post-op", "complication of surgery"],
+                "congenital": ["congenital", "birth defect", "anomaly"],
+                "toxic": ["toxic", "toxicity", "poisoning"],
+                "alcoholic": ["alcoholic", "alcohol", "etoh"],
+            }
+            has_unsupported_etiology = False
+            for etio_word, doc_cues in etiologies.items():
+                if etio_word in desc_lower and not any(w in full_context for w in doc_cues):
+                    score = 0.05
+                    rationale_parts.append(f"unsupported {etio_word} etiology")
+                    has_unsupported_etiology = True
+                    break
+
+            # Heart failure: systolic / diastolic / right / left / end stage
+            if not has_unsupported_etiology and ("heart" in desc_lower and "failure" in desc_lower):
+                for sub in ["systolic", "diastolic", "right", "left", "high output", "end stage", "biventricular", "other"]:
+                    if sub in desc_lower and not any(
+                        w in full_context for w in [sub, "hfref", "hfpef", "reduced ejection", "preserved ejection"]
+                    ):
+                        score = 0.05
+                        rationale_parts.append(f"unsupported {sub} specificity")
+                        break
 
             # Diabetes complications
             if any(

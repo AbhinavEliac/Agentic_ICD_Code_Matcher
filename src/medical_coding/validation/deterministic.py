@@ -569,84 +569,44 @@ class CandidateRankingDeterministicValidator:
         evidence_lower = f"{clean_evidence} {clean_diagnosis}".lower()
         cand_desc_lower = matching_candidate.description.lower()
 
-        # Heart failure specific subtypes: systolic vs diastolic
-        has_systolic_in_cand = "systolic" in cand_desc_lower
-        has_diastolic_in_cand = "diastolic" in cand_desc_lower
-        has_systolic_in_ev = any(
-            w in evidence_lower
-            for w in ["systolic", "hfref", "reduced ejection", "systolic dysfunction"]
-        )
-        has_diastolic_in_ev = any(
-            w in evidence_lower
-            for w in ["diastolic", "hfpef", "preserved ejection", "diastolic dysfunction"]
-        )
-
-        if has_systolic_in_cand and not has_systolic_in_ev:
-            # Check for supported unspecified candidate in pool
-            gen_cand = next(
-                (
-                    c
-                    for c in candidates
-                    if "unspecified" in c.description.lower() or c.code in ["I50.9", "I50"]
-                ),
-                None,
-            )
-            if gen_cand and gen_cand.is_valid_billable:
-                matching_candidate = gen_cand
-                selection.ranking_reason = (
-                    f"Specificity realigned: Documentation supports general heart failure without systolic specificity; "
-                    f"selected unspecified code {gen_cand.code}."
-                )
-            else:
-                return RankedSelection(
-                    diagnosis_id=selection.diagnosis_id,
-                    raw_term=selection.raw_term or clean_diagnosis,
-                    selected_code=None,
-                    selected_description=None,
-                    selected_candidate=None,
-                    ranking_reason=(
-                        f"Unsupported specificity: Candidate '{matching_candidate.code}' specifies systolic heart failure, "
-                        "but documentation only supports general heart failure."
+        # Heart failure specific subtypes: systolic, diastolic, right, left, end stage, etc.
+        if ("heart" in cand_desc_lower and "failure" in cand_desc_lower) or matching_candidate.code.startswith("I50") or matching_candidate.code.startswith("T86.2"):
+            hf_subtypes = ["systolic", "diastolic", "right", "left", "high output", "end stage", "biventricular", "other", "transplant", "rheumatic"]
+            cand_hf_subtypes = [w for w in hf_subtypes if w in cand_desc_lower]
+            doc_context = f"{clean_diagnosis.lower()} {evidence_lower}"
+            unsupported_hf = [w for w in cand_hf_subtypes if w not in doc_context]
+            if unsupported_hf:
+                gen_cand = next(
+                    (
+                        c
+                        for c in candidates
+                        if "unspecified" in c.description.lower() or c.code in ["I50.9", "I50"]
                     ),
-                    supporting_evidence=[clean_evidence],
-                    confidence=0.0,
-                    abstention_reason="UNSUPPORTED_SPECIFICITY",
-                    candidate_pool=candidates,
-                    decision="ABSTAINED",
+                    None,
                 )
-
-        if has_diastolic_in_cand and not has_diastolic_in_ev:
-            gen_cand = next(
-                (
-                    c
-                    for c in candidates
-                    if "unspecified" in c.description.lower() or c.code in ["I50.9", "I50"]
-                ),
-                None,
-            )
-            if gen_cand and gen_cand.is_valid_billable:
-                matching_candidate = gen_cand
-                selection.ranking_reason = (
-                    f"Specificity realigned: Documentation supports general heart failure without diastolic specificity; "
-                    f"selected unspecified code {gen_cand.code}."
-                )
-            else:
-                return RankedSelection(
-                    diagnosis_id=selection.diagnosis_id,
-                    raw_term=selection.raw_term or clean_diagnosis,
-                    selected_code=None,
-                    selected_description=None,
-                    selected_candidate=None,
-                    ranking_reason=(
-                        f"Unsupported specificity: Candidate '{matching_candidate.code}' specifies diastolic heart failure, "
-                        "but documentation only supports general heart failure."
-                    ),
-                    supporting_evidence=[clean_evidence],
-                    confidence=0.0,
-                    abstention_reason="UNSUPPORTED_SPECIFICITY",
-                    candidate_pool=candidates,
-                    decision="ABSTAINED",
-                )
+                if gen_cand and gen_cand.is_valid_billable:
+                    matching_candidate = gen_cand
+                    selection.ranking_reason = (
+                        f"Specificity realigned: Documentation supports general heart failure without {', '.join(unsupported_hf)} specificity; "
+                        f"selected unspecified code {gen_cand.code}."
+                    )
+                else:
+                    return RankedSelection(
+                        diagnosis_id=selection.diagnosis_id,
+                        raw_term=selection.raw_term or clean_diagnosis,
+                        selected_code=None,
+                        selected_description=None,
+                        selected_candidate=None,
+                        ranking_reason=(
+                            f"Unsupported specificity: Candidate '{matching_candidate.code}' specifies {', '.join(unsupported_hf)} heart failure, "
+                            "but documentation only supports general heart failure."
+                        ),
+                        supporting_evidence=[clean_evidence],
+                        confidence=0.0,
+                        abstention_reason="UNSUPPORTED_SPECIFICITY",
+                        candidate_pool=candidates,
+                        decision="ABSTAINED",
+                    )
 
         # Diabetes complications specificity check
         comp_keywords = [

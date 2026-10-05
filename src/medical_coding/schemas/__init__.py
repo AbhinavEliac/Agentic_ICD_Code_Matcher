@@ -1,5 +1,3 @@
-"""Schema module exports."""
-
 from medical_coding.schemas.clinical import (
     ClassifiedDiagnosis,
     ClinicalDocument,
@@ -13,6 +11,14 @@ from medical_coding.schemas.clinical import (
     ExtractedClinicalCondition,
     ExtractedDiagnosis,
     TextSpan,
+)
+from medical_coding.schemas.evidence import (
+    AuditTrailEntry,
+    ClinicalDiagnosisCandidate,
+    ClinicalDiagnosisState,
+    ICDMappingState,
+    MultiDimensionalScore,
+    StructuredEvidence,
 )
 from medical_coding.schemas.enums import (
     AbstentionReason,
@@ -52,9 +58,12 @@ __all__ = [
     "AbstentionReason",
     "AbstentionRecord",
     "Acuity",
+    "AuditTrailEntry",
     "BatchJobStatus",
     "Certainty",
     "ClassifiedDiagnosis",
+    "ClinicalDiagnosisCandidate",
+    "ClinicalDiagnosisState",
     "ClinicalDocument",
     "ClinicalEntityType",
     "ClinicalExtractionResult",
@@ -68,17 +77,21 @@ __all__ = [
     "EncounterClassificationResult",
     "EvidenceLocation",
     "EvidenceSnippet",
+    "EvidenceType",
     "ExecutionStatus",
     "ExtractedClinicalCondition",
     "ExtractedDiagnosis",
     "ICDCandidate",
     "ICDCodeRecord",
+    "ICDMappingState",
     "Laterality",
+    "MultiDimensionalScore",
     "NegationStatus",
     "PipelineExecutionSnapshot",
     "PipelineGraphState",
     "PipelineStage",
     "RankedSelection",
+    "StructuredEvidence",
     "Temporality",
     "TextCodingRequest",
     "TextSpan",

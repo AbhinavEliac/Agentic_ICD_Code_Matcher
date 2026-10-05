@@ -290,9 +290,11 @@ class ContextAndRelevanceAgent(BaseAgent):
             status = self._parse_status(item.get("status"), certainty, temporality)
             negation = self._parse_negation(item.get("negation"))
 
+            matched_sec = matched_cond.section if matched_cond else None
             assessment = ContextAssessment(
                 diagnosis=diag_name,
                 condition_id=matched_cond.condition_id if matched_cond else str(uuid4()),
+                section=matched_sec,
                 current_relevance=bool(item.get("current_relevance", False)),
                 coding_candidate=bool(item.get("coding_candidate", False)),
                 status=status,
@@ -300,7 +302,9 @@ class ContextAndRelevanceAgent(BaseAgent):
                 temporality=temporality,
                 negation=negation,
                 evidence=evidence_str,
-                reason=str(
+                reason=f"[{matched_sec}] {item.get('reason') or 'Evaluated against inpatient clinical relevance guidelines.'}"
+                if matched_sec
+                else str(
                     item.get("reason")
                     or "Evaluated against inpatient clinical relevance guidelines."
                 ),
@@ -463,7 +467,7 @@ class ContextAndRelevanceAgent(BaseAgent):
 
             # Check 3: Inpatient management indicators
             has_treatment = c.treatment_evidence is not None or any(
-                term in combined_context
+                re.search(rf"\b{re.escape(term)}\b", combined_context)
                 for term in [
                     "treated",
                     "started on",
@@ -480,7 +484,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 ]
             )
             has_monitoring = any(
-                term in combined_context
+                re.search(rf"\b{re.escape(term)}\b", combined_context)
                 for term in [
                     "monitored",
                     "echocardiogram",
@@ -510,6 +514,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=False,
                     coding_candidate=False,
                     status=c.status,
@@ -517,7 +522,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=c.temporality,
                     negation=c.negation,
                     evidence=c.evidence_text,
-                    reason="Contradictory or unresolvable clinical documentation; abstention recommended.",
+                    reason=f"[{c.section}] Contradictory or unresolvable clinical documentation; abstention recommended.",
                     treated_or_managed=has_treatment,
                     monitored=has_monitoring,
                     affected_clinical_management=False,
@@ -530,6 +535,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=False,
                     coding_candidate=False,
                     status=ConditionStatus.RESOLVED,
@@ -537,7 +543,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=Temporality.CURRENT,
                     negation=NegationStatus.NEGATED,
                     evidence=c.evidence_text,
-                    reason="Definitively ruled out during hospital stay based on diagnostic evaluation.",
+                    reason=f"[{c.section}] Definitively ruled out during hospital stay based on diagnostic evaluation.",
                     treated_or_managed=False,
                     monitored=has_monitoring,
                     affected_clinical_management=False,
@@ -548,6 +554,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=False,
                     coding_candidate=False,
                     status=ConditionStatus.HISTORICAL,
@@ -555,7 +562,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=Temporality.HISTORICAL,
                     negation=c.negation,
                     evidence=c.evidence_text,
-                    reason="Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
+                    reason=f"[{c.section}] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
                     treated_or_managed=False,
                     monitored=False,
                     affected_clinical_management=False,
@@ -566,6 +573,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=True,
                     coding_candidate=True,
                     status=ConditionStatus.CHRONIC,
@@ -573,7 +581,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=Temporality.CURRENT,
                     negation=c.negation,
                     evidence=c.evidence_text,
-                    reason="Pre-existing condition actively evaluated, monitored, or treated during admission.",
+                    reason=f"[{c.section}] Pre-existing condition actively evaluated, monitored, or treated during admission.",
                     treated_or_managed=has_treatment,
                     monitored=has_monitoring,
                     affected_clinical_management=True,
@@ -584,6 +592,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=True,
                     coding_candidate=True,
                     status=ConditionStatus.RESOLVED,
@@ -591,7 +600,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=Temporality.CURRENT,
                     negation=c.negation,
                     evidence=c.evidence_text,
-                    reason="Condition occurred during admission and resolved following inpatient management.",
+                    reason=f"[{c.section}] Condition occurred during admission and resolved following inpatient management.",
                     treated_or_managed=has_treatment,
                     monitored=has_monitoring,
                     affected_clinical_management=True,
@@ -603,6 +612,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
                     condition_id=c.condition_id,
+                    section=c.section,
                     current_relevance=True,
                     coding_candidate=True,
                     status=c.status,
@@ -610,7 +620,7 @@ class ContextAndRelevanceAgent(BaseAgent):
                     temporality=Temporality.CURRENT,
                     negation=c.negation,
                     evidence=c.evidence_text,
-                    reason="Active inpatient condition evaluated, treated, or managed during current hospitalization.",
+                    reason=f"[{c.section}] Active inpatient condition evaluated, treated, or managed during current hospitalization.",
                     treated_or_managed=has_treatment,
                     monitored=has_monitoring,
                     affected_clinical_management=True,
@@ -899,7 +909,8 @@ class PrimarySecondaryClassifier(BaseAgent):
             ev_lower = (asm.evidence or "").lower()
             treat_lower = (asm.treatment_evidence or "").lower()
             reason_lower = (asm.reason or "").lower()
-            full_context = f"{diag_lower} {ev_lower} {treat_lower} {reason_lower}"
+            sec_lower = (getattr(asm, "section", "") or "").lower().replace("_", " ")
+            full_context = f"{diag_lower} {ev_lower} {treat_lower} {reason_lower} {sec_lower}"
 
             # Check eligibility
             is_excluded = (
@@ -928,8 +939,21 @@ class PrimarySecondaryClassifier(BaseAgent):
             score = 0.0
             reasons: list[str] = []
 
-            # 1. Section / Reason for Admission Context
+            # 1. Section / Reason for Admission Context (UHDDS Authority Hierarchy)
             if any(
+                term in full_context
+                for term in [
+                    "discharge diagnosis",
+                    "discharge diagnoses",
+                    "final diagnosis",
+                    "final diagnoses",
+                    "principal diagnosis",
+                    "primary diagnosis",
+                ]
+            ):
+                score += 5.0
+                reasons.append("Explicitly documented under discharge / final diagnoses (+5.0)")
+            elif any(
                 term in full_context
                 for term in [
                     "chief complaint",
@@ -941,17 +965,10 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "admitting diagnosis",
                 ]
             ):
-                score += 4.0
-                reasons.append(
-                    "Documented as chief complaint or direct reason for admission (+4.0)"
-                )
-
-            if any(
-                term in full_context
-                for term in ["discharge diagnosis", "final diagnosis", "principal diagnosis"]
-            ):
                 score += 3.5
-                reasons.append("Documented under discharge / final diagnoses (+3.5)")
+                reasons.append(
+                    "Documented as chief complaint or direct reason for admission (+3.5)"
+                )
 
             if any(term in full_context for term in ["history of present illness", "hpi"]):
                 score += 2.0
@@ -999,7 +1016,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                 reasons.append("Actively managed and treated during hospitalization (+1.5)")
 
             # 3. Acuity & Certainty
-            if asm.status == ConditionStatus.ACUTE:
+            if asm.status == ConditionStatus.ACUTE or "acute" in diag_lower:
                 score += 2.0
                 reasons.append("Acute presentation (+2.0)")
             if asm.certainty == Certainty.CONFIRMED:
@@ -1008,6 +1025,15 @@ class PrimarySecondaryClassifier(BaseAgent):
             elif asm.certainty in (Certainty.SUSPECTED, Certainty.POSSIBLE):
                 score += 0.5
                 reasons.append("Suspected condition evaluated at discharge (+0.5)")
+
+            # Signs/symptoms or manifestations without definitive etiologic status
+            is_symptom = any(
+                sym in diag_lower
+                for sym in ["symptom", "pain", "fatigue", "edema", "overload", "dyspnea", "shortness of breath", "nausea", "vomiting", "weakness"]
+            )
+            if is_symptom and not any(dx in diag_lower for dx in ["syndrome", "failure", "infarction", "disease"]):
+                score -= 1.0
+                reasons.append("Symptom / manifestation accompanying presentation (-1.0)")
 
             # Chronic baseline conditions without acute exacerbation
             if asm.status == ConditionStatus.CHRONIC and "acute" not in full_context:
@@ -1024,13 +1050,27 @@ class PrimarySecondaryClassifier(BaseAgent):
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
         top_asm, top_score, top_reasons = scored_candidates[0]
 
-        # Check for ambiguity (two plausible primaries with tied or close scores)
+        # Check for genuine ambiguity (two equally qualifying primary diagnoses without documentary distinction)
         has_ambiguous_tie = False
         if len(scored_candidates) > 1:
             second_asm, second_score, _ = scored_candidates[1]
-            if top_score > 0 and (top_score - second_score) <= 1.0:
-                # Both scored high and neither is clearly distinguished by admitting documentation
-                has_ambiguous_tie = True
+            # Genuine tie only if both scores are high, exactly equal, and both document competing reasons for admission
+            if top_score >= 4.0 and second_score >= 4.0 and abs(top_score - second_score) < 0.01:
+                top_ctx = f"{top_asm.evidence} {top_asm.reason}".lower()
+                sec_ctx = f"{second_asm.evidence} {second_asm.reason}".lower()
+                admission_cues = [
+                    "chief complaint",
+                    "reason for admission",
+                    "admitted for",
+                    "admitted with",
+                    "presenting complaint",
+                    "occasioning admission",
+                    "emergent",
+                ]
+                top_has_adm = any(cue in top_ctx for cue in admission_cues)
+                sec_has_adm = any(cue in sec_ctx for cue in admission_cues)
+                if top_has_adm and sec_has_adm:
+                    has_ambiguous_tie = True
 
         if has_ambiguous_tie:
             # DO NOT arbitrarily choose one! All active candidates become SECONDARY with ambiguity note
@@ -1181,10 +1221,12 @@ class PrimarySecondaryClassifier(BaseAgent):
                     or c.certainty == Certainty.RULED_OUT
                     or c.temporality == Temporality.HISTORICAL
                 )
+                sec = getattr(c.evidence, "source_section", None) if c.evidence else None
                 context_assessments.append(
                     ContextAssessment(
                         condition_id=c.diagnosis_id,
                         diagnosis=c.raw_term,
+                        section=sec,
                         current_relevance=not is_excl,
                         coding_candidate=not is_excl,
                         status=ConditionStatus.HISTORICAL
@@ -1194,7 +1236,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                         temporality=c.temporality,
                         negation=c.negation,
                         evidence=c.evidence.quote,
-                        reason=c.clinical_justification,
+                        reason=f"[{sec}] {c.clinical_justification}" if sec else c.clinical_justification,
                         treated_or_managed=not is_excl,
                     )
                 )
@@ -1288,10 +1330,12 @@ class ClassificationAgent(PrimarySecondaryClassifier):
                 or c.certainty == Certainty.RULED_OUT
                 or c.temporality == Temporality.HISTORICAL
             )
+            sec = getattr(c.evidence, "source_section", None) if c.evidence else None
             assessments.append(
                 ContextAssessment(
                     condition_id=c.diagnosis_id,
                     diagnosis=c.raw_term,
+                    section=sec,
                     current_relevance=not is_excl,
                     coding_candidate=not is_excl,
                     status=ConditionStatus.HISTORICAL
@@ -1301,7 +1345,7 @@ class ClassificationAgent(PrimarySecondaryClassifier):
                     temporality=c.temporality,
                     negation=c.negation,
                     evidence=c.evidence.quote,
-                    reason=c.clinical_justification,
+                    reason=f"[{sec}] {c.clinical_justification}" if sec else c.clinical_justification,
                     treated_or_managed=not is_excl,
                 )
             )
