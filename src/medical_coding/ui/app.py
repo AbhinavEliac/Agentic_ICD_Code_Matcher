@@ -148,13 +148,14 @@ def render_coding_session_results(
     steps_data: list[dict[str, Any]],
     thread_id: str,
     document_id: str,
-    _raw_text: str = "",
-    _active_filename: str = "clinical_document.txt",
-    _active_source_type: str = "text",
-    _active_file_bytes: bytes | None = None,
-    _min_score: float = 0.40,
+    raw_text: str = "",
+    active_filename: str = "clinical_document.txt",
+    active_source_type: str = "text",
+    active_file_bytes: bytes | None = None,
+    min_score: float = 0.40,
 ) -> None:
     """Render complete diagnostics: Step Oversight Timeline, Failure/Success, KPIs, Diagnoses, and Exports."""
+    _ = (raw_text, active_filename, active_source_type, active_file_bytes, min_score)
     is_error = coding_result.status == ExecutionStatus.ERROR
     has_failed_meta = bool(coding_result.metadata and coding_result.metadata.get("failed_step"))
 
