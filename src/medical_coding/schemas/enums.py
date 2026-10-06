@@ -79,18 +79,66 @@ class Laterality(StrEnum):
 
 
 class ClinicalEntityType(StrEnum):
-    """Categorization of extracted clinical entities."""
+    """Universal Clinical Entity Taxonomy conforming to Master Directive Section 2.
+    Classifies every extracted clinical phrase into exactly one primary entity category prior to database retrieval.
+    """
 
     DIAGNOSIS = "DIAGNOSIS"
     SYMPTOM = "SYMPTOM"
     SIGN = "SIGN"
+    CLINICAL_FINDING = "CLINICAL_FINDING"
+    COMPLICATION = "COMPLICATION"
+    INJURY = "INJURY"
+    NEOPLASM = "NEOPLASM"
+    INFECTION = "INFECTION"
+    CHRONIC_CONDITION = "CHRONIC_CONDITION"
+    COMORBIDITY = "COMORBIDITY"
+    PROCEDURE = "PROCEDURE"
+    SURGERY = "SURGERY"
+    TREATMENT = "TREATMENT"
+    MEDICATION = "MEDICATION"
+    INVESTIGATION = "INVESTIGATION"
+    LAB_RESULT = "LAB_RESULT"
+    IMAGING_FINDING = "IMAGING_FINDING"
+    PATHOLOGY_FINDING = "PATHOLOGY_FINDING"
+    ANATOMICAL_SITE = "ANATOMICAL_SITE"
+    CLINICAL_ATTRIBUTE = "CLINICAL_ATTRIBUTE"
+    TEMPORAL_CONTEXT = "TEMPORAL_CONTEXT"
+    ENCOUNTER_CONTEXT = "ENCOUNTER_CONTEXT"
+    ADMINISTRATIVE_TEXT = "ADMINISTRATIVE_TEXT"
+    INSTRUCTION = "INSTRUCTION"
+    NEGATED_CONDITION = "NEGATED_CONDITION"
+    FAMILY_HISTORY = "FAMILY_HISTORY"
+    OTHER_NON_CODABLE_TEXT = "OTHER_NON_CODABLE_TEXT"
     PROCEDURAL_FINDING = "PROCEDURAL_FINDING"
     UNKNOWN = "UNKNOWN"
 
 
 class EvidenceType(StrEnum):
-    """Clinical evidence category providing documentary authorization."""
+    """Clinical evidence category providing documentary authorization (Section 3)."""
 
+    # Section 3 fine-grained clinical evidence types
+    EXPLICIT_DIAGNOSIS = "explicit_diagnosis"
+    DISCHARGE_DIAGNOSIS = "discharge_diagnosis"
+    ADMISSION_DIAGNOSIS = "admission_diagnosis"
+    PHYSICIAN_ASSESSMENT = "physician_assessment"
+    PATHOLOGY_CONFIRMATION = "pathology_confirmation"
+    IMAGING_CONFIRMATION = "imaging_confirmation"
+    LABORATORY_CONFIRMATION = "laboratory_confirmation"
+    OPERATIVE_CONFIRMATION = "operative_confirmation"
+    TREATMENT_FOR_CONDITION = "treatment_for_condition"
+    DOCUMENTED_ACTIVE_MANAGEMENT = "documented_active_management"
+    HISTORICAL_DOCUMENTATION = "historical_documentation"
+    SYMPTOM_ONLY = "symptom_only"
+    INCIDENTAL_FINDING = "incidental_finding"
+    PROCEDURE_CONTEXT = "procedure_context"
+    MEDICATION_CONTEXT = "medication_context"
+    INSTRUCTION_CONTEXT = "instruction_context"
+    NEGATIVE_STATEMENT = "negative_statement"
+    SUSPECTED_STATEMENT = "suspected_statement"
+    RULED_OUT_STATEMENT = "ruled_out_statement"
+
+    # Uppercase aliases preserved for backward compatibility
     DISCHARGE_SUMMARY = "DISCHARGE_SUMMARY"
     ADMISSION_REASON = "ADMISSION_REASON"
     CHIEF_COMPLAINT = "CHIEF_COMPLAINT"
@@ -98,6 +146,7 @@ class EvidenceType(StrEnum):
     PROCEDURE = "PROCEDURE"
     IMAGING = "IMAGING"
     LAB = "LAB"
+    LABORATORY = "LAB"
     HISTORY = "HISTORY"
     CLINICAL_NOTE = "CLINICAL_NOTE"
     OTHER = "OTHER"

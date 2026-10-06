@@ -10,6 +10,7 @@ Conforms to Master Specification Section 5 & 6:
 import re
 from typing import Any
 
+from medical_coding.schemas.enums import ClinicalEntityType
 from medical_coding.schemas.reasoning import ClinicalConcept
 from medical_coding.utils.logging import get_logger
 
@@ -214,27 +215,46 @@ class ClinicalConceptReasoner:
         if getattr(candidate, "temporality", None) in ("HISTORICAL", "RESOLVED"):
             temporality = str(candidate.temporality)
 
-        cid = getattr(candidate, "diagnosis_id", None) or getattr(candidate, "condition_id", None) or ""
+        entity_type = getattr(candidate, "entity_type", None) or "DIAGNOSIS"
+        if isinstance(entity_type, str):
+            try:
+                entity_type = ClinicalEntityType(entity_type)
+            except ValueError:
+                entity_type = ClinicalEntityType.DIAGNOSIS
+
+        cid = getattr(candidate, "diagnosis_id", None) or getattr(candidate, "condition_id", None) or getattr(candidate, "id", "") or ""
 
         return ClinicalConcept(
             concept_id=str(cid) if cid else None,
+            id=str(cid) if cid else None,
             canonical_name=raw_term,
+            canonical_concept=raw_term,
+            normalized_concept=getattr(candidate, "normalized_diagnosis", raw_term),
+            entity_type=entity_type,
             disease_family=matched_family,
             body_site=detected_site,
+            anatomy=detected_site,
             laterality=detected_laterality,
             etiology=etiology,
             histology=histology,
             severity=None,
             complication=None,
+            acuity=getattr(candidate, "acuity", None),
             temporal_status=temporality,
+            temporality=temporality,
             assertion_status=assertion,
             role_hint=str(getattr(candidate, "role", "SECONDARY")),
+            role=str(getattr(candidate, "role", "SECONDARY")),
             metastatic_status=is_metastatic,
             metastatic_sites=metastatic_sites,
             evidence_spans=[quote] if quote else [],
+            supporting_evidence=[quote] if quote else [],
             supporting_sections=[getattr(candidate, "source_section", "DISCHARGE_DIAGNOSES") or "DISCHARGE_DIAGNOSES"],
+            source_sections=[getattr(candidate, "source_section", "DISCHARGE_DIAGNOSES") or "DISCHARGE_DIAGNOSES"],
             supported_attributes=supported_attributes,
             unknown_attributes=unknown_attributes,
             contradictory_attributes=[],
+            contradiction_evidence=[],
             confidence=float(getattr(candidate, "confidence_score", 1.0) or 1.0),
+            clinical_confidence=float(getattr(candidate, "confidence_score", 1.0) or 1.0),
         )

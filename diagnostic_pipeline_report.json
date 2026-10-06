@@ -24,14 +24,8 @@
           "confidence_score": 1.0
         }
       ],
-      "abstention_count": 3,
+      "abstention_count": 2,
       "abstentions": [
-        {
-          "diagnosis": "Appendectomy in 2005.",
-          "reason": "EXCLUDED_BY_NEGATION",
-          "detail": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
-          "stage": "CLASSIFICATION"
-        },
         {
           "diagnosis": "Resolved seasonal allergic rhinitis.",
           "reason": "EXCLUDED_BY_NEGATION",
@@ -48,41 +42,7 @@
       "audit_trail_sample": [
         {
           "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "164e94a9-2b73-4039-a068-1d9c4d32e82f",
-          "raw_term": "Appendectomy in 2005.",
-          "evidence": "1. Appendectomy in 2005.",
-          "context": {
-            "certainty": "CONFIRMED",
-            "temporality": "HISTORICAL",
-            "negation": "AFFIRMATIVE",
-            "acuity": "UNSPECIFIED"
-          },
-          "classification": {
-            "role": "EXCLUDED",
-            "is_billable": false,
-            "reason": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy."
-          },
-          "retrieved_candidates": [],
-          "selected_candidate": {
-            "code": null,
-            "description": null,
-            "confidence": 0.0,
-            "reason": "Candidate pool was empty; no matching local ICD code.",
-            "decision": "ABSTAINED"
-          },
-          "validation": {
-            "status": "REJECTED_OR_ABSTAINED",
-            "checks": []
-          },
-          "final_result": {
-            "code": null,
-            "description": null,
-            "role": null
-          }
-        },
-        {
-          "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "435e53a7-b9e1-4b0c-a034-78076e40d297",
+          "diagnosis_id": "858c704c-b4d1-4ce8-8aed-19bca0d0ca3a",
           "raw_term": "Resolved seasonal allergic rhinitis.",
           "evidence": "2. Resolved seasonal allergic rhinitis.",
           "context": {
@@ -113,6 +73,177 @@
             "description": null,
             "role": null
           }
+        },
+        {
+          "document_id": "CASE-01-STANDARD-ADMISSION",
+          "diagnosis_id": "80165556-6c96-4cb9-85cc-fb71a656e79d",
+          "raw_term": "Acute systolic heart failure",
+          "evidence": "1. Acute systolic heart failure - Patient admitted with acute exacerbation of systolic congestive heart failure. Echo demonstrated EF 20%. Treated with intravenous furosemide diuresis with marked symptomatic improvement.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "ACUTE"
+          },
+          "classification": {
+            "role": "PRIMARY",
+            "is_billable": true,
+            "reason": "Selected as unique Primary Diagnosis (score=11.0): Identified as principal condition occasioning admission (+6.0); Active intravenous / intensive therapeutic management administered (+2.0); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "I50.21",
+              "description": "Acute systolic (congestive) heart failure",
+              "score": 0.9148
+            },
+            {
+              "code": "I50.23",
+              "description": "Acute on chronic systolic (congestive) heart failure",
+              "score": 0.85
+            },
+            {
+              "code": "I50.20",
+              "description": "Unspecified systolic (congestive) heart failure",
+              "score": 0.85
+            },
+            {
+              "code": "I50.22",
+              "description": "Chronic systolic (congestive) heart failure",
+              "score": 0.85
+            },
+            {
+              "code": "I50.89",
+              "description": "Other heart failure",
+              "score": 0.85
+            },
+            {
+              "code": "I50.9",
+              "description": "Heart failure, unspecified",
+              "score": 0.85
+            },
+            {
+              "code": "I50.31",
+              "description": "Acute diastolic (congestive) heart failure",
+              "score": 0.75
+            },
+            {
+              "code": "I50.33",
+              "description": "Acute on chronic diastolic (congestive) heart failure",
+              "score": 0.75
+            },
+            {
+              "code": "I50.30",
+              "description": "Unspecified diastolic (congestive) heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.32",
+              "description": "Chronic diastolic (congestive) heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.82",
+              "description": "Biventricular heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.811",
+              "description": "Acute right heart failure",
+              "score": 0.7291
+            },
+            {
+              "code": "I50.41",
+              "description": "Acute combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.7197
+            },
+            {
+              "code": "I50.43",
+              "description": "Acute on chronic combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.6894
+            },
+            {
+              "code": "I50.813",
+              "description": "Acute on chronic right heart failure",
+              "score": 0.65
+            },
+            {
+              "code": "I50.40",
+              "description": "Unspecified combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.65
+            },
+            {
+              "code": "I50.42",
+              "description": "Chronic combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.65
+            },
+            {
+              "code": "I50.810",
+              "description": "Right heart failure, unspecified",
+              "score": 0.8
+            },
+            {
+              "code": "I50.812",
+              "description": "Chronic right heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.1",
+              "description": "Left ventricular failure, unspecified",
+              "score": 0.75
+            },
+            {
+              "code": "I50.83",
+              "description": "High output heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.84",
+              "description": "End stage heart failure",
+              "score": 0.8
+            },
+            {
+              "code": "I50.814",
+              "description": "Right heart failure due to left heart failure",
+              "score": 0.5818
+            },
+            {
+              "code": "T86.22",
+              "description": "Heart transplant failure",
+              "score": 0.545
+            },
+            {
+              "code": "I97.130",
+              "description": "Postprocedural heart failure following cardiac surgery",
+              "score": 0.5852
+            }
+          ],
+          "selected_candidate": {
+            "code": "I50.21",
+            "description": "Acute systolic (congestive) heart failure",
+            "confidence": 1.0,
+            "reason": "Candidate 'I50.21' (Acute systolic (congestive) heart failure) best supported by documentation (core diagnostic entity match (3/3), acute acuity match).",
+            "decision": "ACCEPTED"
+          },
+          "validation": {
+            "status": "PASSED",
+            "checks": [
+              {
+                "rule_name": "CatalogExistence",
+                "passed": true,
+                "details": "Code 'I50.21' exists in local authoritative catalog."
+              },
+              {
+                "rule_name": "TerminalSpecificity",
+                "passed": true,
+                "details": "Code 'I50.21' is at terminal billable specificity."
+              }
+            ]
+          },
+          "final_result": {
+            "code": "I50.21",
+            "description": "Acute systolic (congestive) heart failure",
+            "role": "PRIMARY"
+          }
         }
       ]
     },
@@ -139,7 +270,7 @@
       "audit_trail_sample": [
         {
           "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
-          "diagnosis_id": "a949862f-d67f-4567-b3ee-afe50e8be353",
+          "diagnosis_id": "3a1b04c7-2cd6-4abb-83ec-2ce5eb614316",
           "raw_term": "Heart failure",
           "evidence": "1. Heart failure - Patient has documented history of heart failure. Maintenance oral furosemide was continued. No echocardiogram was performed during admission and ejection fraction was not documented.",
           "context": {
@@ -310,7 +441,7 @@
         },
         {
           "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
-          "diagnosis_id": "73d2563b-65bf-4d4b-adeb-c702ae244c35",
+          "diagnosis_id": "e93bc4bc-1e42-4491-8224-26be11e409bb",
           "raw_term": "Fatigue and peripheral edema",
           "evidence": "Fatigue and peripheral edema",
           "context": {
@@ -367,7 +498,7 @@
       "audit_trail_sample": [
         {
           "document_id": "CASE-03-RULED-OUT-CONDITION",
-          "diagnosis_id": "6b589cd9-5213-40e0-b136-22313b8c60ea",
+          "diagnosis_id": "2e7e84ee-0a27-41ea-b1c0-c767223116b7",
           "raw_term": "Non-cardiac chest pain",
           "evidence": "1. Non-cardiac chest pain - Evaluated for acute coronary syndrome. Acute myocardial infarction was definitively ruled out by serial negative high-sensitivity troponins and normal ECG.",
           "context": {
@@ -401,7 +532,7 @@
         },
         {
           "document_id": "CASE-03-RULED-OUT-CONDITION",
-          "diagnosis_id": "55ee1709-c1a4-4b90-87d1-35c9a23127f5",
+          "diagnosis_id": "29adba3a-9803-4a25-9c85-b48ad4b884a5",
           "raw_term": "Acute substernal chest discomfort",
           "evidence": "Acute substernal chest discomfort",
           "context": {
@@ -467,6 +598,16 @@
               "score": 0.75
             },
             {
+              "code": "H53.149",
+              "description": "Visual discomfort, unspecified",
+              "score": 0.75
+            },
+            {
+              "code": "R10.24",
+              "description": "Suprapubic pain",
+              "score": 0.75
+            },
+            {
               "code": "L03.323",
               "description": "Acute lymphangitis of chest wall",
               "score": 0.65
@@ -487,9 +628,24 @@
               "score": 0.55
             },
             {
+              "code": "H53.143",
+              "description": "Visual discomfort, bilateral",
+              "score": 0.55
+            },
+            {
               "code": "D57.451",
               "description": "Sickle-cell thalassemia beta plus with acute chest syndrome",
               "score": 0.5
+            },
+            {
+              "code": "H53.141",
+              "description": "Visual discomfort, right eye",
+              "score": 0.5066
+            },
+            {
+              "code": "H53.142",
+              "description": "Visual discomfort, left eye",
+              "score": 0.5066
             }
           ],
           "selected_candidate": {
@@ -526,38 +682,15 @@
       "case_id": "CASE-04-HISTORICAL-PMH-ONLY",
       "title": "Past Medical History Without Inpatient Care (Remote CVA)",
       "expected_behavior": "Guardrail 5: Historical-only conditions cannot automatically become coded secondary diagnoses.",
-      "status": "PARTIAL_SUCCESS",
-      "primary_diagnosis": {
-        "code": "",
-        "description": "Elective repair of inguinal hernia",
-        "confidence_score": 1.0
-      },
+      "status": "SUCCESS",
+      "primary_diagnosis": null,
       "secondary_diagnoses": [],
-      "abstention_count": 3,
-      "abstentions": [
-        {
-          "diagnosis": "Remote stroke in 2014 without residual neurological deficit.",
-          "reason": "EXCLUDED_BY_NEGATION",
-          "detail": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
-          "stage": "CLASSIFICATION"
-        },
-        {
-          "diagnosis": "Elective repair of inguinal hernia",
-          "reason": "NO_MATCHING_ICD_CANDIDATE",
-          "detail": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
-          "stage": "RANKING"
-        },
-        {
-          "diagnosis": "Inguinal hernia repair",
-          "reason": "NO_MATCHING_ICD_CANDIDATE",
-          "detail": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
-          "stage": "RANKING"
-        }
-      ],
+      "abstention_count": 0,
+      "abstentions": [],
       "audit_trail_sample": [
         {
           "document_id": "CASE-04-HISTORICAL-PMH-ONLY",
-          "diagnosis_id": "fc58d184-3d23-431d-86bc-9a33e5aff293",
+          "diagnosis_id": "8efa00aa-a42d-43be-9c32-aea64f8f7752",
           "raw_term": "Remote stroke in 2014 without residual neurological deficit.",
           "evidence": "1. Remote stroke in 2014 without residual neurological deficit.",
           "context": {
@@ -572,173 +705,7 @@
             "reason": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy."
           },
           "retrieved_candidates": [],
-          "selected_candidate": {
-            "code": null,
-            "description": null,
-            "confidence": 0.0,
-            "reason": "Candidate pool was empty; no matching local ICD code.",
-            "decision": "ABSTAINED"
-          },
-          "validation": {
-            "status": "REJECTED_OR_ABSTAINED",
-            "checks": []
-          },
-          "final_result": {
-            "code": null,
-            "description": null,
-            "role": null
-          }
-        },
-        {
-          "document_id": "CASE-04-HISTORICAL-PMH-ONLY",
-          "diagnosis_id": "ba8d4016-2393-4b5f-a158-642c33a2947b",
-          "raw_term": "Elective repair of inguinal hernia",
-          "evidence": "1. Elective repair of inguinal hernia.",
-          "context": {
-            "certainty": "CONFIRMED",
-            "temporality": "CURRENT",
-            "negation": "AFFIRMATIVE",
-            "acuity": "ACUTE"
-          },
-          "classification": {
-            "role": "PRIMARY",
-            "is_billable": true,
-            "reason": "Selected as unique Primary Diagnosis (score=7.5): Explicitly documented under discharge / final diagnoses (+5.0); Actively managed and treated during hospitalization (+1.5); Confirmed diagnostic certainty (+1.0)"
-          },
-          "retrieved_candidates": [
-            {
-              "code": "K42.9",
-              "description": "Umbilical hernia without obstruction or gangrene",
-              "score": 0.8
-            },
-            {
-              "code": "K43.9",
-              "description": "Ventral hernia without obstruction or gangrene",
-              "score": 0.8
-            },
-            {
-              "code": "K42.0",
-              "description": "Umbilical hernia with obstruction, without gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K42.1",
-              "description": "Umbilical hernia with gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.0",
-              "description": "Incisional hernia with obstruction, without gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.1",
-              "description": "Incisional hernia with gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.2",
-              "description": "Incisional hernia without obstruction or gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.3",
-              "description": "Parastomal hernia with obstruction, without gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.4",
-              "description": "Parastomal hernia with gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.5",
-              "description": "Parastomal hernia without obstruction or gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.6",
-              "description": "Other and unspecified ventral hernia with obstruction, without gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K43.7",
-              "description": "Other and unspecified ventral hernia with gangrene",
-              "score": 0.75
-            },
-            {
-              "code": "K40.90",
-              "description": "Unilateral inguinal hernia, without obstruction or gangrene, not specified as recurrent",
-              "score": 0.85
-            },
-            {
-              "code": "K40.30",
-              "description": "Unilateral inguinal hernia, with obstruction, without gangrene, not specified as recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.31",
-              "description": "Unilateral inguinal hernia, with obstruction, without gangrene, recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.40",
-              "description": "Unilateral inguinal hernia, with gangrene, not specified as recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.41",
-              "description": "Unilateral inguinal hernia, with gangrene, recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.91",
-              "description": "Unilateral inguinal hernia, without obstruction or gangrene, recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.11",
-              "description": "Bilateral inguinal hernia, with gangrene, recurrent",
-              "score": 0.5252
-            },
-            {
-              "code": "K40.00",
-              "description": "Bilateral inguinal hernia, with obstruction, without gangrene, not specified as recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.01",
-              "description": "Bilateral inguinal hernia, with obstruction, without gangrene, recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.10",
-              "description": "Bilateral inguinal hernia, with gangrene, not specified as recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.20",
-              "description": "Bilateral inguinal hernia, without obstruction or gangrene, not specified as recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K40.21",
-              "description": "Bilateral inguinal hernia, without obstruction or gangrene, recurrent",
-              "score": 0.8
-            },
-            {
-              "code": "K41.90",
-              "description": "Unilateral femoral hernia, without obstruction or gangrene, not specified as recurrent",
-              "score": 0.8
-            }
-          ],
-          "selected_candidate": {
-            "code": null,
-            "description": null,
-            "confidence": 0.0,
-            "reason": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
-            "decision": "ABSTAINED"
-          },
+          "selected_candidate": null,
           "validation": {
             "status": "REJECTED_OR_ABSTAINED",
             "checks": []

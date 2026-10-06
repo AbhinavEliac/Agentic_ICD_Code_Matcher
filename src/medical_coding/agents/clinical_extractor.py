@@ -29,6 +29,7 @@ from medical_coding.schemas.evidence import (
     StructuredEvidence,
 )
 from medical_coding.utils.logging import get_logger
+from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
 logger = get_logger(__name__)
 
@@ -194,14 +195,31 @@ class EvidenceFirstFactExtractor:
         item: ClinicalDiagnosisCandidate,
     ) -> None:
         """Register, validate, and corroborate a candidate in the clinical inventory."""
-        from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
+        # Strip procedural wrapper if candidate is phrased as a surgical procedure for a disease (Section 11 & 12)
+        proc_wrapper_m = re.match(
+            r"^(?:(?:elective|open|laparoscopic|robotic|urgent|emergency|bilateral|unilateral|primary|revision)\s+)?"
+            r"(?:repair|resection|excision|stenting|mastectomy|cholecystectomy|appendectomy|biopsy|replacement|arthroplasty|fusion|drainage|decompression|catheterization|bypass|angioplasty|amputation|debridement)\s+(?:of|for)\s+(.+)$",
+            item.raw_term.strip(),
+            re.IGNORECASE,
+        )
+        if proc_wrapper_m:
+            underlying_disease = proc_wrapper_m.group(1).strip()
+            if len(underlying_disease) >= 3:
+                item.raw_term = underlying_disease
+                item.normalized_diagnosis = underlying_disease
+                item.procedure_relevance = 1.0
 
         # Check candidate validity with Hard Gate
-        is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
+        is_valid, reject_reason = HardClinicalCandidateGate.evaluate_candidate(
             item.raw_term, item.primary_evidence_quote
         )
         if not is_valid:
+            logger.debug("Candidate gate rejected '%s': %s", item.raw_term, reject_reason)
             return
+
+        item.entity_type = HardClinicalCandidateGate.classify_entity_type(
+            item.raw_term, item.primary_evidence_quote
+        )
 
         raw_t = item.raw_term.strip()
         # Handle question mark shorthand or uncertainty (?early evolving renal abscess)

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from medical_coding.schemas.enums import (
     AssertionStatus,
     Certainty,
+    ClinicalEntityType,
     DiagnosisRole,
     EvidenceType,
     NegationStatus,
@@ -127,6 +128,10 @@ class ClinicalDiagnosisCandidate(BaseModel):
     normalized_diagnosis: str = Field(
         min_length=1,
         description="Canonical medical description without ICD code assumptions.",
+    )
+    entity_type: ClinicalEntityType = Field(
+        default=ClinicalEntityType.DIAGNOSIS,
+        description="Primary taxonomy category from Universal Entity Taxonomy (Section 2).",
     )
     role: DiagnosisRole = Field(
         default=DiagnosisRole.SECONDARY,

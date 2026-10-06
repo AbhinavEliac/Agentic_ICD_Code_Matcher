@@ -11,6 +11,8 @@ Strictly rejects:
 
 import re
 
+from medical_coding.schemas.enums import ClinicalEntityType
+
 # 1. Statements describing the ABSENCE of disease, complications, or adverse events
 ABSENCE_PATTERNS = [
     r"^\s*no\s+(?:acute|major|significant|active|obvious|evident|apparent|new|further)?\s*(?:complications?|adverse\s+(?:events?|reactions?|effects?)|reactions?|bleeding|ulceration|ischemia|infarction|recurrence|toxicity|decompensation|sequelae|abnormality|distress|complaints?)\b",
@@ -111,12 +113,60 @@ PATHOLOGY_KEYWORDS = {
 }
 
 
+# 7. Procedure and surgical keywords (Section 11 Procedure Firewall)
+PROCEDURE_TERMS = {
+    "mastectomy", "reconstruction", "endoscopy", "colonoscopy", "stenting", "stent",
+    "biopsy", "laparoscopy", "excision", "resection", "debridement", "incision",
+    "repair", "intubation", "catheterization", "cannulation", "grafting", "arthroscopy",
+    "cholecystectomy", "appendectomy", "hysterectomy", "lumpectomy", "angioplasty",
+    "bypass", "dialysis", "hemodialysis", "paracentesis", "thoracentesis", "fet",
+    "frozen embryo transfer", "infusion", "chemotherapy", "radiotherapy", "radiation",
+}
+
+PROCEDURE_SUFFIXES = (
+    "ectomy", "otomy", "ostomy", "plasty", "pexy", "scopy", "centesis", "rrhaphy",
+)
+
+# 8. Investigation names lacking pathological findings
+INVESTIGATION_TERMS = {
+    "ct", "ct scan", "mri", "cxr", "chest x-ray", "ultrasound", "usg",
+    "echocardiogram", "echo", "ecg", "ekg", "xray", "x-ray", "eeg", "emg", "urinalysis",
+}
+
+# 9. Family history and hypothetical cues
+FAMILY_HISTORY_PATTERNS = [
+    r"\b(?:family\s+history|fhx|mother\s+(?:had|with)|father\s+(?:had|with)|sister\s+(?:had|with)|brother\s+(?:had|with))\b",
+]
+
+HYPOTHETICAL_PATTERNS = [
+    r"\b(?:if\s+symptoms?\s+worsen|in\s+the\s+event\s+of|in\s+case\s+of|contingent\s+upon)\b",
+]
+
+
 class HardClinicalCandidateGate:
-    """Deterministic clinical candidate gate enforcing Section 3, 5 & 8 requirements."""
+    """Deterministic clinical candidate gate enforcing Section 4 & Section 11 specifications."""
 
     @classmethod
     def evaluate_candidate(cls, term: str, evidence_text: str = "") -> tuple[bool, str]:
-        """Evaluate whether an extracted term is a genuine clinical diagnosis.
+        """Evaluate whether an extracted term is a genuine clinical diagnosis (Section 4).
+
+        A candidate MUST satisfy:
+        1. It represents a clinical condition or codable clinical concept.
+        2. It has identifiable evidence in the source document.
+        3. The evidence is attributable to the patient.
+        4. The evidence is not merely a heading or section label.
+        5. The evidence is not merely a procedure.
+        6. The evidence is not merely a medication.
+        7. The evidence is not merely a treatment instruction.
+        8. The evidence is not merely an investigation name.
+        9. The evidence is not merely an anatomical site.
+        10. The evidence is not merely a disease attribute.
+        11. The evidence is not negated.
+        12. The evidence is not purely family history.
+        13. The evidence is not hypothetical.
+        14. The evidence is not merely a rule-out diagnosis.
+        15. The candidate does not depend on unsupported inference.
+        16. The candidate is not generated solely from database retrieval.
 
         Returns:
             Tuple of (is_valid, rejection_reason).
@@ -171,7 +221,114 @@ class HardClinicalCandidateGate:
         if any(term_lower == meta for meta in ["classification of fracture", "classification of fracture: not applicable", "not applicable", "n/a", "na", "biomarkers & receptor status", "biomarkers", "receptor status"]):
             return False, f"Metadata or template header artifact: '{clean_term}'"
 
+        # Check 9: Pure surgical or procedural interventions (Section 11 Procedure Firewall)
+        is_pure_procedure = (
+            any(re.search(rf"\b{re.escape(proc)}\b", term_lower) for proc in PROCEDURE_TERMS)
+            or any(term_lower.endswith(sfx) for sfx in PROCEDURE_SUFFIXES)
+        )
+        if is_pure_procedure:
+            words = set(re.findall(r"[a-z]+", term_lower))
+            if not words.intersection(PATHOLOGY_KEYWORDS):
+                return False, f"Procedure or surgical intervention, not an independent clinical diagnosis: '{clean_term}'"
+
+        # Check 10: Pure investigation names lacking findings
+        is_pure_investigation = any(term_lower == inv or term_lower.startswith(f"{inv} of ") for inv in INVESTIGATION_TERMS)
+        if is_pure_investigation:
+            words = set(re.findall(r"[a-z]+", term_lower))
+            if not words.intersection(PATHOLOGY_KEYWORDS):
+                return False, f"Investigation or diagnostic test name lacking pathological finding: '{clean_term}'"
+
+        # Check 11: Family history
+        for pat in FAMILY_HISTORY_PATTERNS:
+            if re.search(pat, term_lower):
+                return False, f"Family medical history, not personal patient condition: '{clean_term}'"
+
+        # Check 12: Hypothetical statements
+        for pat in HYPOTHETICAL_PATTERNS:
+            if re.search(pat, term_lower):
+                return False, f"Hypothetical or contingent clinical statement: '{clean_term}'"
+
         return True, "Valid clinical diagnosis entity"
+
+    @classmethod
+    def classify_entity_type(cls, term: str, evidence_text: str = "") -> ClinicalEntityType:
+        """Classify any clinical phrase into the Universal Clinical Entity Taxonomy (Section 2)."""
+        term_lower = term.strip().lower()
+        ev_lower = evidence_text.strip().lower()
+
+        # 1. Negated
+        if any(re.search(pat, term_lower) for pat in ABSENCE_PATTERNS) or term_lower.startswith("no ") or "ruled out" in term_lower or "negative for" in term_lower:
+            return ClinicalEntityType.NEGATED_CONDITION
+
+        # 2. Family History
+        if any(re.search(pat, term_lower) for pat in FAMILY_HISTORY_PATTERNS) or "family history" in ev_lower:
+            return ClinicalEntityType.FAMILY_HISTORY
+
+        # 3. Instruction
+        if any(re.search(pat, term_lower) for pat in INSTRUCTION_PATTERNS):
+            return ClinicalEntityType.INSTRUCTION
+
+        # 4. Administrative Text
+        if any(term_lower == m or re.search(pat, term_lower) for pat in METADATA_PATTERNS for m in ["not applicable", "n/a", "biomarkers & receptor status"]):
+            return ClinicalEntityType.ADMINISTRATIVE_TEXT
+
+        # 5. Clinical Attribute
+        if any(re.search(pat, term_lower) for pat in STANDALONE_ATTRIBUTE_PATTERNS):
+            return ClinicalEntityType.CLINICAL_ATTRIBUTE
+
+        # 6. Anatomical Site
+        if any(re.search(pat, term_lower) for pat in ISOLATED_ANATOMY_PATTERNS):
+            return ClinicalEntityType.ANATOMICAL_SITE
+
+        # 7. Medication
+        if any(re.search(pat, term_lower) for pat in DOSAGE_FORM_PATTERNS) or any(re.search(pat, term_lower) for pat in PRESCRIPTION_SYNTAX_PATTERNS):
+            return ClinicalEntityType.MEDICATION
+
+        # 8. Surgery & Procedure
+        is_procedure = (
+            any(re.search(rf"\b{re.escape(proc)}\b", term_lower) for proc in PROCEDURE_TERMS)
+            or any(term_lower.endswith(sfx) for sfx in PROCEDURE_SUFFIXES)
+        )
+        if is_procedure:
+            words = set(re.findall(r"[a-z]+", term_lower))
+            if not words.intersection(PATHOLOGY_KEYWORDS):
+                if any(surg in term_lower for surg in ("mastectomy", "resection", "excision", "cholecystectomy", "appendectomy", "repair", "bypass")):
+                    return ClinicalEntityType.SURGERY
+                return ClinicalEntityType.PROCEDURE
+
+        # 9. Investigation
+        if any(term_lower == inv or term_lower.startswith(f"{inv} of ") for inv in INVESTIGATION_TERMS):
+            words = set(re.findall(r"[a-z]+", term_lower))
+            if not words.intersection(PATHOLOGY_KEYWORDS):
+                return ClinicalEntityType.INVESTIGATION
+
+        # 10. Symptoms & Signs
+        if any(sym in term_lower for sym in ["pain", "cough", "nausea", "vomiting", "dyspnea", "shortness of breath", "fatigue", "malaise", "colic", "dizziness"]):
+            return ClinicalEntityType.SYMPTOM
+        if any(sign in term_lower for sign in ["tachycardia", "tachypnea", "fever", "hypotension", "wheezing", "rales", "edema", "swelling"]):
+            return ClinicalEntityType.SIGN
+
+        # 11. Neoplasms
+        if any(neo in term_lower for neo in ["carcinoma", "sarcoma", "lymphoma", "cancer", "neoplasm", "tumor", "carcinoid", "adenoma", "malignancy"]):
+            return ClinicalEntityType.NEOPLASM
+
+        # 12. Injuries
+        if any(inj in term_lower for inj in ["fracture", "tear", "sprain", "strain", "rupture", "dislocation", "laceration", "contusion", "injury"]):
+            return ClinicalEntityType.INJURY
+
+        # 13. Infections
+        if any(inf in term_lower for inf in ["infection", "pyelonephritis", "pneumonia", "uti", "sepsis", "cellulitis", "candidiasis", "abscess", "bacteremia"]):
+            return ClinicalEntityType.INFECTION
+
+        # 14. Chronic Conditions
+        if any(chr_c in term_lower for chr_c in ["hypertension", "diabetes", "asthma", "copd", "ckd", "chronic"]):
+            return ClinicalEntityType.CHRONIC_CONDITION
+
+        # 15. Complications
+        if any(comp in term_lower for comp in ["septic shock", "dka", "ketoacidosis", "acute kidney injury", "hemorrhage"]):
+            return ClinicalEntityType.COMPLICATION
+
+        return ClinicalEntityType.DIAGNOSIS
 
     @classmethod
     def get_rejection_category(cls, term: str, _evidence_text: str = "") -> str:
@@ -186,6 +343,8 @@ class HardClinicalCandidateGate:
         if any(re.search(pat, term_lower) for pat in DOSAGE_FORM_PATTERNS) or any(re.search(pat, term_lower) for pat in PRESCRIPTION_SYNTAX_PATTERNS):
             return "MEDICATION"
         if any(re.search(pat, term_lower) for pat in INSTRUCTION_PATTERNS):
+            return "INSTRUCTION"
+        if any(re.search(rf"\b{re.escape(proc)}\b", term_lower) for proc in PROCEDURE_TERMS) or any(term_lower.endswith(sfx) for sfx in PROCEDURE_SUFFIXES):
             return "PROCEDURE"
         if any(re.search(pat, term_lower) for pat in ISOLATED_ANATOMY_PATTERNS):
             return "ANATOMY"

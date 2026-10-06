@@ -61,14 +61,6 @@ class MatchSpecBuilder:
     def build_match_spec(cls, concept: ClinicalConcept) -> MatchSpec:
         """Construct MatchSpec with allowed code families and attribute firewalls."""
         allowed_prefixes = list(FAMILY_TO_CODE_PREFIXES.get(concept.disease_family, []))
-        name_lower = concept.canonical_name.lower()
-
-        if concept.disease_family == "sprain_ankle_ligament":
-            if "deltoid" in name_lower:
-                allowed_prefixes = ["S93.42", "S93.4"]
-            elif "calcaneofibular" in name_lower:
-                allowed_prefixes = ["S93.41", "S93.4"]
-
         required_attrs: dict[str, Any] = {}
         forbidden_attrs: list[str] = []
 
@@ -154,4 +146,15 @@ class MatchSpecBuilder:
             forbidden_attributes=forbidden_attrs,
             unknown_attributes=concept.unknown_attributes,
             target_coding_system="ICD-10-CM",
+            concept_family=concept.disease_family,
+            anatomical_site=concept.body_site or concept.anatomy,
+            laterality=concept.laterality,
+            etiology=concept.etiology,
+            histology=concept.histology,
+            severity=concept.severity,
+            complication=concept.complication,
+            temporal_status=concept.temporality.value if hasattr(concept.temporality, "value") else str(concept.temporality),
+            encounter_context=concept.encounter_context,
+            relationship_constraints=[],
+            coding_system="ICD-10-CM",
         )

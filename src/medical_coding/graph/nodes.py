@@ -581,54 +581,41 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         # LEVEL 1: Exact query hybrid retrieval
         queries_to_run = [query]
 
-        # LEVEL 2: Synonym / Abbreviation Expansion (Master Prompt Section 23)
-        from medical_coding.retrieval.tokenizer import CLINICAL_ABBREVIATIONS
+        # LEVEL 2: Universal Concept & Token Morphology Expansion (Master Directive Sections 17 & 23)
+        from medical_coding.retrieval.tokenizer import (
+            CLINICAL_ABBREVIATIONS,
+            get_expanded_query_tokens,
+        )
+
         query_lower = query.lower()
         expanded_terms: list[str] = []
+
+        # A. Normalized canonical concept name
+        if concept.canonical_name and concept.canonical_name.lower() != query_lower:
+            expanded_terms.append(concept.canonical_name)
+
+        # B. Generic abbreviation expansion
         for ab, full in CLINICAL_ABBREVIATIONS.items():
             if re.search(rf"\b{re.escape(ab)}\b", query_lower):
                 expanded_terms.append(re.sub(rf"\b{re.escape(ab)}\b", full, query_lower))
 
-        if "acl" in query_lower:
-            expanded_terms.extend([
-                "sprain of anterior cruciate ligament of knee",
-                "anterior cruciate ligament tear",
-                "tear of anterior cruciate ligament",
-            ])
-        if "sarcoma" in query_lower and "liver" in query_lower:
-            expanded_terms.extend([
-                "other sarcomas of liver",
-                "sarcoma of liver",
-                "malignant neoplasm of liver",
-            ])
-        if "neuroendocrine" in query_lower or "net" in query_lower:
-            expanded_terms.extend([
-                "carcinoid tumor of ascending colon",
-                "malignant carcinoid tumor of ascending colon",
-                "malignant carcinoid tumor colon",
-            ])
-        if "urticaria" in query_lower:
-            expanded_terms.extend([
-                "other urticaria",
-                "urticaria unspecified",
-            ])
-        if "pyelonephritis" in query_lower:
-            expanded_terms.extend([
-                "acute pyelonephritis",
-                "pyelonephritis",
-            ])
-        if "gastritis" in query_lower and "bleeding" not in query_lower:
-            expanded_terms.extend([
-                "gastritis without bleeding",
-                "unspecified gastritis without bleeding",
-            ])
-        if any(w in query_lower for w in ("metastasis", "metastases", "metastatic", "mets")):
-            site = concept.body_site or ("liver" if "liver" in query_lower else ("pleura" if "pleura" in query_lower else ("bone" if "bone" in query_lower else ("brain" if "brain" in query_lower else ""))))
-            if site:
-                expanded_terms.extend([
-                    f"secondary malignant neoplasm of {site}",
-                    f"secondary neoplasm of {site}",
-                ])
+        # C. Concept attribute combination query
+        if concept.metastatic_status and concept.body_site:
+            expanded_terms.append(f"secondary malignant neoplasm of {concept.body_site}")
+            expanded_terms.append(f"secondary neoplasm of {concept.body_site}")
+        elif concept.histology and concept.body_site:
+            expanded_terms.append(f"{concept.histology} of {concept.body_site}")
+            expanded_terms.append(f"malignant neoplasm of {concept.body_site}")
+
+        if concept.acuity and concept.canonical_name:
+            expanded_terms.append(f"{concept.acuity} {concept.canonical_name}")
+
+        # D. Generic morphological query tokens
+        exp_tokens = get_expanded_query_tokens(query)
+        if exp_tokens and len(exp_tokens) > 1:
+            morph_query = " ".join(exp_tokens[:6])
+            if morph_query not in expanded_terms:
+                expanded_terms.append(morph_query)
 
         for exp in expanded_terms:
             if exp not in queries_to_run:
