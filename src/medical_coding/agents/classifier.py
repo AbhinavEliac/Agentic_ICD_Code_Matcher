@@ -166,6 +166,8 @@ class ContextAndRelevanceAgent(BaseAgent):
         for attempt in range(self.max_retries + 1):
             try:
                 raw_output = self._generate(prompt)
+                if not raw_output or not raw_output.strip():
+                    break
                 parsed_assessments = self._parse_and_validate_assessments(
                     raw_llm_output=raw_output,
                     conditions=conditions,
@@ -176,7 +178,6 @@ class ContextAndRelevanceAgent(BaseAgent):
             except Exception as exc:
                 logger.warning("Context assessment attempt %d failed: %s", attempt + 1, exc)
 
-        logger.warning("Falling back to rule-based deterministic context assessment.")
         return self._fallback_rule_assessment(conditions)
 
     async def assess_conditions_async(
@@ -213,6 +214,8 @@ class ContextAndRelevanceAgent(BaseAgent):
         for attempt in range(self.max_retries + 1):
             try:
                 raw_output = await self._generate_async(prompt)
+                if not raw_output or not raw_output.strip():
+                    break
                 parsed_assessments = self._parse_and_validate_assessments(
                     raw_llm_output=raw_output,
                     conditions=conditions,
@@ -240,17 +243,21 @@ class ContextAndRelevanceAgent(BaseAgent):
 
         start_idx = cleaned.find("[")
         end_idx = cleaned.rfind("]")
-        if start_idx != -1 and end_idx != -1:
-            cleaned = cleaned[start_idx : end_idx + 1].strip()
+        if start_idx == -1 or end_idx == -1 or start_idx >= end_idx:
+            return []
+        cleaned = cleaned[start_idx : end_idx + 1].strip()
 
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            # Simple syntax repair
-            repaired = re.sub(r",\s*([\]\}])", r"\1", cleaned)
-            repaired = re.sub(r"(?<=[\{\s,\[])'([a-zA-Z0-9_\s\-]+)'(?=\s*:)", r'"\1"', repaired)
-            repaired = re.sub(r":\s*'([^']*)'", r': "\1"', repaired)
-            data = json.loads(repaired)
+            try:
+                # Simple syntax repair
+                repaired = re.sub(r",\s*([\]\}])", r"\1", cleaned)
+                repaired = re.sub(r"(?<=[\{\s,\[])'([a-zA-Z0-9_\s\-]+)'(?=\s*:)", r'"\1"', repaired)
+                repaired = re.sub(r":\s*'([^']*)'", r': "\1"', repaired)
+                data = json.loads(repaired)
+            except Exception:
+                return []
 
         if not isinstance(data, list):
             return []
@@ -393,6 +400,13 @@ class ContextAndRelevanceAgent(BaseAgent):
                         "treated",
                         "adjusted",
                         "insulin",
+                        "sliding scale",
+                        "glucose",
+                        "blood sugar",
+                        "continued",
+                        "withheld",
+                        "titrated",
+                        "protocol",
                         "dose",
                         "infusion",
                         "therapy",
@@ -460,9 +474,8 @@ class ContextAndRelevanceAgent(BaseAgent):
                 c.certainty == Certainty.RULED_OUT
                 or c.negation == NegationStatus.NEGATED
                 or "ruled out" in combined_context
+                or "ruled-out" in combined_context
                 or "excluded" in combined_context
-                or "no evidence of" in combined_context
-                or "negative for" in combined_context
             )
 
             # Check 3: Inpatient management indicators
@@ -474,6 +487,13 @@ class ContextAndRelevanceAgent(BaseAgent):
                     "received",
                     "adjusted",
                     "insulin",
+                    "sliding scale",
+                    "glucose",
+                    "blood sugar",
+                    "continued",
+                    "withheld",
+                    "titrated",
+                    "protocol",
                     "antibiotic",
                     "dose",
                     "infusion",
@@ -834,6 +854,8 @@ class PrimarySecondaryClassifier(BaseAgent):
         for attempt in range(self.max_retries + 1):
             try:
                 raw_output = self._generate(prompt)
+                if not raw_output or not raw_output.strip():
+                    break
                 parsed = self._parse_llm_classification(raw_output, assessments)
                 if parsed:
                     llm_classifications = parsed
@@ -843,7 +865,7 @@ class PrimarySecondaryClassifier(BaseAgent):
 
         # Step 2: Fall back to deterministic rule scoring if LLM output is missing
         if not llm_classifications:
-            llm_classifications = self._score_and_classify_rules(assessments)
+            llm_classifications = self._score_and_classify_rules(assessments, clinical_text=clinical_text)
 
         # Step 3: Enforce deterministic validation guardrails (rejects multiple primaries, etc.)
         validated_result, abstentions = self.validator.validate_classification(
@@ -888,7 +910,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                 logger.warning("Async LLM classification attempt %d failed: %s", attempt + 1, exc)
 
         if not llm_classifications:
-            llm_classifications = self._score_and_classify_rules(assessments)
+            llm_classifications = self._score_and_classify_rules(assessments, clinical_text=clinical_text)
 
         return self.validator.validate_classification(
             classifications=llm_classifications,
@@ -899,10 +921,14 @@ class PrimarySecondaryClassifier(BaseAgent):
     def _score_and_classify_rules(
         self,
         assessments: list[ContextAssessment],
+        clinical_text: str = "",
     ) -> list[ConditionClassification]:
         """Deterministic rule-based admitting score calculation and role classification."""
         scored_candidates: list[tuple[ContextAssessment, float, list[str]]] = []
         classifications: list[ConditionClassification] = []
+        doc_lower = (clinical_text or "").lower()
+
+        from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
         for asm in assessments:
             diag_lower = asm.diagnosis.lower()
@@ -912,9 +938,13 @@ class PrimarySecondaryClassifier(BaseAgent):
             sec_lower = (getattr(asm, "section", "") or "").lower().replace("_", " ")
             full_context = f"{diag_lower} {ev_lower} {treat_lower} {reason_lower} {sec_lower}"
 
+            # Gate: Hard clinical candidate check (reject absence statements, instructions, medications)
+            is_valid_diag, gate_reason = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, ev_lower)
+
             # Check eligibility
             is_excluded = (
-                not asm.coding_candidate
+                not is_valid_diag
+                or not asm.coding_candidate
                 or asm.certainty == Certainty.RULED_OUT
                 or asm.negation == NegationStatus.NEGATED
                 or asm.temporality == Temporality.HISTORICAL
@@ -922,13 +952,14 @@ class PrimarySecondaryClassifier(BaseAgent):
             )
 
             if is_excluded:
+                excl_reason = f"Clinical gate rejection: {gate_reason}" if not is_valid_diag else f"Excluded from coding: {asm.reason}"
                 classifications.append(
                     ConditionClassification(
                         diagnosis_id=asm.condition_id or str(uuid4()),
                         diagnosis=asm.diagnosis,
                         role=DiagnosisRole.EXCLUDED,
                         is_billable_candidate=False,
-                        classification_reason=f"Excluded from coding: {asm.reason}",
+                        classification_reason=excl_reason,
                         admitting_condition_score=-100.0,
                         evidence_quote=asm.evidence,
                     )
@@ -940,15 +971,47 @@ class PrimarySecondaryClassifier(BaseAgent):
             reasons: list[str] = []
 
             # 1. Section / Reason for Admission Context (UHDDS Authority Hierarchy)
-            if any(
+            # Under UHDDS, condition established after study chiefly responsible for occasioning admission
+            # or underlying condition occasioning procedural/medical inpatient therapy
+            is_explicit_primary = bool(
+                re.search(rf"\b(?:principal|primary)\s+diagnos[ei]s\b[^\n\.\;:]*?:\s*[^\n\.\;]*?{re.escape(diag_lower)}", full_context)
+                or (doc_lower and re.search(rf"\b(?:principal|primary)\s+diagnos[ei]s\b[^\n\.\;:]*?:\s*[^\n\.\;]*?{re.escape(diag_lower)}", doc_lower))
+                or sec_lower in ("principal diagnosis", "primary diagnosis", "principal diagnoses", "primary diagnoses")
+            )
+            is_admission_driver = False
+            adm_regex = rf"\b(?:admitted\s+(?:for|with|to)|reason\s+for\s+admission|admitting\s+diagnosis|principal\s+diagnosis)\b[^\n\.\;]*?(?:due\s+to\s+|for\s+|of\s+)?{re.escape(diag_lower)}"
+            if re.search(adm_regex, full_context) or (doc_lower and re.search(adm_regex, doc_lower)):
+                is_admission_driver = True
+            else:
+                # Generalized clause matching: admission occasioning phrase matching clinical tokens or acronym
+                adm_clause_match = re.search(
+                    r"\b(?:admitted\s+(?:for|with|to)|reason\s+for\s+admission|admitting\s+diagnosis|presenting\s+complaint)\b\s*([^\n.;]+)",
+                    full_context if "admitted" in full_context else (doc_lower or ""),
+                )
+                if adm_clause_match:
+                    adm_clause = adm_clause_match.group(0).lower()
+                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage")]
+                    acronym = "".join(w[0] for w in diag_words)
+                    if (
+                        re.search(rf"\b{re.escape(diag_lower)}\b", adm_clause)
+                        or (acronym and len(acronym) >= 3 and re.search(rf"\b{acronym}\b", adm_clause))
+                        or (diag_words and sum(1 for w in diag_words if w in adm_clause) >= max(1, len(diag_words) * 0.5))
+                    ):
+                        is_admission_driver = True
+
+            if is_explicit_primary:
+                score += 10.0
+                reasons.append("Explicitly documented as PRIMARY/PRINCIPAL DIAGNOSIS by provider (+10.0)")
+            elif is_admission_driver:
+                score += 6.0
+                reasons.append("Identified as principal condition occasioning admission (+6.0)")
+            elif any(
                 term in full_context
                 for term in [
                     "discharge diagnosis",
                     "discharge diagnoses",
                     "final diagnosis",
                     "final diagnoses",
-                    "principal diagnosis",
-                    "primary diagnosis",
                 ]
             ):
                 score += 5.0
@@ -1026,19 +1089,37 @@ class PrimarySecondaryClassifier(BaseAgent):
                 score += 0.5
                 reasons.append("Suspected condition evaluated at discharge (+0.5)")
 
-            # Signs/symptoms or manifestations without definitive etiologic status
+            # Signs/symptoms or manifestations without definitive etiologic status (CMS Guideline I.B.4)
             is_symptom = any(
                 sym in diag_lower
-                for sym in ["symptom", "pain", "fatigue", "edema", "overload", "dyspnea", "shortness of breath", "nausea", "vomiting", "weakness"]
+                for sym in ["symptom", "pain", "fatigue", "edema", "overload", "dyspnea", "shortness of breath", "nausea", "vomiting", "weakness", "fever", "cough", "dyspepsia", "discomfort", "wheezing"]
             )
-            if is_symptom and not any(dx in diag_lower for dx in ["syndrome", "failure", "infarction", "disease"]):
-                score -= 1.0
-                reasons.append("Symptom / manifestation accompanying presentation (-1.0)")
+            has_definitive_pathology = (
+                any(diag_lower.endswith(sfx) or f"{sfx} " in diag_lower for sfx in ("itis", "oma", "osis"))
+                or any(dx in diag_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer"])
+            )
+            if is_symptom and not has_definitive_pathology:
+                score -= 2.0
+                reasons.append("Symptom / manifestation accompanying presentation (-2.0)")
+
+            # Infectious organism supplementary to underlying organ pathology (CMS Guideline I.C.1)
+            is_organism = any(
+                org in diag_lower
+                for org in ["helicobacter", "h. pylori", "h pylori", "organism", "infectious agent", "bacterium", "bacteria", "streptococcus", "staphylococcus", "virus", "bacillus"]
+            )
+            if is_organism:
+                score -= 2.0
+                reasons.append("Supplementary etiologic organism code secondary to primary organ pathology (-2.0)")
 
             # Chronic baseline conditions without acute exacerbation
-            if asm.status == ConditionStatus.CHRONIC and "acute" not in full_context:
-                score -= 1.0
-                reasons.append("Chronic background condition without acute exacerbation (-1.0)")
+            is_chronic = (
+                asm.status == ConditionStatus.CHRONIC
+                or "chronic" in diag_lower
+                or any(m in full_context for m in ["home medication", "home regimen", "continued on", "baseline", "longstanding", "routine control", "past history", "history of"])
+            )
+            if is_chronic and "acute" not in full_context and not is_explicit_primary and not is_admission_driver:
+                score -= 1.5
+                reasons.append("Chronic background condition without acute exacerbation (-1.5)")
 
             scored_candidates.append((asm, score, reasons))
 
@@ -1048,11 +1129,33 @@ class PrimarySecondaryClassifier(BaseAgent):
 
         # Sort descending by score
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
-        top_asm, top_score, top_reasons = scored_candidates[0]
+
+        # Select the top candidate that meets Section 8 primary criteria
+        chosen_primary_idx = None
+        for i, (asm, s, _r_list) in enumerate(scored_candidates):
+            if (
+                s > 1.5
+                and asm.certainty == Certainty.CONFIRMED
+                and asm.temporality in (Temporality.CURRENT, "CURRENT")
+                and bool(asm.evidence and asm.evidence.strip())
+            ):
+                is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
+                if is_valid:
+                    chosen_primary_idx = i
+                    break
+
+        if chosen_primary_idx is not None:
+            top_asm, top_score, top_reasons = scored_candidates[chosen_primary_idx]
+            remaining_candidates = [
+                item for j, item in enumerate(scored_candidates) if j != chosen_primary_idx
+            ]
+        else:
+            top_asm, top_score, top_reasons = scored_candidates[0]
+            remaining_candidates = scored_candidates[1:]
 
         # Check for genuine ambiguity (two equally qualifying primary diagnoses without documentary distinction)
         has_ambiguous_tie = False
-        if len(scored_candidates) > 1:
+        if len(scored_candidates) > 1 and chosen_primary_idx == 0:
             second_asm, second_score, _ = scored_candidates[1]
             # Genuine tie only if both scores are high, exactly equal, and both document competing reasons for admission
             if top_score >= 4.0 and second_score >= 4.0 and abs(top_score - second_score) < 0.01:
@@ -1089,7 +1192,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                         evidence_quote=asm.evidence,
                     )
                 )
-        elif top_score > 1.5:
+        elif chosen_primary_idx is not None and top_score > 1.5:
             # Unique Primary selected
             classifications.append(
                 ConditionClassification(
@@ -1105,7 +1208,51 @@ class PrimarySecondaryClassifier(BaseAgent):
             )
 
             # Remaining active candidates become SECONDARY
-            for asm, score, r_list in scored_candidates[1:]:
+            # CMS Guideline I.B.4: Signs and symptoms that are integral to a definitive primary disease process
+            # should not be assigned as separate secondary codes.
+            for asm, score, r_list in remaining_candidates:
+                sec_lower = asm.diagnosis.lower()
+                is_integral = any(
+                    sym in sec_lower
+                    for sym in [
+                        "pain", "colic", "fever", "cough", "dyspnea", "shortness of breath",
+                        "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
+                        "discomfort", "wheezing", "fatigue", "malaise"
+                    ]
+                ) and not (
+                    any(sec_lower.endswith(sfx) or f"{sfx} " in sec_lower for sfx in ("itis", "oma", "osis"))
+                    or any(dx in sec_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer"])
+                )
+
+                if is_integral:
+                    classifications.append(
+                        ConditionClassification(
+                            diagnosis_id=asm.condition_id or str(uuid4()),
+                            diagnosis=asm.diagnosis,
+                            role=DiagnosisRole.EXCLUDED,
+                            is_billable_candidate=False,
+                            classification_reason="Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
+                            admitting_condition_score=score,
+                            evidence_quote=asm.evidence,
+                        )
+                    )
+                    continue
+
+                is_valid_sec, sec_gate_reason = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
+                if not is_valid_sec:
+                    classifications.append(
+                        ConditionClassification(
+                            diagnosis_id=asm.condition_id or str(uuid4()),
+                            diagnosis=asm.diagnosis,
+                            role=DiagnosisRole.EXCLUDED,
+                            is_billable_candidate=False,
+                            classification_reason=f"Clinical gate rejection: {sec_gate_reason}",
+                            admitting_condition_score=-100.0,
+                            evidence_quote=asm.evidence,
+                        )
+                    )
+                    continue
+
                 classifications.append(
                     ConditionClassification(
                         diagnosis_id=asm.condition_id or str(uuid4()),

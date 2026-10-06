@@ -6,10 +6,12 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from medical_coding.schemas.enums import (
+    AssertionStatus,
     Certainty,
     DiagnosisRole,
     EvidenceType,
     NegationStatus,
+    SectionSemantics,
     Temporality,
 )
 
@@ -24,6 +26,10 @@ class StructuredEvidence(BaseModel):
     section: str = Field(
         default="CLINICAL_DOCUMENT",
         description="Source clinical section (e.g. 'DISCHARGE_DIAGNOSES', 'HOSPITAL_COURSE', 'RELEVANT_INVESTIGATIONS').",
+    )
+    section_semantics: SectionSemantics = Field(
+        default=SectionSemantics.UNKNOWN,
+        description="Semantic category of the source section providing evidence hierarchy weighting.",
     )
     sentence: str | None = Field(
         default=None,
@@ -126,13 +132,17 @@ class ClinicalDiagnosisCandidate(BaseModel):
         default=DiagnosisRole.SECONDARY,
         description="PRIMARY, SECONDARY, HISTORICAL, SYMPTOM, INCIDENTAL, RULED_OUT, UNCERTAIN.",
     )
+    assertion_status: AssertionStatus | str = Field(
+        default=AssertionStatus.CONFIRMED,
+        description="confirmed, suspected, ruled_out, historical, family_history, hypothetical, negated, uncertain.",
+    )
     certainty: Certainty = Field(
         default=Certainty.CONFIRMED,
         description="CONFIRMED, SUPPORTED, SUSPECTED, POSSIBLE, RULED_OUT, NEGATED.",
     )
     temporality: Temporality = Field(
         default=Temporality.CURRENT,
-        description="CURRENT, HISTORICAL, RESOLVED.",
+        description="CURRENT, HISTORICAL, RESOLVED, FUTURE, UNCLEAR.",
     )
     evidence: list[StructuredEvidence] = Field(
         default_factory=list,
@@ -169,18 +179,65 @@ class ClinicalDiagnosisCandidate(BaseModel):
         default="",
         description="Summary rationale of role assignment.",
     )
+    clinical_attributes: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Explicit attributes of the diagnosis (stage, subtype, grade, laterality, acuity, size).",
+    )
+    compound_relationship: str | None = Field(
+        default=None,
+        description="Semantic compound relationship: 'parent', 'associated', 'causal', 'complication', 'independent'.",
+    )
+    associated_conditions: list[str] = Field(
+        default_factory=list,
+        description="Secondary conditions or manifestations causally or etiologically linked to this candidate.",
+    )
+    management_evidence: list[str] = Field(
+        default_factory=list,
+        description="Documented inpatient therapeutic interventions, medications, or monitoring for this condition.",
+    )
+    admission_relevance: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Documentary weight indicating this condition occasioned the hospital admission.",
+    )
+    discharge_relevance: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Documentary weight indicating this condition was assessed or confirmed at discharge.",
+    )
+    contradiction_evidence: list[str] = Field(
+        default_factory=list,
+        description="Statements in documentation questioning, ruling out, or refuting this condition.",
+    )
+    medication_evidence: list[str] = Field(
+        default_factory=list,
+        description="Medications administered or prescribed relevant to this condition.",
+    )
+    procedure_evidence: list[str] = Field(
+        default_factory=list,
+        description="Diagnostic or surgical procedures performed targeting this condition.",
+    )
+    candidate_confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence in this clinical candidate being genuine and codable.",
+    )
 
     @property
     def primary_evidence_quote(self) -> str:
         """Return the highest priority evidence text quote."""
         if not self.evidence:
             return ""
-        # Prefer discharge summary or procedural quotes
+        # Prefer discharge summary, admission, procedure, or hospital course quotes
         for ev in self.evidence:
             if ev.evidence_type in (
                 EvidenceType.DISCHARGE_SUMMARY,
                 EvidenceType.ADMISSION_REASON,
                 EvidenceType.PROCEDURE,
+                EvidenceType.HOSPITAL_COURSE,
             ):
                 return ev.text
         return self.evidence[0].text
@@ -236,3 +293,81 @@ class AuditTrailEntry(BaseModel):
     icd_candidates: list[dict[str, Any]] = Field(default_factory=list)
     selected_code: str | None = None
     validation_checks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CancerConcept(BaseModel):
+    """Structured oncology concept isolating tumor biology, staging, and metastases from primary disease."""
+
+    primary_site: str = Field(description="Primary anatomical site (e.g. 'breast', 'colon', 'lymph node').")
+    laterality: str | None = Field(default=None, description="'right', 'left', 'bilateral', or None.")
+    malignancy_type: str = Field(default="carcinoma", description="'carcinoma', 'lymphoma', 'sarcoma', 'melanoma', etc.")
+    histology: str | None = Field(default=None, description="Histological type (e.g. 'invasive ductal', 'DLBCL').")
+    grade: str | None = Field(default=None, description="Tumor grade (e.g. 'Grade III').")
+    stage: str | None = Field(default=None, description="Staging (e.g. 'Stage IV').")
+    metastatic_status: str = Field(default="NON_METASTATIC", description="'NON_METASTATIC', 'METASTATIC', 'UNKNOWN'.")
+    metastatic_sites: list[str] = Field(default_factory=list, description="Verified metastatic anatomical sites.")
+    receptor_status: dict[str, str] = Field(default_factory=dict, description="e.g. {'ER': 'negative', 'PR': 'negative', 'HER2': '0', 'PD-L1': 'positive'}.")
+    molecular_attributes: list[str] = Field(default_factory=list, description="e.g. ['BRCA pathogenic', 'BRCA1 positive'].")
+    treatment_history: list[str] = Field(default_factory=list, description="Past chemotherapy/radiotherapy/surgery.")
+    current_treatment: list[str] = Field(default_factory=list, description="Current inpatient chemotherapy or management.")
+    evidence: str = Field(default="", description="Verbatim documentary evidence.")
+
+
+class OrthopedicConcept(BaseModel):
+    """Structured orthopedic fracture and ligament concept separating anatomical attributes from disease entity."""
+
+    bone: str = Field(description="Specific bone (e.g. 'lateral malleolus', 'fifth metatarsal', 'tarsal').")
+    anatomical_site: str = Field(default="", description="Region (e.g. 'fibula', 'foot', 'ankle').")
+    laterality: str | None = Field(default=None, description="'left', 'right', 'bilateral', or None.")
+    displacement: str = Field(default="unspecified", description="'displaced', 'nondisplaced', 'unspecified'.")
+    open_closed: str = Field(default="closed", description="'open', 'closed', 'unspecified'.")
+    healing_status: str = Field(default="routine", description="'routine', 'delayed', 'nonunion', 'malunion', 'unspecified'.")
+    encounter_phase: str = Field(default="initial", description="'initial', 'subsequent', 'sequela'.")
+    associated_ligament_injury: list[str] = Field(default_factory=list, description="e.g. ['deltoid ligament sprain', 'calcaneofibular ligament sprain'].")
+    evidence: str = Field(default="", description="Verbatim documentary evidence.")
+
+
+class ExcludedCandidate(BaseModel):
+    """Record of a rejected non-diagnostic term, medication, attribute, or metadata artifact."""
+
+    text: str = Field(description="Raw term rejected from diagnosis coding.")
+    reason: str = Field(description="Category: 'MEDICATION', 'ATTRIBUTE', 'NEGATED', 'HISTORICAL', 'METADATA', 'SYMPTOM', 'PROCEDURE', 'ANATOMY', 'UNSUPPORTED_SPECIFICITY'.")
+
+
+class DiagnosisCandidate(ClinicalDiagnosisCandidate):
+    """Typed diagnosis candidate strictly conforming to Section 6 specifications."""
+
+    candidate_id: str = Field(default_factory=lambda: str(uuid4()))
+    raw_text: str = Field(default="")
+    normalized_concept: str = Field(default="")
+    diagnosis_family: str = Field(default="")
+    evidence_text: str = Field(default="")
+    source_section: str = Field(default="")
+    source_span: tuple[int, int] | None = Field(default=None)
+    clinical_status: str = Field(default="ACTIVE")
+    current_relevance: float = Field(default=1.0)
+    diagnostic_evidence: list[str] = Field(default_factory=list)
+    supporting_sections: list[str] = Field(default_factory=list)
+    unsupported_attributes: list[str] = Field(default_factory=list)
+    specificity_supported: bool = Field(default=True)
+    candidate_status: str = Field(default="ACTIVE")
+    rejection_reason: str | None = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_candidate_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "raw_term" in data and not data.get("raw_text"):
+                data["raw_text"] = data["raw_term"]
+            elif "raw_text" in data and not data.get("raw_term"):
+                data["raw_term"] = data["raw_text"]
+            if "normalized_diagnosis" in data and not data.get("normalized_concept"):
+                data["normalized_concept"] = data["normalized_diagnosis"]
+            elif "normalized_concept" in data and not data.get("normalized_diagnosis"):
+                data["normalized_diagnosis"] = data["normalized_concept"]
+            if "diagnosis_id" in data and not data.get("candidate_id"):
+                data["candidate_id"] = data["diagnosis_id"]
+            elif "candidate_id" in data and not data.get("diagnosis_id"):
+                data["diagnosis_id"] = data["candidate_id"]
+        return data
+

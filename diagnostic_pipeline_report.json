@@ -6,167 +6,112 @@
       "case_id": "CASE-01-STANDARD-ADMISSION",
       "title": "Comprehensive Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
       "expected_behavior": "Success with Primary I50.21, Secondaries E11.9, I10. Historical PMH excluded.",
-      "status": "SUCCESS",
+      "status": "PARTIAL_SUCCESS",
       "primary_diagnosis": {
         "code": "I50.21",
-        "description": "Acute systolic heart failure",
+        "description": "Acute systolic (congestive) heart failure",
         "confidence_score": 1.0
       },
       "secondary_diagnoses": [
         {
-          "code": "I10",
-          "description": "Essential primary hypertension",
-          "confidence_score": 0.8798
-        },
-        {
           "code": "E11.9",
           "description": "Type 2 diabetes mellitus without complications",
-          "confidence_score": 0.9004
+          "confidence_score": 1.0
+        },
+        {
+          "code": "I10",
+          "description": "Essential (primary) hypertension",
+          "confidence_score": 1.0
         }
       ],
-      "abstention_count": 0,
-      "abstentions": [],
+      "abstention_count": 3,
+      "abstentions": [
+        {
+          "diagnosis": "Appendectomy in 2005.",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
+          "stage": "CLASSIFICATION"
+        },
+        {
+          "diagnosis": "Resolved seasonal allergic rhinitis.",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
+          "stage": "CLASSIFICATION"
+        },
+        {
+          "diagnosis": "Severe acute shortness of breath and peripheral edema",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
+          "stage": "CLASSIFICATION"
+        }
+      ],
       "audit_trail_sample": [
         {
           "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "cond-1",
-          "raw_term": "Acute systolic heart failure",
-          "evidence": "Acute systolic heart failure - Patient admitted with acute exacerbation of systolic congestive heart failure.",
+          "diagnosis_id": "164e94a9-2b73-4039-a068-1d9c4d32e82f",
+          "raw_term": "Appendectomy in 2005.",
+          "evidence": "1. Appendectomy in 2005.",
           "context": {
             "certainty": "CONFIRMED",
-            "temporality": "CURRENT",
-            "negation": "AFFIRMATIVE",
-            "acuity": "ACUTE"
-          },
-          "classification": {
-            "role": "PRIMARY",
-            "is_billable": true,
-            "reason": "Selected as unique Primary Diagnosis (score=5.0): Documented as chief complaint or direct reason for admission (+4.0); Confirmed diagnostic certainty (+1.0)"
-          },
-          "retrieved_candidates": [
-            {
-              "code": "I50.21",
-              "description": "Acute systolic heart failure",
-              "score": 0.9116
-            },
-            {
-              "code": "I50.23",
-              "description": "Acute on chronic systolic heart failure",
-              "score": 0.7991
-            },
-            {
-              "code": "I50.22",
-              "description": "Chronic systolic heart failure",
-              "score": 0.6873
-            },
-            {
-              "code": "I50.31",
-              "description": "Acute diastolic heart failure",
-              "score": 0.636
-            },
-            {
-              "code": "I50.33",
-              "description": "Acute on chronic diastolic heart failure",
-              "score": 0.5549
-            },
-            {
-              "code": "I50",
-              "description": "Heart failure category header",
-              "score": 0.4764
-            },
-            {
-              "code": "I50.9",
-              "description": "Heart failure unspecified",
-              "score": 0.4586
-            },
-            {
-              "code": "I50.32",
-              "description": "Chronic diastolic heart failure",
-              "score": 0.3905
-            },
-            {
-              "code": "N17.9",
-              "description": "Acute kidney injury unspecified",
-              "score": 0.3857
-            }
-          ],
-          "selected_candidate": {
-            "code": "I50.21",
-            "description": "Acute systolic heart failure",
-            "confidence": 1.0,
-            "reason": "Candidate 'I50.21' (Acute systolic heart failure) best supported by documentation (acute acuity match).",
-            "decision": "ACCEPTED"
-          },
-          "validation": {
-            "status": "PASSED",
-            "checks": [
-              {
-                "rule_name": "CatalogExistence",
-                "passed": true,
-                "details": "Code 'I50.21' exists in local authoritative catalog."
-              },
-              {
-                "rule_name": "TerminalSpecificity",
-                "passed": true,
-                "details": "Code 'I50.21' is at terminal billable specificity."
-              }
-            ]
-          },
-          "final_result": {
-            "code": "I50.21",
-            "description": "Acute systolic heart failure",
-            "role": "PRIMARY"
-          }
-        },
-        {
-          "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "cond-3",
-          "raw_term": "Essential primary hypertension",
-          "evidence": "Essential primary hypertension - Blood pressure monitored on telemetry; stable.",
-          "context": {
-            "certainty": "CONFIRMED",
-            "temporality": "CURRENT",
+            "temporality": "HISTORICAL",
             "negation": "AFFIRMATIVE",
             "acuity": "UNSPECIFIED"
           },
           "classification": {
-            "role": "SECONDARY",
-            "is_billable": true,
-            "reason": "Co-existing condition managed during admission (score=1.0): Confirmed diagnostic certainty (+1.0)"
+            "role": "EXCLUDED",
+            "is_billable": false,
+            "reason": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy."
           },
-          "retrieved_candidates": [
-            {
-              "code": "I10",
-              "description": "Essential primary hypertension",
-              "score": 0.7298
-            }
-          ],
+          "retrieved_candidates": [],
           "selected_candidate": {
-            "code": "I10",
-            "description": "Essential primary hypertension",
-            "confidence": 0.8798,
-            "reason": "Candidate 'I10' (Essential primary hypertension) best supported by documentation (evidence overlap).",
-            "decision": "ACCEPTED"
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Candidate pool was empty; no matching local ICD code.",
+            "decision": "ABSTAINED"
           },
           "validation": {
-            "status": "PASSED",
-            "checks": [
-              {
-                "rule_name": "CatalogExistence",
-                "passed": true,
-                "details": "Code 'I10' exists in local authoritative catalog."
-              },
-              {
-                "rule_name": "TerminalSpecificity",
-                "passed": true,
-                "details": "Code 'I10' is at terminal billable specificity."
-              }
-            ]
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
           },
           "final_result": {
-            "code": "I10",
-            "description": "Essential primary hypertension",
-            "role": "SECONDARY"
+            "code": null,
+            "description": null,
+            "role": null
+          }
+        },
+        {
+          "document_id": "CASE-01-STANDARD-ADMISSION",
+          "diagnosis_id": "435e53a7-b9e1-4b0c-a034-78076e40d297",
+          "raw_term": "Resolved seasonal allergic rhinitis.",
+          "evidence": "2. Resolved seasonal allergic rhinitis.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "HISTORICAL",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "EXCLUDED",
+            "is_billable": false,
+            "reason": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy."
+          },
+          "retrieved_candidates": [],
+          "selected_candidate": {
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Candidate pool was empty; no matching local ICD code.",
+            "decision": "ABSTAINED"
+          },
+          "validation": {
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
+          },
+          "final_result": {
+            "code": null,
+            "description": null,
+            "role": null
           }
         }
       ]
@@ -176,87 +121,170 @@
       "title": "General Heart Failure Mention Without Subtype Specificity",
       "expected_behavior": "Guardrail 11: Candidate ranking must align with I50.9 (unspecified) or abstain; never force I50.21.",
       "status": "PARTIAL_SUCCESS",
-      "primary_diagnosis": null,
-      "secondary_diagnoses": [
-        {
-          "code": "I50.9",
-          "description": "Heart failure unspecified",
-          "confidence_score": 0.918
-        }
-      ],
+      "primary_diagnosis": {
+        "code": "I50.9",
+        "description": "Heart failure, unspecified",
+        "confidence_score": 1.0
+      },
+      "secondary_diagnoses": [],
       "abstention_count": 1,
       "abstentions": [
         {
-          "diagnosis": null,
-          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
-          "detail": "No defensible primary diagnosis identified for the encounter.",
+          "diagnosis": "Fatigue and peripheral edema",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
           "stage": "CLASSIFICATION"
         }
       ],
       "audit_trail_sample": [
         {
           "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
-          "diagnosis_id": "cond-1",
+          "diagnosis_id": "a949862f-d67f-4567-b3ee-afe50e8be353",
           "raw_term": "Heart failure",
-          "evidence": "Heart failure - Patient has documented history of heart failure.",
+          "evidence": "1. Heart failure - Patient has documented history of heart failure. Maintenance oral furosemide was continued. No echocardiogram was performed during admission and ejection fraction was not documented.",
           "context": {
             "certainty": "CONFIRMED",
             "temporality": "CURRENT",
             "negation": "AFFIRMATIVE",
-            "acuity": "UNSPECIFIED"
+            "acuity": "ACUTE"
           },
           "classification": {
-            "role": "SECONDARY",
+            "role": "PRIMARY",
             "is_billable": true,
-            "reason": "Active condition managed during stay, but does not meet criteria for primary diagnosis: Confirmed diagnostic certainty (+1.0)"
+            "reason": "Selected as unique Primary Diagnosis (score=6.5): Explicitly documented under discharge / final diagnoses (+5.0); Active intravenous / intensive therapeutic management administered (+2.0); Confirmed diagnostic certainty (+1.0); Chronic background condition without acute exacerbation (-1.5)"
           },
           "retrieved_candidates": [
             {
-              "code": "I50",
-              "description": "Heart failure category header",
-              "score": 0.8403
+              "code": "I50.89",
+              "description": "Other heart failure",
+              "score": 0.8643
             },
             {
               "code": "I50.9",
-              "description": "Heart failure unspecified",
-              "score": 0.818
+              "description": "Heart failure, unspecified",
+              "score": 0.9167
             },
             {
-              "code": "I50.22",
-              "description": "Chronic systolic heart failure",
-              "score": 0.6835
+              "code": "I50.82",
+              "description": "Biventricular heart failure",
+              "score": 0.817
             },
             {
-              "code": "I50.32",
-              "description": "Chronic diastolic heart failure",
-              "score": 0.6639
-            },
-            {
-              "code": "I50.31",
-              "description": "Acute diastolic heart failure",
-              "score": 0.6617
+              "code": "I50.20",
+              "description": "Unspecified systolic (congestive) heart failure",
+              "score": 0.8667
             },
             {
               "code": "I50.21",
-              "description": "Acute systolic heart failure",
-              "score": 0.6571
+              "description": "Acute systolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.22",
+              "description": "Chronic systolic (congestive) heart failure",
+              "score": 0.8667
             },
             {
               "code": "I50.23",
-              "description": "Acute on chronic systolic heart failure",
-              "score": 0.6043
+              "description": "Acute on chronic systolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.30",
+              "description": "Unspecified diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.31",
+              "description": "Acute diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.32",
+              "description": "Chronic diastolic (congestive) heart failure",
+              "score": 0.8667
             },
             {
               "code": "I50.33",
-              "description": "Acute on chronic diastolic heart failure",
-              "score": 0.5812
+              "description": "Acute on chronic diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.811",
+              "description": "Acute right heart failure",
+              "score": 0.7825
+            },
+            {
+              "code": "I50.812",
+              "description": "Chronic right heart failure",
+              "score": 0.7741
+            },
+            {
+              "code": "I50.810",
+              "description": "Right heart failure, unspecified",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.813",
+              "description": "Acute on chronic right heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.1",
+              "description": "Left ventricular failure, unspecified",
+              "score": 0.7833
+            },
+            {
+              "code": "I50.84",
+              "description": "End stage heart failure",
+              "score": 0.7992
+            },
+            {
+              "code": "I50.83",
+              "description": "High output heart failure",
+              "score": 0.7825
+            },
+            {
+              "code": "I50.40",
+              "description": "Unspecified combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.41",
+              "description": "Acute combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.42",
+              "description": "Chronic combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.43",
+              "description": "Acute on chronic combined systolic (congestive) and diastolic (congestive) heart failure",
+              "score": 0.8667
+            },
+            {
+              "code": "I50.814",
+              "description": "Right heart failure due to left heart failure",
+              "score": 0.8905
+            },
+            {
+              "code": "T86.22",
+              "description": "Heart transplant failure",
+              "score": 0.8459
+            },
+            {
+              "code": "I09.81",
+              "description": "Rheumatic heart failure",
+              "score": 0.8197
             }
           ],
           "selected_candidate": {
             "code": "I50.9",
-            "description": "Heart failure unspecified",
-            "confidence": 0.918,
-            "reason": "Candidate 'I50.9' (Heart failure unspecified) best supported by documentation (evidence overlap).",
+            "description": "Heart failure, unspecified",
+            "confidence": 1.0,
+            "reason": "Candidate 'I50.9' (Heart failure, unspecified) best supported by documentation (core diagnostic entity match (2/2), canonical base/unspecified code for general documentation).",
             "decision": "ACCEPTED"
           },
           "validation": {
@@ -276,8 +304,42 @@
           },
           "final_result": {
             "code": "I50.9",
-            "description": "Heart failure unspecified",
-            "role": "SECONDARY"
+            "description": "Heart failure, unspecified",
+            "role": "PRIMARY"
+          }
+        },
+        {
+          "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
+          "diagnosis_id": "73d2563b-65bf-4d4b-adeb-c702ae244c35",
+          "raw_term": "Fatigue and peripheral edema",
+          "evidence": "Fatigue and peripheral edema",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "HISTORICAL",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "EXCLUDED",
+            "is_billable": false,
+            "reason": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4"
+          },
+          "retrieved_candidates": [],
+          "selected_candidate": {
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Candidate pool was empty; no matching local ICD code.",
+            "decision": "ABSTAINED"
+          },
+          "validation": {
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
+          },
+          "final_result": {
+            "code": null,
+            "description": null,
+            "role": null
           }
         }
       ]
@@ -286,37 +348,408 @@
       "case_id": "CASE-03-RULED-OUT-CONDITION",
       "title": "Ruled-Out Acute Condition (Myocardial Infarction)",
       "expected_behavior": "Guardrail 4: Ruled-out MI cannot be coded as confirmed or primary; triggers abstention or exclusion.",
-      "status": "ABSTAINED",
-      "primary_diagnosis": null,
+      "status": "PARTIAL_SUCCESS",
+      "primary_diagnosis": {
+        "code": "R07.4",
+        "description": "Chest pain, unspecified",
+        "confidence_score": 1.0
+      },
       "secondary_diagnoses": [],
       "abstention_count": 1,
       "abstentions": [
         {
-          "diagnosis": null,
-          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
-          "detail": "No clinical diagnosis mentions identified in document.",
-          "stage": "EXTRACTION"
+          "diagnosis": "Non-cardiac chest pain",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Excluded from coding: [DISCHARGE_DIAGNOSES] Definitively ruled out during hospital stay based on diagnostic evaluation.",
+          "stage": "CLASSIFICATION"
         }
       ],
-      "audit_trail_sample": []
+      "audit_trail_sample": [
+        {
+          "document_id": "CASE-03-RULED-OUT-CONDITION",
+          "diagnosis_id": "6b589cd9-5213-40e0-b136-22313b8c60ea",
+          "raw_term": "Non-cardiac chest pain",
+          "evidence": "1. Non-cardiac chest pain - Evaluated for acute coronary syndrome. Acute myocardial infarction was definitively ruled out by serial negative high-sensitivity troponins and normal ECG.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "HISTORICAL",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "EXCLUDED",
+            "is_billable": false,
+            "reason": "Excluded from coding: [DISCHARGE_DIAGNOSES] Definitively ruled out during hospital stay based on diagnostic evaluation."
+          },
+          "retrieved_candidates": [],
+          "selected_candidate": {
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Candidate pool was empty; no matching local ICD code.",
+            "decision": "ABSTAINED"
+          },
+          "validation": {
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
+          },
+          "final_result": {
+            "code": null,
+            "description": null,
+            "role": null
+          }
+        },
+        {
+          "document_id": "CASE-03-RULED-OUT-CONDITION",
+          "diagnosis_id": "55ee1709-c1a4-4b90-87d1-35c9a23127f5",
+          "raw_term": "Acute substernal chest discomfort",
+          "evidence": "Acute substernal chest discomfort",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "ACUTE"
+          },
+          "classification": {
+            "role": "PRIMARY",
+            "is_billable": true,
+            "reason": "Selected as unique Primary Diagnosis (score=4.5): Documented as chief complaint or direct reason for admission (+3.5); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0); Symptom / manifestation accompanying presentation (-2.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "R07.3",
+              "description": "Other chest pain",
+              "score": 0.85
+            },
+            {
+              "code": "R07.89",
+              "description": "Other chest pain",
+              "score": 0.85
+            },
+            {
+              "code": "R07.4",
+              "description": "Chest pain, unspecified",
+              "score": 0.85
+            },
+            {
+              "code": "R07.9",
+              "description": "Chest pain, unspecified",
+              "score": 0.85
+            },
+            {
+              "code": "D57.01",
+              "description": "Hb-SS disease with acute chest syndrome",
+              "score": 0.85
+            },
+            {
+              "code": "R07.1",
+              "description": "Chest pain on breathing",
+              "score": 0.75
+            },
+            {
+              "code": "G89.18",
+              "description": "Other acute postprocedural pain",
+              "score": 0.75
+            },
+            {
+              "code": "G89.11",
+              "description": "Acute pain due to trauma",
+              "score": 0.75
+            },
+            {
+              "code": "G89.12",
+              "description": "Acute post-thoracotomy pain",
+              "score": 0.75
+            },
+            {
+              "code": "G89.3",
+              "description": "Neoplasm related pain (acute) (chronic)",
+              "score": 0.75
+            },
+            {
+              "code": "L03.323",
+              "description": "Acute lymphangitis of chest wall",
+              "score": 0.65
+            },
+            {
+              "code": "D57.811",
+              "description": "Other sickle-cell disorders with acute chest syndrome",
+              "score": 0.65
+            },
+            {
+              "code": "D57.211",
+              "description": "Sickle-cell/Hb-C disease with acute chest syndrome",
+              "score": 0.65
+            },
+            {
+              "code": "D57.411",
+              "description": "Sickle-cell thalassemia, unspecified, with acute chest syndrome",
+              "score": 0.55
+            },
+            {
+              "code": "D57.451",
+              "description": "Sickle-cell thalassemia beta plus with acute chest syndrome",
+              "score": 0.5
+            }
+          ],
+          "selected_candidate": {
+            "code": "R07.4",
+            "description": "Chest pain, unspecified",
+            "confidence": 1.0,
+            "reason": "Candidate 'R07.4' (Chest pain, unspecified) best supported by documentation (core diagnostic entity match (2/3), unspecified code when specific detail (substernal) is documented).",
+            "decision": "ACCEPTED"
+          },
+          "validation": {
+            "status": "PASSED",
+            "checks": [
+              {
+                "rule_name": "CatalogExistence",
+                "passed": true,
+                "details": "Code 'R07.4' exists in local authoritative catalog."
+              },
+              {
+                "rule_name": "TerminalSpecificity",
+                "passed": true,
+                "details": "Code 'R07.4' is at terminal billable specificity."
+              }
+            ]
+          },
+          "final_result": {
+            "code": "R07.4",
+            "description": "Chest pain, unspecified",
+            "role": "PRIMARY"
+          }
+        }
+      ]
     },
     {
       "case_id": "CASE-04-HISTORICAL-PMH-ONLY",
       "title": "Past Medical History Without Inpatient Care (Remote CVA)",
       "expected_behavior": "Guardrail 5: Historical-only conditions cannot automatically become coded secondary diagnoses.",
-      "status": "ABSTAINED",
-      "primary_diagnosis": null,
+      "status": "PARTIAL_SUCCESS",
+      "primary_diagnosis": {
+        "code": "",
+        "description": "Elective repair of inguinal hernia",
+        "confidence_score": 1.0
+      },
       "secondary_diagnoses": [],
-      "abstention_count": 1,
+      "abstention_count": 3,
       "abstentions": [
         {
-          "diagnosis": null,
-          "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
-          "detail": "No clinical diagnosis mentions identified in document.",
-          "stage": "EXTRACTION"
+          "diagnosis": "Remote stroke in 2014 without residual neurological deficit.",
+          "reason": "EXCLUDED_BY_NEGATION",
+          "detail": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy.",
+          "stage": "CLASSIFICATION"
+        },
+        {
+          "diagnosis": "Elective repair of inguinal hernia",
+          "reason": "NO_MATCHING_ICD_CANDIDATE",
+          "detail": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
+          "stage": "RANKING"
+        },
+        {
+          "diagnosis": "Inguinal hernia repair",
+          "reason": "NO_MATCHING_ICD_CANDIDATE",
+          "detail": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
+          "stage": "RANKING"
         }
       ],
-      "audit_trail_sample": []
+      "audit_trail_sample": [
+        {
+          "document_id": "CASE-04-HISTORICAL-PMH-ONLY",
+          "diagnosis_id": "fc58d184-3d23-431d-86bc-9a33e5aff293",
+          "raw_term": "Remote stroke in 2014 without residual neurological deficit.",
+          "evidence": "1. Remote stroke in 2014 without residual neurological deficit.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "HISTORICAL",
+            "negation": "AFFIRMATIVE",
+            "acuity": "UNSPECIFIED"
+          },
+          "classification": {
+            "role": "EXCLUDED",
+            "is_billable": false,
+            "reason": "Excluded from coding: [PAST_MEDICAL_HISTORY] Past Medical History alone without documented inpatient evaluation, monitoring, or therapy."
+          },
+          "retrieved_candidates": [],
+          "selected_candidate": {
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Candidate pool was empty; no matching local ICD code.",
+            "decision": "ABSTAINED"
+          },
+          "validation": {
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
+          },
+          "final_result": {
+            "code": null,
+            "description": null,
+            "role": null
+          }
+        },
+        {
+          "document_id": "CASE-04-HISTORICAL-PMH-ONLY",
+          "diagnosis_id": "ba8d4016-2393-4b5f-a158-642c33a2947b",
+          "raw_term": "Elective repair of inguinal hernia",
+          "evidence": "1. Elective repair of inguinal hernia.",
+          "context": {
+            "certainty": "CONFIRMED",
+            "temporality": "CURRENT",
+            "negation": "AFFIRMATIVE",
+            "acuity": "ACUTE"
+          },
+          "classification": {
+            "role": "PRIMARY",
+            "is_billable": true,
+            "reason": "Selected as unique Primary Diagnosis (score=7.5): Explicitly documented under discharge / final diagnoses (+5.0); Actively managed and treated during hospitalization (+1.5); Confirmed diagnostic certainty (+1.0)"
+          },
+          "retrieved_candidates": [
+            {
+              "code": "K42.9",
+              "description": "Umbilical hernia without obstruction or gangrene",
+              "score": 0.8
+            },
+            {
+              "code": "K43.9",
+              "description": "Ventral hernia without obstruction or gangrene",
+              "score": 0.8
+            },
+            {
+              "code": "K42.0",
+              "description": "Umbilical hernia with obstruction, without gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K42.1",
+              "description": "Umbilical hernia with gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.0",
+              "description": "Incisional hernia with obstruction, without gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.1",
+              "description": "Incisional hernia with gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.2",
+              "description": "Incisional hernia without obstruction or gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.3",
+              "description": "Parastomal hernia with obstruction, without gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.4",
+              "description": "Parastomal hernia with gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.5",
+              "description": "Parastomal hernia without obstruction or gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.6",
+              "description": "Other and unspecified ventral hernia with obstruction, without gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K43.7",
+              "description": "Other and unspecified ventral hernia with gangrene",
+              "score": 0.75
+            },
+            {
+              "code": "K40.90",
+              "description": "Unilateral inguinal hernia, without obstruction or gangrene, not specified as recurrent",
+              "score": 0.85
+            },
+            {
+              "code": "K40.30",
+              "description": "Unilateral inguinal hernia, with obstruction, without gangrene, not specified as recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.31",
+              "description": "Unilateral inguinal hernia, with obstruction, without gangrene, recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.40",
+              "description": "Unilateral inguinal hernia, with gangrene, not specified as recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.41",
+              "description": "Unilateral inguinal hernia, with gangrene, recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.91",
+              "description": "Unilateral inguinal hernia, without obstruction or gangrene, recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.11",
+              "description": "Bilateral inguinal hernia, with gangrene, recurrent",
+              "score": 0.5252
+            },
+            {
+              "code": "K40.00",
+              "description": "Bilateral inguinal hernia, with obstruction, without gangrene, not specified as recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.01",
+              "description": "Bilateral inguinal hernia, with obstruction, without gangrene, recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.10",
+              "description": "Bilateral inguinal hernia, with gangrene, not specified as recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.20",
+              "description": "Bilateral inguinal hernia, without obstruction or gangrene, not specified as recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K40.21",
+              "description": "Bilateral inguinal hernia, without obstruction or gangrene, recurrent",
+              "score": 0.8
+            },
+            {
+              "code": "K41.90",
+              "description": "Unilateral femoral hernia, without obstruction or gangrene, not specified as recurrent",
+              "score": 0.8
+            }
+          ],
+          "selected_candidate": {
+            "code": null,
+            "description": null,
+            "confidence": 0.0,
+            "reason": "Unsupported specificity: Candidate 'K40.90' requires gangrene, unilateral, recurrent, which is not documented in clinical evidence.",
+            "decision": "ABSTAINED"
+          },
+          "validation": {
+            "status": "REJECTED_OR_ABSTAINED",
+            "checks": []
+          },
+          "final_result": {
+            "code": null,
+            "description": null,
+            "role": null
+          }
+        }
+      ]
     },
     {
       "case_id": "CASE-05-EMPTY-DOCUMENT",
@@ -330,7 +763,7 @@
         {
           "diagnosis": null,
           "reason": "INSUFFICIENT_CLINICAL_EVIDENCE",
-          "detail": "Input document text and PDF source are both empty or missing.",
+          "detail": "Input document text, PDF, and image sources are all empty or missing.",
           "stage": "VALIDATION"
         }
       ],

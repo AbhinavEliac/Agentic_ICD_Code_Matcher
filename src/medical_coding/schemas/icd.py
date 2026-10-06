@@ -170,7 +170,7 @@ class ICDCandidate(BaseModel):
         le=1.0,
         description="Normalized similarity/relevance score from retrieval engine.",
     )
-    retrieval_method: Literal["bm25", "faiss", "hybrid"] = Field(
+    retrieval_method: Literal["bm25", "faiss", "hybrid", "family_filtered_lexical"] = Field(
         description="Algorithm that produced or consolidated this candidate.",
     )
     is_valid_billable: bool = Field(
@@ -261,6 +261,18 @@ class RankedSelection(BaseModel):
             description="Outcome of candidate evaluation.",
         )
     )
+    matching_status: Literal["MATCHED", "NO_DATABASE_MATCH"] = Field(
+        default="NO_DATABASE_MATCH",
+        description="Whether a database code was matched or no match was found in the database.",
+    )
+    source_section: str | None = Field(
+        default=None,
+        description="Source clinical section documenting the diagnosis.",
+    )
+    source_span: tuple[int, int] | None = Field(
+        default=None,
+        description="Character span offsets in original document text.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -305,5 +317,8 @@ class RankedSelection(BaseModel):
                         c.description if hasattr(c, "description") else c.get("description"),
                     )
                     break
+
+        if "matching_status" not in data or not data["matching_status"]:
+            data["matching_status"] = "MATCHED" if data.get("selected_code") else "NO_DATABASE_MATCH"
 
         return data

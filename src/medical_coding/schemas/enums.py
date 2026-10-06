@@ -3,6 +3,19 @@
 from enum import StrEnum
 
 
+class AssertionStatus(StrEnum):
+    """Assertion status according to clinical documentation."""
+
+    CONFIRMED = "confirmed"
+    SUSPECTED = "suspected"
+    RULED_OUT = "ruled_out"
+    HISTORICAL = "historical"
+    FAMILY_HISTORY = "family_history"
+    HYPOTHETICAL = "hypothetical"
+    NEGATED = "negated"
+    UNCERTAIN = "uncertain"
+
+
 class NegationStatus(StrEnum):
     """Negation assessment of clinical assertion."""
 
@@ -18,6 +31,8 @@ class Temporality(StrEnum):
     HISTORICAL = "HISTORICAL"  # Past medical history, not actively evaluated or managed
     RESOLVED = "RESOLVED"  # Previously active condition now clinically resolved
     FAMILY_HISTORY = "FAMILY_HISTORY"  # Family medical background (not personal condition)
+    FUTURE = "FUTURE"  # Anticipated or scheduled event/condition
+    UNCLEAR = "UNCLEAR"  # Temporality not determinable from text
     UNKNOWN = "UNKNOWN"  # Temporality not determinable from text
 
 
@@ -103,6 +118,42 @@ class DiagnosisRole(StrEnum):
     )
 
 
+class SectionSemantics(StrEnum):
+    """Semantic category of clinical document sections providing evidence hierarchy."""
+
+    DIAGNOSTIC_AUTHORITY = "DIAGNOSTIC_AUTHORITY"       # Discharge diagnoses, final diagnoses, assessment
+    ADMISSION_REASON = "ADMISSION_REASON"               # Reason for admission, chief complaint, admitting dx
+    HOSPITAL_COURSE = "HOSPITAL_COURSE"                 # Narrative of hospitalization, active management
+    HISTORICAL_CONTEXT = "HISTORICAL_CONTEXT"           # Past medical history, past surgical history
+    TREATMENT_PROCEDURE = "TREATMENT_PROCEDURE"         # Operative notes, procedures, interventions
+    MEDICATION = "MEDICATION"                           # Discharge medications, inpatient medications
+    INVESTIGATION = "INVESTIGATION"                     # Lab findings, radiology, pathology, IHC
+    NEGATIVE_RULE_OUT = "NEGATIVE_RULE_OUT"             # Ruled-out conditions, absence statements
+    ADMINISTRATIVE = "ADMINISTRATIVE"                   # Patient metadata, billing, follow-up instructions
+    UNKNOWN = "UNKNOWN"
+
+
+class ClinicalReasoningErrorType(StrEnum):
+    """Architectural classification of clinical reasoning and coding failures (Section 25)."""
+
+    EXTRACTION_ERROR = "EXTRACTION_ERROR"
+    SECTION_CLASSIFICATION_ERROR = "SECTION_CLASSIFICATION_ERROR"
+    ASSERTION_ERROR = "ASSERTION_ERROR"
+    TEMPORALITY_ERROR = "TEMPORALITY_ERROR"
+    CLINICAL_RELEVANCE_ERROR = "CLINICAL_RELEVANCE_ERROR"
+    NORMALIZATION_ERROR = "NORMALIZATION_ERROR"
+    ROLE_CLASSIFICATION_ERROR = "ROLE_CLASSIFICATION_ERROR"
+    RETRIEVAL_ERROR = "RETRIEVAL_ERROR"
+    ICD_SEMANTIC_MISMATCH = "ICD_SEMANTIC_MISMATCH"
+    UNSUPPORTED_SPECIFICITY = "UNSUPPORTED_SPECIFICITY"
+    DATABASE_MISMATCH = "DATABASE_MISMATCH"
+    MEDICATION_CONTAMINATION = "MEDICATION_CONTAMINATION"
+    METADATA_CONTAMINATION = "METADATA_CONTAMINATION"
+    COMPOUND_DIAGNOSIS_ERROR = "COMPOUND_DIAGNOSIS_ERROR"
+    CANDIDATE_CONTAMINATION = "CANDIDATE_CONTAMINATION"
+    FINAL_VALIDATION_ERROR = "FINAL_VALIDATION_ERROR"
+
+
 class PipelineStage(StrEnum):
     """Execution stages across the pipeline graph."""
 
@@ -123,6 +174,7 @@ class AbstentionReason(StrEnum):
 
     INSUFFICIENT_CLINICAL_EVIDENCE = "INSUFFICIENT_CLINICAL_EVIDENCE"
     NO_MATCHING_ICD_CANDIDATE = "NO_MATCHING_ICD_CANDIDATE"
+    NO_DATABASE_MATCH = "NO_DATABASE_MATCH"
     BELOW_CONFIDENCE_THRESHOLD = "BELOW_CONFIDENCE_THRESHOLD"
     MULTIPLE_AMBIGUOUS_PRIMARY = "MULTIPLE_AMBIGUOUS_PRIMARY"
     EXCLUDED_BY_NEGATION = "EXCLUDED_BY_NEGATION"
@@ -130,7 +182,10 @@ class AbstentionReason(StrEnum):
     CONTRADICTORY_DOCUMENTATION = "CONTRADICTORY_DOCUMENTATION"
     INVALID_ICD_CODE = "INVALID_ICD_CODE"
     SPECIFICITY_REQUIRED = "SPECIFICITY_REQUIRED"
+    UNSUPPORTED_SPECIFICITY = "UNSUPPORTED_SPECIFICITY"
     EXCLUDES_1_VIOLATION = "EXCLUDES_1_VIOLATION"
+    MEDICATION_ONLY_EVIDENCE = "MEDICATION_ONLY_EVIDENCE"
+    SYMPTOM_ONLY_EVIDENCE = "SYMPTOM_ONLY_EVIDENCE"
     PROCESSING_ERROR = "PROCESSING_ERROR"
 
 

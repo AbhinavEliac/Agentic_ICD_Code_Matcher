@@ -23,6 +23,7 @@ from medical_coding.schemas.validation import (
     ValidationCheck,
 )
 from medical_coding.utils.logging import get_logger
+from medical_coding.validation.reverse_attributes import ReverseAttributeChecker
 
 logger = get_logger(__name__)
 
@@ -120,6 +121,11 @@ class DeterministicValidator:
             icd10cm=icd10cm_val,
             icdo=icdo_val,
             cpt=cpt_val,
+            database_code=code,
+            database_description=candidate.description,
+            matching_status="MATCHED",
+            source_section=getattr(condition.context.evidence, "source_section", "") or getattr(selection, "source_section", ""),
+            source_span=getattr(condition.context.evidence, "source_span", None) or getattr(selection, "source_span", None),
         )
         return validated, None
 
@@ -487,6 +493,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence] if clean_evidence else [],
                 confidence=0.0,
                 abstention_reason="NO_CANDIDATES",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=[],
                 decision="ABSTAINED",
             )
@@ -503,6 +512,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[],
                 confidence=0.0,
                 abstention_reason="INSUFFICIENT_EVIDENCE",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="ABSTAINED",
             )
@@ -519,6 +531,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence],
                 confidence=0.0,
                 abstention_reason=selection.abstention_reason or "NO_MATCHING_CANDIDATE",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="ABSTAINED",
             )
@@ -543,6 +558,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence],
                 confidence=0.0,
                 abstention_reason="INVALID_LLM_CODE_NOT_IN_CANDIDATE_POOL",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="REJECTED_MISMATCH",
             )
@@ -561,6 +579,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence],
                 confidence=0.0,
                 abstention_reason="INVALID_ICD_CODE",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="REJECTED_MISMATCH",
             )
@@ -579,13 +600,16 @@ class CandidateRankingDeterministicValidator:
                 gen_cand = next(
                     (
                         c
-                        for c in candidates
+                        for c in sorted(candidates, key=lambda x: x.retrieval_score, reverse=True)
                         if "unspecified" in c.description.lower() or c.code in ["I50.9", "I50"]
                     ),
                     None,
                 )
                 if gen_cand and gen_cand.is_valid_billable:
                     matching_candidate = gen_cand
+                    selection.selected_code = gen_cand.code
+                    selection.selected_description = gen_cand.description
+                    selection.selected_candidate = gen_cand
                     selection.ranking_reason = (
                         f"Specificity realigned: Documentation supports general heart failure without {', '.join(unsupported_hf)} specificity; "
                         f"selected unspecified code {gen_cand.code}."
@@ -604,6 +628,9 @@ class CandidateRankingDeterministicValidator:
                         supporting_evidence=[clean_evidence],
                         confidence=0.0,
                         abstention_reason="UNSUPPORTED_SPECIFICITY",
+                        matching_status="NO_DATABASE_MATCH",
+                        source_section=getattr(selection, "source_section", ""),
+                        source_span=getattr(selection, "source_span", None),
                         candidate_pool=candidates,
                         decision="ABSTAINED",
                     )
@@ -635,13 +662,16 @@ class CandidateRankingDeterministicValidator:
             uncomp_cand = next(
                 (
                     c
-                    for c in candidates
+                    for c in sorted(candidates, key=lambda x: x.retrieval_score, reverse=True)
                     if "without complications" in c.description.lower() or c.code == "E11.9"
                 ),
                 None,
             )
             if uncomp_cand:
                 matching_candidate = uncomp_cand
+                selection.selected_code = uncomp_cand.code
+                selection.selected_description = uncomp_cand.description
+                selection.selected_candidate = uncomp_cand
                 selection.ranking_reason = (
                     f"Specificity realigned: Documentation lacks evidence of diabetic complications; "
                     f"selected uncomplicated code {uncomp_cand.code}."
@@ -657,12 +687,85 @@ class CandidateRankingDeterministicValidator:
                     supporting_evidence=[clean_evidence],
                     confidence=0.0,
                     abstention_reason="UNSUPPORTED_SPECIFICITY",
+                    matching_status="NO_DATABASE_MATCH",
+                    source_section=getattr(selection, "source_section", ""),
+                    source_span=getattr(selection, "source_span", None),
+                    candidate_pool=candidates,
+                    decision="ABSTAINED",
+                )
+
+        # Reverse Attribute Check (Master Prompt: CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
+        is_attr_valid, unsupp_attrs = ReverseAttributeChecker.validate_code_attributes(
+            code_description=matching_candidate.description,
+            evidence_text=clean_evidence,
+            diagnosis_term=clean_diagnosis,
+        )
+        if not is_attr_valid:
+            # Look for a candidate in candidate pool that is billable and valid under reverse attribute check
+            better_candidate = None
+            best_cand_score = -999.0
+            diag_clean_lower = clean_diagnosis.lower()
+            diag_tokens = [t for t in re.findall(r"[a-z0-9]+", diag_clean_lower) if len(t) > 3]
+
+            sorted_candidates = sorted(candidates, key=lambda x: x.retrieval_score, reverse=True)
+            for alt_cand in sorted_candidates:
+                if not alt_cand.is_valid_billable:
+                    continue
+                alt_valid, _ = ReverseAttributeChecker.validate_code_attributes(
+                    code_description=alt_cand.description,
+                    evidence_text=clean_evidence,
+                    diagnosis_term=clean_diagnosis,
+                )
+                if alt_valid:
+                    alt_desc_lower = alt_cand.description.lower()
+                    if any(t in alt_desc_lower for t in diag_tokens):
+                        pref_score = alt_cand.retrieval_score
+                        # Prefer 'unspecified' or canonical base codes over 'other' when documentation is general
+                        if "unspecified" in alt_desc_lower or "without " in alt_desc_lower or alt_cand.code.endswith(".9") or alt_cand.code.endswith(".90"):
+                            pref_score += 0.35
+                        elif "other " in alt_desc_lower or "other specified" in alt_desc_lower:
+                            doc_has_other = any(w in evidence_lower for w in ["other", "specified", "variant", "type"])
+                            if not doc_has_other:
+                                pref_score -= 0.35
+
+                        if pref_score > best_cand_score:
+                            best_cand_score = pref_score
+                            better_candidate = alt_cand
+
+            if better_candidate:
+                matching_candidate = better_candidate
+                selection.selected_code = better_candidate.code
+                selection.selected_description = better_candidate.description
+                selection.selected_candidate = better_candidate
+                selection.ranking_reason = (
+                    f"Specificity realigned: Documentation does not support {', '.join(unsupp_attrs)}; "
+                    f"selected supported code {better_candidate.code} ({better_candidate.description})."
+                )
+            else:
+                return RankedSelection(
+                    diagnosis_id=selection.diagnosis_id,
+                    raw_term=selection.raw_term or clean_diagnosis,
+                    selected_code=None,
+                    selected_description=None,
+                    selected_candidate=None,
+                    ranking_reason=(
+                        f"Unsupported specificity: Candidate '{matching_candidate.code}' requires {', '.join(unsupp_attrs)}, "
+                        "which is not documented in clinical evidence."
+                    ),
+                    supporting_evidence=[clean_evidence],
+                    confidence=0.0,
+                    abstention_reason="UNSUPPORTED_SPECIFICITY",
+                    matching_status="NO_DATABASE_MATCH",
+                    source_section=getattr(selection, "source_section", ""),
+                    source_span=getattr(selection, "source_span", None),
                     candidate_pool=candidates,
                     decision="ABSTAINED",
                 )
 
         # 7. Check if candidate has zero clinical relevance to evidence
-        ev_tokens = set(re.findall(r"[A-Za-z0-9]+", evidence_lower))
+        from medical_coding.retrieval.tokenizer import expand_clinical_morphology
+        raw_ev = [t for t in re.findall(r"[A-Za-z0-9]+", evidence_lower) if len(t) > 2]
+        ev_tokens = set(expand_clinical_morphology(raw_ev))
         cand_tokens = set(re.findall(r"[A-Za-z0-9]+", matching_candidate.description.lower()))
         # Remove universal filler tokens
         cand_meaningful = {
@@ -670,7 +773,8 @@ class CandidateRankingDeterministicValidator:
             for t in cand_tokens
             if len(t) > 2 and t not in {"and", "with", "for", "without", "other", "unspecified"}
         }
-        if cand_meaningful and not (ev_tokens & cand_meaningful):
+        cand_meaningful_expanded = set(expand_clinical_morphology(list(cand_meaningful)))
+        if cand_meaningful and not (ev_tokens & cand_meaningful_expanded):
             return RankedSelection(
                 diagnosis_id=selection.diagnosis_id,
                 raw_term=selection.raw_term or clean_diagnosis,
@@ -681,6 +785,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence],
                 confidence=0.0,
                 abstention_reason="NO_MATCHING_CANDIDATE",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="ABSTAINED",
             )
@@ -698,6 +805,9 @@ class CandidateRankingDeterministicValidator:
                 supporting_evidence=[clean_evidence],
                 confidence=effective_conf,
                 abstention_reason="CONFIDENCE_BELOW_THRESHOLD",
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(selection, "source_section", ""),
+                source_span=getattr(selection, "source_span", None),
                 candidate_pool=candidates,
                 decision="REJECTED_LOW_CONFIDENCE",
             )
@@ -714,6 +824,9 @@ class CandidateRankingDeterministicValidator:
             supporting_evidence=[clean_evidence],
             confidence=round(effective_conf, 4),
             abstention_reason=None,
+            matching_status="MATCHED",
+            source_section=getattr(selection, "source_section", ""),
+            source_span=getattr(selection, "source_span", None),
             candidate_pool=candidates,
             decision="ACCEPTED",
         )

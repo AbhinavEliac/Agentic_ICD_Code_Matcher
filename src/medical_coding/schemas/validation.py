@@ -46,6 +46,26 @@ class ValidatedDiagnosis(BaseModel):
         default=None,
         description="Matched CPT procedural code if matched, else None.",
     )
+    database_code: str | None = Field(
+        default=None,
+        description="Exact authoritative code from local database.",
+    )
+    database_description: str | None = Field(
+        default=None,
+        description="Exact authoritative description from local database.",
+    )
+    matching_status: str = Field(
+        default="MATCHED",
+        description="Status of database matching: MATCHED or NO_DATABASE_MATCH.",
+    )
+    source_section: str = Field(
+        default="",
+        description="Section of the document where evidence was found.",
+    )
+    source_span: tuple[int, int] | None = Field(
+        default=None,
+        description="Character offsets of evidence quote.",
+    )
 
 
 class AbstentionRecord(BaseModel):

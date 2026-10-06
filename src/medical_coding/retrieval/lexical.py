@@ -64,9 +64,18 @@ class BM25ICDRetriever(BaseICDRetriever):
             raise RuntimeError("BM25 index has not been built or loaded.")
 
         normalized_query = normalize_clinical_query(query)
-        query_tokens = tokenize_clinical_text(normalized_query, expand_abbreviations=True)
-        if not query_tokens:
+        orig_tokens = tokenize_clinical_text(normalized_query, expand_abbreviations=True)
+        if not orig_tokens:
             return []
+
+        from medical_coding.retrieval.tokenizer import (
+            CLINICAL_MORPHOLOGY,
+            get_expanded_query_tokens,
+        )
+
+        query_tokens = get_expanded_query_tokens(normalized_query)
+        if not query_tokens:
+            query_tokens = orig_tokens
 
         assert self._bm25_index is not None
         raw_scores = self._bm25_index.get_scores(query_tokens)
@@ -82,16 +91,21 @@ class BM25ICDRetriever(BaseICDRetriever):
         indexed_scores.sort(key=lambda x: x[1], reverse=True)
 
         candidates: list[ICDCandidate] = []
-        query_token_set = set(query_tokens)
 
         for idx, raw_score in indexed_scores[:top_k]:
             record = self._records[idx]
             doc_tokens = set(self._tokenized_corpus[idx])
-            overlap = len(query_token_set & doc_tokens)
-            coverage = overlap / len(query_token_set) if query_token_set else 0.0
+
+            # Measure concept coverage of original query terms (allowing morphological variants)
+            covered_concepts = 0
+            for ot in orig_tokens:
+                variants = [ot] + CLINICAL_MORPHOLOGY.get(ot, [])
+                if any(v in doc_tokens for v in variants):
+                    covered_concepts += 1
+            coverage = covered_concepts / len(orig_tokens) if orig_tokens else 0.0
 
             relative_bm25 = raw_score / max_raw_score
-            # Composite normalized score
+            # Composite normalized score with concept coverage weighting
             normalized_score = 0.5 * relative_bm25 + 0.5 * coverage
             clamped_score = max(0.0, min(1.0, round(normalized_score, 4)))
 

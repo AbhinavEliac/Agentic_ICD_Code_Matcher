@@ -31,12 +31,24 @@ CLINICAL_ABBREVIATIONS: dict[str, str] = {
     "tia": "transient ischemic attack",
     "uti": "urinary tract infection",
     "pna": "pneumonia",
+    "cap": "pneumonia",
     "pud": "peptic ulcer disease",
     "sob": "shortness of breath dyspnea",
     "bph": "benign prostatic hyperplasia",
     "osa": "obstructive sleep apnea",
     "ra": "rheumatoid arthritis",
     "oa": "osteoarthritis",
+    "dlbcl": "diffuse large b cell lymphoma",
+    "dka": "diabetic ketoacidosis",
+    "hiv": "human immunodeficiency virus",
+    "hbv": "hepatitis b virus viral hepatitis b",
+    "hcv": "hepatitis c virus viral hepatitis c",
+    "hav": "hepatitis a virus viral hepatitis a",
+    "ks": "kaposi sarcoma",
+    "acl": "anterior cruciate ligament",
+    "pcl": "posterior cruciate ligament",
+    "net": "neuroendocrine tumor carcinoid",
+    "fet": "frozen embryo transfer",
 }
 
 # Non-informative general words (keeping critical medical distinctions: acute, chronic, type, 1, 2, without, etc.)
@@ -213,7 +225,11 @@ def tokenize_clinical_text(
     raw_tokens = re.findall(r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)?", processed.lower())
 
     if remove_stopwords:
-        tokens = [t for t in raw_tokens if t not in GENERAL_STOPWORDS and len(t) > 1]
+        tokens = [
+            t
+            for t in raw_tokens
+            if t not in GENERAL_STOPWORDS and (len(t) > 1 or t.isdigit() or t in {"b", "c", "d", "k", "t"})
+        ]
     else:
         tokens = [t for t in raw_tokens if len(t) > 0]
 
@@ -225,3 +241,125 @@ def normalize_clinical_query(text: str) -> str:
     expanded = expand_medical_abbreviations(text.strip())
     # Clean redundant spaces
     return re.sub(r"\s+", " ", expanded)
+
+
+CLINICAL_MORPHOLOGY: dict[str, list[str]] = {
+    "ureter": ["ureteric", "ureteral"],
+    "ureteric": ["ureter", "ureteral"],
+    "ureteral": ["ureter", "ureteric"],
+    "calculus": ["stone", "calculi"],
+    "calculi": ["calculus", "stone"],
+    "stone": ["calculus", "calculi"],
+    "renal": ["kidney", "renal"],
+    "kidney": ["renal", "kidney"],
+    "gastric": ["stomach", "gastric"],
+    "stomach": ["gastric", "stomach"],
+    "cardiac": ["heart", "cardiac"],
+    "heart": ["cardiac", "heart"],
+    "pulmonary": ["lung", "pulmonary"],
+    "lung": ["pulmonary", "lung"],
+    "hepatic": ["liver", "hepatic"],
+    "liver": ["hepatic", "liver"],
+    "colonic": ["colon", "colonic"],
+    "colon": ["colonic", "colon"],
+    "appendiceal": ["appendix", "appendiceal"],
+    "appendix": ["appendiceal", "appendix"],
+    "splenic": ["spleen", "splenic"],
+    "spleen": ["splenic", "spleen"],
+    "cerebral": ["brain", "cerebral"],
+    "brain": ["cerebral", "brain"],
+    "ocular": ["eye", "ocular"],
+    "eye": ["ocular", "eye"],
+    "pneumonia": ["pneumonitis", "pna"],
+    "hypertension": ["htn", "high blood pressure"],
+    "diabetes": ["dm", "diabetic"],
+    "diabetic": ["diabetes", "dm"],
+    "colic": ["colicky"],
+    "chf": ["heart failure", "congestive heart failure"],
+    "pain": ["discomfort", "ache"],
+    "discomfort": ["pain", "ache"],
+    "ache": ["pain", "discomfort"],
+    "community": ["pneumonia"],
+    "dlbcl": ["lymphoma", "diffuse", "large"],
+    "lymphoma": ["dlbcl"],
+    "bronchitis": ["bronchial"],
+    "ckd": ["chronic", "kidney", "disease"],
+    "candida": ["candidiasis", "candidal"],
+    "candidiasis": ["candida", "candidal"],
+    "candidal": ["candida", "candidiasis"],
+    "sepsis": ["septic", "septicemia"],
+    "septic": ["sepsis", "septicemia"],
+    "septicemia": ["sepsis", "septic"],
+    "urinary": ["urogenital"],
+    "urogenital": ["urinary", "genital"],
+    "urosepsis": ["urinary", "sepsis"],
+    "hbv": ["hepatitis", "viral"],
+    "hepatitis": ["hbv", "hcv", "viral"],
+    "sarcoma": ["kaposi", "sarcomas", "malignant", "neoplasm", "cancer"],
+    "viral": ["virus", "hepatitis", "hiv"],
+    "virus": ["viral", "hepatitis", "hiv"],
+    "cancer": ["malignant", "neoplasm", "carcinoma"],
+    "carcinoma": ["cancer", "malignant", "neoplasm"],
+    "malignant": ["cancer", "carcinoma", "neoplasm", "metastasis", "metastatic", "metastases", "malignancy"],
+    "neoplasm": ["cancer", "carcinoma", "malignant", "metastasis", "metastatic", "metastases", "tumor", "tumour"],
+    "metastasis": ["metastatic", "metastases", "secondary", "malignant", "neoplasm"],
+    "metastases": ["metastasis", "metastatic", "secondary", "malignant", "neoplasm"],
+    "metastatic": ["metastasis", "metastases", "secondary", "malignant", "neoplasm"],
+    "secondary": ["metastasis", "metastases", "metastatic", "secondaries"],
+    "carcinoid": ["neuroendocrine", "net"],
+    "neuroendocrine": ["carcinoid", "net", "endocrine", "tumor", "neoplasm"],
+    "male": ["man", "men", "boy", "gentleman"],
+    "subsequent": ["follow-up", "followup", "subsequent", "routine healing"],
+    "pleural": ["pleura"],
+    "pleura": ["pleural"],
+    "malleolus": ["malleolar", "fibula", "fibular"],
+    "malleolar": ["malleolus", "fibula", "fibular"],
+    "fibula": ["malleolus", "malleolar", "fibular"],
+    "fibular": ["malleolus", "malleolar", "fibula"],
+    "tarsal": ["tarsus", "tarsals", "foot"],
+    "tarsals": ["tarsal", "foot"],
+    "metatarsal": ["metatarsals", "foot"],
+    "metatarsals": ["metatarsal", "foot"],
+    "foot": ["tarsal", "tarsals", "metatarsal", "metatarsals", "ankle"],
+    "ankle": ["deltoid", "calcaneofibular", "malleolus", "malleolar"],
+    "ligament": ["deltoid", "calcaneofibular", "sprain", "tear"],
+    "sprain": ["sprains", "injury", "ligament", "tear", "rupture"],
+    "sprains": ["sprain", "injury", "ligament", "tear", "rupture"],
+    "tear": ["tears", "rupture", "sprain", "sprains", "disruption", "injury"],
+    "tears": ["tear", "rupture", "sprain", "sprains", "disruption"],
+    "cruciate": ["acl", "pcl", "ligament"],
+    "sarcomas": ["sarcoma", "malignant", "neoplasm", "cancer"],
+    "pyelonephritis": ["pyelonephritic", "nephritis", "renal", "kidney"],
+    "nondisplaced": ["non-displaced"],
+    "displaced": ["displacement"],
+    "fracture": ["fractures"],
+    "fractures": ["fracture"],
+}
+
+
+def expand_clinical_morphology(tokens: list[str]) -> list[str]:
+    """Expand tokens with morphological clinical equivalents and singular forms."""
+    result: list[str] = list(tokens)
+    seen = set(tokens)
+    for t in tokens:
+        lower = t.lower()
+        if lower in CLINICAL_MORPHOLOGY:
+            for syn in CLINICAL_MORPHOLOGY[lower]:
+                for word in syn.split():
+                    if word not in seen:
+                        result.append(word)
+                        seen.add(word)
+        # De-pluralize simple medical plurals if > 4 chars
+        if lower.endswith("s") and len(lower) > 4 and not lower.endswith("ss"):
+            singular = lower[:-1]
+            if singular not in seen:
+                result.append(singular)
+                seen.add(singular)
+    return result
+
+
+def get_expanded_query_tokens(text: str) -> list[str]:
+    """Tokenize and expand clinical query terms for high-recall lexical retrieval."""
+    tokens = tokenize_clinical_text(text, expand_abbreviations=True, remove_stopwords=True)
+    return expand_clinical_morphology(tokens)
+

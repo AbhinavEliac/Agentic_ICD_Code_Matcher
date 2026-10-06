@@ -1,5 +1,4 @@
-"""Main entrypoint launcher for the Streamlit Medical Coding Application."""
-
+import runpy
 import sys
 from pathlib import Path
 
@@ -24,6 +23,4 @@ for venv_name in ("env", ".venv", "venv"):
                 sys.path.insert(0, str(sp))
 
 # Import and execute main Streamlit UI reliably across browser refreshes
-import runpy
-
 runpy.run_module("medical_coding.ui.app", run_name="__main__")

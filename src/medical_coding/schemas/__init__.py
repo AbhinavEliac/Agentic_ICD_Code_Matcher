@@ -12,14 +12,6 @@ from medical_coding.schemas.clinical import (
     ExtractedDiagnosis,
     TextSpan,
 )
-from medical_coding.schemas.evidence import (
-    AuditTrailEntry,
-    ClinicalDiagnosisCandidate,
-    ClinicalDiagnosisState,
-    ICDMappingState,
-    MultiDimensionalScore,
-    StructuredEvidence,
-)
 from medical_coding.schemas.enums import (
     AbstentionReason,
     Acuity,
@@ -33,10 +25,23 @@ from medical_coding.schemas.enums import (
     PipelineStage,
     Temporality,
 )
+from medical_coding.schemas.evidence import (
+    AuditTrailEntry,
+    ClinicalDiagnosisCandidate,
+    ClinicalDiagnosisState,
+    ICDMappingState,
+    MultiDimensionalScore,
+    StructuredEvidence,
+)
 from medical_coding.schemas.icd import (
     ICDCandidate,
     ICDCodeRecord,
     RankedSelection,
+)
+from medical_coding.schemas.reasoning import (
+    ClinicalConcept,
+    CompatibilityResult,
+    MatchSpec,
 )
 from medical_coding.schemas.response import (
     BatchJobStatus,
@@ -62,6 +67,7 @@ __all__ = [
     "BatchJobStatus",
     "Certainty",
     "ClassifiedDiagnosis",
+    "ClinicalConcept",
     "ClinicalDiagnosisCandidate",
     "ClinicalDiagnosisState",
     "ClinicalDocument",
@@ -69,6 +75,7 @@ __all__ = [
     "ClinicalExtractionResult",
     "CodedDiagnosisResponse",
     "CodingResult",
+    "CompatibilityResult",
     "ConditionClassification",
     "ConditionStatus",
     "ContextAssessment",
@@ -85,6 +92,7 @@ __all__ = [
     "ICDCodeRecord",
     "ICDMappingState",
     "Laterality",
+    "MatchSpec",
     "MultiDimensionalScore",
     "NegationStatus",
     "PipelineExecutionSnapshot",

@@ -13,26 +13,20 @@ GATE 10 — Final Consistency Gate: Final JSON consistency with evidence graph.
 """
 
 import re
-from typing import Any
 
 from medical_coding.dataset.validator import LocalICDCatalog
 from medical_coding.schemas.enums import (
     AbstentionReason,
-    Acuity,
     Certainty,
     DiagnosisRole,
-    Laterality,
+    EvidenceType,
     NegationStatus,
-    PipelineStage,
-    Temporality,
 )
 from medical_coding.schemas.evidence import (
     ClinicalDiagnosisCandidate,
-    ICDMappingCandidate,
-    StructuredEvidence,
 )
-from medical_coding.schemas.icd import ICDCandidate, RankedSelection
-from medical_coding.schemas.validation import AbstentionRecord, ValidationCheck
+from medical_coding.schemas.icd import RankedSelection
+from medical_coding.schemas.validation import ValidationCheck
 from medical_coding.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -111,21 +105,16 @@ class ValidationGateEngine:
         self,
         candidate: ClinicalDiagnosisCandidate,
     ) -> GateResult:
-        """Gate 2: Ensures candidate represents an actual clinical condition rather than an isolated lab, medication, or non-diagnostic string."""
-        term = candidate.normalized_diagnosis.strip().lower()
-        if len(term) < 2:
-            return GateResult(
-                2, "ClinicalDiagnosisGate", False,
-                f"Invalid diagnosis term '{term}': too short.",
-                AbstentionReason.INSUFFICIENT_CLINICAL_EVIDENCE,
-            )
+        """Gate 2: Ensures candidate represents an actual clinical condition rather than an absence statement, instruction, medication, or non-diagnostic string."""
+        from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-        # Exclude pure medications or lab names if wrongly passed as diagnoses
-        pure_meds_labs = {"furosemide", "lisinopril", "metformin", "carvedilol", "potassium", "creatinine", "sodium", "cbc", "troponin", "vital signs"}
-        if term in pure_meds_labs:
+        term = candidate.normalized_diagnosis.strip()
+        ev_text = candidate.primary_evidence_quote if hasattr(candidate, "primary_evidence_quote") else ""
+        is_valid, reason = HardClinicalCandidateGate.evaluate_candidate(term, ev_text)
+        if not is_valid:
             return GateResult(
                 2, "ClinicalDiagnosisGate", False,
-                f"Entity '{term}' is a medication or laboratory test, not an autonomous clinical diagnosis.",
+                f"Candidate rejected by clinical gate: {reason}",
                 AbstentionReason.INSUFFICIENT_CLINICAL_EVIDENCE,
             )
 
@@ -365,8 +354,6 @@ class ValidationGateEngine:
         secondary_candidates: list[ClinicalDiagnosisCandidate],
     ) -> GateResult:
         """Gate 10: Verify encounter-level invariants: maximum 1 primary, no Excludes1 violations."""
-        # 1. Excludes1 check across all assigned codes
-        assigned_codes: list[str] = []
         if primary_candidate and primary_candidate.scores.admitting_score > 0:
             pass  # primary is tracked
 

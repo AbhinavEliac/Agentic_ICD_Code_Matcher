@@ -22,6 +22,7 @@ class LocalICDCatalog:
         self.loader = loader
         self._records_by_clean: dict[str, ICDCodeRecord] = {}
         self._records_by_formatted: dict[str, ICDCodeRecord] = {}
+        self._records_by_prefix: dict[str, list[ICDCodeRecord]] = {}
         self._records_by_system: dict[str, dict[str, ICDCodeRecord]] = {
             "ICD-10-CM": {},
             "ICD-O": {},
@@ -42,6 +43,15 @@ class LocalICDCatalog:
         """Register a single validated ICDCodeRecord in the catalog lookup indexes."""
         self._records_by_clean[record.unformatted_code] = record
         self._records_by_formatted[record.code] = record
+
+        # Index by uppercase clean prefix (3, 4, 5 chars) for O(1) disease family filtering
+        clean_code = record.unformatted_code.upper()
+        for p_len in (3, 4, 5):
+            if len(clean_code) >= p_len:
+                pfx = clean_code[:p_len]
+                if pfx not in self._records_by_prefix:
+                    self._records_by_prefix[pfx] = []
+                self._records_by_prefix[pfx].append(record)
 
         sys_key = getattr(record, "coding_system", "ICD-10-CM") or "ICD-10-CM"
         if sys_key not in self._records_by_system:
@@ -104,6 +114,28 @@ class LocalICDCatalog:
                 seen[rec.code] = rec
             return list(seen.values())
         return []
+
+    def get_by_family_prefixes(self, prefixes: list[str], system: str = "ICD-10-CM") -> list[ICDCodeRecord]:
+        """Retrieve all records matching any of the allowed code family prefixes (Section 8)."""
+        if not prefixes:
+            return []
+        matched: dict[str, ICDCodeRecord] = {}
+        for pfx in prefixes:
+            clean_pfx = unformat_icd_code(pfx).upper()
+            recs = self._records_by_prefix.get(clean_pfx, [])
+            for r in recs:
+                sys_key = getattr(r, "coding_system", "ICD-10-CM") or "ICD-10-CM"
+                if sys_key == system:
+                    matched[r.code] = r
+            # Also search if prefix was 3 characters and query has subcategory
+            if not recs:
+                for k, k_recs in self._records_by_prefix.items():
+                    if k.startswith(clean_pfx) or clean_pfx.startswith(k):
+                        for r in k_recs:
+                            sys_key = getattr(r, "coding_system", "ICD-10-CM") or "ICD-10-CM"
+                            if sys_key == system:
+                                matched[r.code] = r
+        return list(matched.values())
 
     def get_available_systems(self) -> list[str]:
         """Return list of distinct coding systems populated in the catalog."""

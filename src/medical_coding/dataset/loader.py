@@ -558,6 +558,8 @@ class ExcelWorkbookLoader(BaseICDDatasetLoader):
                         "sheet": sheet_name,
                         "file": str(self.file_path.name),
                         "row_id": str(row.get("id", "")),
+                        "active_yesno": int(row.get("active_yesno", 1)) if pd.notna(row.get("active_yesno")) else 1,
+                        "provenance": f"{self.file_path.name}::{sheet_name}::row_{row.get('id', '')}",
                     },
                 )
                 records[lookup_key] = rec

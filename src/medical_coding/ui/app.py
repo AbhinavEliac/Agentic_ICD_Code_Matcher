@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -16,8 +17,6 @@ from medical_coding.ingestion.agent import ClinicalDocumentIngestionAgent
 from medical_coding.ingestion.detector import DocumentFormat
 from medical_coding.orchestration.pipeline import MedicalCodingPipeline
 from medical_coding.pdf.extractor import PDFExtractor
-from datetime import datetime
-
 from medical_coding.schemas.enums import ExecutionStatus
 from medical_coding.schemas.response import CodingResult
 from medical_coding.ui.components import (
@@ -58,7 +57,7 @@ st.markdown(get_css(), unsafe_allow_html=True)
 # Cached Singletons for Performance
 # -----------------------------------------------------------------------------
 @st.cache_resource(show_spinner=False)
-def get_cached_pipeline(version: str = "v3.2") -> MedicalCodingPipeline:
+def get_cached_pipeline(_version: str = "v3.2") -> MedicalCodingPipeline:
     """Return a cached singleton instance of the medical coding orchestrator."""
     settings = get_settings()
     return MedicalCodingPipeline(settings=settings)
@@ -149,11 +148,11 @@ def render_coding_session_results(
     steps_data: list[dict[str, Any]],
     thread_id: str,
     document_id: str,
-    raw_text: str = "",
-    active_filename: str = "clinical_document.txt",
-    active_source_type: str = "text",
-    active_file_bytes: bytes | None = None,
-    min_score: float = 0.40,
+    _raw_text: str = "",
+    _active_filename: str = "clinical_document.txt",
+    _active_source_type: str = "text",
+    _active_file_bytes: bytes | None = None,
+    _min_score: float = 0.40,
 ) -> None:
     """Render complete diagnostics: Step Oversight Timeline, Failure/Success, KPIs, Diagnoses, and Exports."""
     is_error = coding_result.status == ExecutionStatus.ERROR

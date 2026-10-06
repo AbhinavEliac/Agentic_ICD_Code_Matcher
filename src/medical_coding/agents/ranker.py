@@ -11,13 +11,14 @@ from medical_coding.prompts.ranking import (
     RANKING_USER_TEMPLATE,
 )
 from medical_coding.schemas.clinical import ClassifiedDiagnosis, ConditionClassification
-from medical_coding.schemas.enums import DiagnosisRole
+from medical_coding.schemas.enums import Certainty, DiagnosisRole, Temporality
 from medical_coding.schemas.icd import ICDCandidate, RankedSelection
 from medical_coding.utils.logging import get_logger
 from medical_coding.utils.text import format_icd_code
 from medical_coding.validation.deterministic import (
     CandidateRankingDeterministicValidator,
 )
+from medical_coding.validation.reverse_attributes import ReverseAttributeChecker
 
 logger = get_logger(__name__)
 
@@ -73,7 +74,7 @@ class CandidateRankingAgent(BaseAgent):
             supporting_evidence, confidence, and abstention_reason.
         """
         # 1. Normalize and extract condition details
-        diag_id, raw_term, evidence_quote, role, acuity, certainty, anatomy, laterality = (
+        diag_id, raw_term, evidence_quote, role, acuity, certainty, anatomy, laterality, temporality = (
             self._extract_condition_attributes(condition, evidence_override, role_override)
         )
 
@@ -121,7 +122,7 @@ class CandidateRankingAgent(BaseAgent):
                 diagnosis_term=raw_term,
             )
 
-        # 4. Short-circuit: Excluded condition -> Immediate Abstention
+        # 4. Short-circuit: Excluded or Historical condition -> Immediate Abstention
         if role == DiagnosisRole.EXCLUDED or role == "EXCLUDED":
             logger.info("Condition '%s' is marked as EXCLUDED; abstaining from coding.", raw_term)
             return self.validator.validate_ranking_selection(
@@ -134,6 +135,56 @@ class CandidateRankingAgent(BaseAgent):
                     supporting_evidence=[evidence_quote],
                     confidence=0.0,
                     abstention_reason="CONDITION_EXCLUDED",
+                    matching_status="NO_DATABASE_MATCH",
+                    candidate_pool=candidates,
+                    decision="ABSTAINED",
+                ),
+                candidates=candidates,
+                evidence_text=evidence_quote,
+                diagnosis_term=raw_term,
+            )
+
+        # 4b. Short-circuit: Ruled-Out condition
+        if certainty in (Certainty.RULED_OUT, "RULED_OUT") or "ruled out" in evidence_quote.lower():
+            logger.info("Condition '%s' is RULED OUT in clinical documentation; abstaining.", raw_term)
+            return self.validator.validate_ranking_selection(
+                selection=RankedSelection(
+                    diagnosis_id=diag_id,
+                    raw_term=raw_term,
+                    selected_code=None,
+                    selected_description=None,
+                    ranking_reason=f"Condition '{raw_term}' was ruled out in clinical documentation.",
+                    supporting_evidence=[evidence_quote],
+                    confidence=0.0,
+                    abstention_reason="RULED_OUT_CONDITION",
+                    matching_status="NO_DATABASE_MATCH",
+                    candidate_pool=candidates,
+                    decision="ABSTAINED",
+                ),
+                candidates=candidates,
+                evidence_text=evidence_quote,
+                diagnosis_term=raw_term,
+            )
+
+        # 4c. Short-circuit: Historical condition not managed during current encounter
+        if temporality in (Temporality.HISTORICAL, "HISTORICAL") and role in (
+            DiagnosisRole.HISTORICAL,
+            "HISTORICAL",
+            DiagnosisRole.EXCLUDED,
+            "EXCLUDED",
+        ):
+            logger.info("Condition '%s' is historical and unmanaged; abstaining from coding.", raw_term)
+            return self.validator.validate_ranking_selection(
+                selection=RankedSelection(
+                    diagnosis_id=diag_id,
+                    raw_term=raw_term,
+                    selected_code=None,
+                    selected_description=None,
+                    ranking_reason=f"Condition '{raw_term}' is historical and not managed during stay.",
+                    supporting_evidence=[evidence_quote],
+                    confidence=0.0,
+                    abstention_reason="EXCLUDED_BY_TEMPORALITY",
+                    matching_status="NO_DATABASE_MATCH",
                     candidate_pool=candidates,
                     decision="ABSTAINED",
                 ),
@@ -243,6 +294,7 @@ class CandidateRankingAgent(BaseAgent):
         certainty = "CONFIRMED"
         anatomy = None
         laterality = "UNSPECIFIED"
+        temporality = "CURRENT"
 
         if hasattr(condition, "diagnosis_id"):
             diag_id = str(condition.diagnosis_id)
@@ -276,6 +328,10 @@ class CandidateRankingAgent(BaseAgent):
                 certainty = str(
                     ctx.certainty.value if hasattr(ctx.certainty, "value") else ctx.certainty
                 )
+            if hasattr(ctx, "temporality"):
+                temporality = str(
+                    ctx.temporality.value if hasattr(ctx.temporality, "value") else ctx.temporality
+                )
 
         if hasattr(condition, "anatomical_site") and condition.anatomical_site:
             anatomy = str(condition.anatomical_site)
@@ -286,7 +342,7 @@ class CandidateRankingAgent(BaseAgent):
                 else condition.laterality
             )
 
-        return diag_id, raw_term, evidence_quote, role, acuity, certainty, anatomy, laterality
+        return diag_id, raw_term, evidence_quote, role, acuity, certainty, anatomy, laterality, temporality
 
     def _format_candidates(self, candidates: list[ICDCandidate]) -> str:
         """Format candidate list with indices and clinical details for the prompt."""
@@ -401,6 +457,28 @@ class CandidateRankingAgent(BaseAgent):
         term_clean = (raw_term or "").lower()
         full_context = f"{term_clean} {evidence_clean}"
 
+        from medical_coding.retrieval.tokenizer import CLINICAL_ABBREVIATIONS, CLINICAL_MORPHOLOGY
+
+        QUALIFIERS_TO_IGNORE = {
+            "acute", "chronic", "subacute", "right", "left", "bilateral", "unspecified",
+            "primary", "secondary", "severe", "mild", "moderate", "history", "admitted",
+            "discharge", "recurrent", "compensated", "decompensated", "status", "post",
+            "with", "without", "due", "to", "and", "or", "in", "of", "for",
+            "community", "acquired",
+        }
+        term_tokens = [t for t in re.findall(r"[a-z0-9]+", term_clean) if len(t) > 2]
+        core_diag_tokens = [t for t in term_tokens if t not in QUALIFIERS_TO_IGNORE]
+        if not core_diag_tokens:
+            core_diag_tokens = term_tokens
+
+        # Expand abbreviations (e.g. ACL -> anterior cruciate ligament, NET -> neuroendocrine tumor)
+        expanded_core_tokens = list(core_diag_tokens)
+        for ct in core_diag_tokens:
+            if ct in CLINICAL_ABBREVIATIONS:
+                for ab_word in CLINICAL_ABBREVIATIONS[ct].split():
+                    if ab_word not in QUALIFIERS_TO_IGNORE and ab_word not in expanded_core_tokens:
+                        expanded_core_tokens.append(ab_word)
+
         scored_candidates: list[tuple[ICDCandidate, float, str]] = []
 
         for cand in candidates:
@@ -410,23 +488,60 @@ class CandidateRankingAgent(BaseAgent):
 
             # 1. Non-billable penalty
             if not cand.is_valid_billable:
-                score *= 0.5
+                score *= 0.2
                 rationale_parts.append("non-billable category header")
 
-            # 2. Terminology and specific descriptor matches
             cand_tokens = [t for t in re.findall(r"[a-z0-9]+", desc_lower) if len(t) > 2]
-            overlap = [t for t in cand_tokens if t in full_context]
-            if overlap:
-                score += 0.15 * (len(overlap) / len(cand_tokens))
+            cand_tokens_set = set(cand_tokens)
 
-            # 3. Acuity alignment
-            is_acute_doc = any(
-                w in full_context
-                for w in ["acute", "exacerbation", "decompensated", "decompensation"]
+            # 2. Core diagnostic entity matching (using expanded clinical terms)
+            core_matches = 0
+            for ct in expanded_core_tokens:
+                variants = [ct] + CLINICAL_MORPHOLOGY.get(ct, [])
+                if any(v in cand_tokens_set for v in variants):
+                    core_matches += 1
+            core_match_fraction = (core_matches / len(expanded_core_tokens)) if expanded_core_tokens else 1.0
+
+            if core_match_fraction == 0.0:
+                score = 0.05
+                rationale_parts.append("diagnostic entity mismatch")
+            elif core_match_fraction >= 0.5:
+                score += 0.15 + (0.25 * core_match_fraction)
+                rationale_parts.append(f"core diagnostic entity match ({core_matches}/{len(expanded_core_tokens)})")
+
+            # 3. Direct diagnosis term overlap (differentiates diagnosis from incidental narrative mentions)
+            term_overlap = [
+                t for t in cand_tokens
+                if t in term_tokens or any(v in term_tokens for v in CLINICAL_MORPHOLOGY.get(t, []))
+            ]
+            if term_overlap:
+                score += 0.15 * (len(term_overlap) / len(cand_tokens))
+
+            # 4. Symptom vs Definitive Disease entity rule (CMS Guideline I.B.4)
+            # Chapter 18 (R00-R99) or symptom codes (e.g. N23) cannot supersede a definitive pathological entity.
+            is_def_disease = any(
+                any(ct.endswith(sfx) for sfx in ("itis", "oma", "osis"))
+                or ct in ("calculus", "lithiasis", "infarction", "failure", "disease", "disorder", "syndrome", "ulcer", "stenosis", "obstruction", "effusion", "pyelonephritis")
+                for ct in core_diag_tokens
             )
-            is_chronic_doc = any(
-                w in full_context for w in ["chronic", "compensated", "longstanding"]
+            is_symptom_code = (
+                cand.code.startswith("R")
+                or cand.code == "N23"
+                or (
+                    any(st in cand_tokens_set for st in ["colic", "pain", "dyspnea", "shortness", "cough", "nausea", "fever", "vomiting", "malaise", "fatigue"])
+                    and not (
+                        any(dt in cand_tokens_set for dt in ["disease", "disorder", "syndrome", "failure", "infarction", "calculus", "lithiasis", "ulcer"])
+                        or any(t.endswith(sfx) for t in cand_tokens_set for sfx in ("itis", "oma", "osis"))
+                    )
+                )
             )
+            if is_def_disease and is_symptom_code:
+                score = 0.05
+                rationale_parts.append("symptom code superseded by definitive diagnosis")
+
+            # 5. Acuity alignment
+            is_acute_doc = bool(re.search(r"\b(?:acute|exacerbation|decompensated|decompensation)\b", full_context))
+            is_chronic_doc = bool(re.search(r"\b(?:chronic|longstanding)\b", full_context) or (re.search(r"\bcompensated\b", full_context) and not re.search(r"\bdecompensated\b", full_context)))
 
             is_acute_cand = "acute" in desc_lower and "chronic" not in desc_lower
             is_chronic_cand = "chronic" in desc_lower and "acute" not in desc_lower
@@ -453,76 +568,101 @@ class CandidateRankingAgent(BaseAgent):
                 elif is_acute_doc and not is_chronic_doc:
                     score -= 0.25
 
-            # 4. Specificity penalty for unsupported subtypes and etiologies
-            # Etiology support check: transplant, rheumatic, hypertensive, postprocedural, congenital, etc.
-            etiologies = {
-                "transplant": ["transplant", "allograft", "graft"],
-                "rheumatic": ["rheumatic"],
-                "hypertensive": ["hypertension", "hypertensive", "htn", "high blood pressure"],
-                "postprocedural": ["postprocedural", "postoperative", "post-op", "complication of surgery"],
-                "congenital": ["congenital", "birth defect", "anomaly"],
-                "toxic": ["toxic", "toxicity", "poisoning"],
-                "alcoholic": ["alcoholic", "alcohol", "etoh"],
-            }
-            has_unsupported_etiology = False
-            for etio_word, doc_cues in etiologies.items():
-                if etio_word in desc_lower and not any(w in full_context for w in doc_cues):
-                    score = 0.05
-                    rationale_parts.append(f"unsupported {etio_word} etiology")
-                    has_unsupported_etiology = True
-                    break
+            # 6. Reverse Attribute & Laterality Check (Master Prompt: Code Specificity <= Evidence Specificity)
+            is_attr_valid, unsupp_attrs = ReverseAttributeChecker.validate_code_attributes(
+                code_description=cand.description,
+                evidence_text=evidence_clean,
+                diagnosis_term=term_clean,
+            )
+            if not is_attr_valid:
+                # Proportional soft specificity penalty instead of binary disqualification (Master Prompt Section 4 & 25)
+                score -= min(0.35, 0.15 * len(unsupp_attrs))
+                rationale_parts.append(f"unsupported attributes: {', '.join(unsupp_attrs)}")
 
-            # Heart failure: systolic / diastolic / right / left / end stage
-            if not has_unsupported_etiology and ("heart" in desc_lower and "failure" in desc_lower):
-                for sub in ["systolic", "diastolic", "right", "left", "high output", "end stage", "biventricular", "other"]:
-                    if sub in desc_lower and not any(
-                        w in full_context for w in [sub, "hfref", "hfpef", "reduced ejection", "preserved ejection"]
-                    ):
-                        score = 0.05
-                        rationale_parts.append(f"unsupported {sub} specificity")
-                        break
-
-            # Diabetes complications
-            if any(
-                comp in desc_lower
-                for comp in ["nephropathy", "retinopathy", "neuropathy", "hyperglycemia"]
-            ):
-                if not any(
-                    comp in full_context
-                    for comp in [
-                        "nephropathy",
-                        "kidney",
-                        "retinopathy",
-                        "neuropathy",
-                        "hyperglycemia",
-                        "uncontrolled",
-                    ]
-                ):
-                    score = 0.05
-                    rationale_parts.append("unsupported complication specificity")
-
-            clamped_score = max(0.0, min(1.0, round(score, 4)))
-            scored_candidates.append(
-                (cand, clamped_score, ", ".join(rationale_parts) or "evidence overlap")
+            # 7. Laterality alignment (Master Prompt Section 5, 24: reward documented laterality, penalize unspecified laterality)
+            doc_left = bool(re.search(r"\b(?:left|lt)\b", full_context))
+            doc_right = bool(re.search(r"\b(?:right|rt)\b", full_context))
+            cand_left = "left" in desc_lower and "right" not in desc_lower
+            cand_right = "right" in desc_lower and "left" not in desc_lower
+            cand_unspec_lat = "unspecified" in desc_lower and any(
+                w in desc_lower for w in ("side", "foot", "knee", "breast", "arm", "leg", "extremity", "flank", "ankle", "eye", "ear")
             )
 
-        # Sort descending by score
+            if (doc_left and cand_left) or (doc_right and cand_right):
+                score += 0.20
+                rationale_parts.append("laterality documentation match")
+            elif (doc_left or doc_right) and cand_unspec_lat:
+                score -= 0.20
+                rationale_parts.append("unspecified laterality when specific side is documented")
+
+            # 8. Preference for Unspecified/Baseline over Other when Documentation is General (CMS Guideline I.A.6)
+            if "other " in desc_lower or "other specified" in desc_lower:
+                doc_has_other_detail = any(
+                    w in full_context for w in ["other", "specified", "variant", "type"]
+                )
+                if not doc_has_other_detail:
+                    score -= 0.20
+                    rationale_parts.append("other specified code without documented detail")
+            elif "unspecified" in desc_lower or "without " in desc_lower or cand.code.endswith(".9") or cand.code.endswith(".90"):
+                missing_core_tokens = [
+                    ct for ct in expanded_core_tokens
+                    if ct not in cand_tokens_set and not any(v in cand_tokens_set for v in CLINICAL_MORPHOLOGY.get(ct, []))
+                ]
+                if missing_core_tokens and "unspecified" in desc_lower:
+                    score -= 0.15
+                    rationale_parts.append(f"unspecified code when specific detail ({', '.join(missing_core_tokens)}) is documented")
+                elif not missing_core_tokens and not ((doc_left or doc_right) and cand_unspec_lat):
+                    score += 0.10
+                    rationale_parts.append("canonical base/unspecified code for general documentation")
+
+            scored_candidates.append(
+                (cand, round(score, 4), ", ".join(rationale_parts) or "evidence overlap")
+            )
+
+        # Sort descending by raw ranking score to maintain discrimination among top candidates
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
         top_cand, top_score, top_rationale = scored_candidates[0]
 
+        # If top candidate score is below min_confidence, or if top candidate has unsupported attributes:
+        # Check if there is another candidate in candidate pool that is billable, has no unsupported attributes,
+        # and has core_match_fraction > 0.0
         if top_score < self.min_confidence:
-            return RankedSelection(
-                diagnosis_id=diag_id,
-                raw_term=raw_term,
-                selected_code=None,
-                selected_description=None,
-                ranking_reason=f"No candidate met the minimum confidence threshold ({top_score:.2f} < {self.min_confidence:.2f}).",
-                supporting_evidence=[evidence_quote],
-                confidence=top_score,
-                abstention_reason="CONFIDENCE_BELOW_THRESHOLD",
-                candidate_pool=candidates,
-                decision="REJECTED_LOW_CONFIDENCE",
-            )
+            fallback_cand = None
+            for cand, s, rat in scored_candidates:
+                if not cand.is_valid_billable:
+                    continue
+                is_valid, _ = ReverseAttributeChecker.validate_code_attributes(
+                    cand.description, evidence_clean, term_clean
+                )
+                if is_valid and s >= 0.35:
+                    fallback_cand = cand
+                    top_score = s
+                    top_rationale = f"specificity realigned: {rat}"
+                    break
+
+            if fallback_cand:
+                top_cand = fallback_cand
+            else:
+                abstain_reason = (
+                    "UNSUPPORTED_SPECIFICITY"
+                    if any("unsupported" in r[2] for r in scored_candidates)
+                    else ("NO_MATCHING_ICD_CANDIDATE" if top_score < 0.20 else "CONFIDENCE_BELOW_THRESHOLD")
+                )
+                clamped_top = max(0.0, min(1.0, round(top_score, 4)))
+                return RankedSelection(
+                    diagnosis_id=diag_id,
+                    raw_term=raw_term,
+                    selected_code=None,
+                    selected_description=None,
+                    ranking_reason=f"No candidate met the minimum confidence threshold ({top_score:.2f} < {self.min_confidence:.2f}). Reason: {top_rationale}",
+                    supporting_evidence=[evidence_quote],
+                    confidence=clamped_top,
+                    ranking_score=clamped_top,
+                    abstention_reason=abstain_reason,
+                    matching_status="NO_DATABASE_MATCH",
+                    candidate_pool=candidates,
+                    decision="REJECTED_LOW_CONFIDENCE",
+                )
 
         cand_system = getattr(top_cand, "coding_system", None) or "ICD-10-CM"
         icd10cm_val = top_cand.code if cand_system == "ICD-10-CM" else None
@@ -549,8 +689,9 @@ class CandidateRankingAgent(BaseAgent):
             selected_candidate=top_cand,
             ranking_reason=f"Candidate '{top_cand.code}' ({top_cand.description}) best supported by documentation ({top_rationale}).",
             supporting_evidence=[evidence_quote],
-            confidence=top_score,
+            confidence=max(0.0, min(1.0, round(top_score, 4))),
             abstention_reason=None,
+            matching_status="MATCHED",
             candidate_pool=candidates,
             decision="ACCEPTED",
         )

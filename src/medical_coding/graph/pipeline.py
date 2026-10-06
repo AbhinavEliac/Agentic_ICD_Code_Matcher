@@ -2,11 +2,14 @@
 
 import asyncio
 import time
+import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from medical_coding.config.settings import Settings, get_settings
+from medical_coding.database.repository import MedicalCodingRepository
 from medical_coding.graph.state import create_initial_state
 from medical_coding.graph.workflow import get_compiled_graph
 from medical_coding.pdf.concurrency import BoundedDocumentGate
@@ -15,12 +18,6 @@ from medical_coding.schemas.response import BatchJobStatus, CodingResult
 from medical_coding.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-import traceback
-from collections.abc import Callable
-
-from medical_coding.database.repository import MedicalCodingRepository
 
 NODE_META: dict[str, tuple[int, str, str]] = {
     "validate_document": (1, "Document Validation", "Validating format and invariants"),
@@ -188,6 +185,7 @@ async def process_clinical_document(
     accumulated_state: dict[str, Any] = dict(initial_state)
     current_node_name = "validate_document"
     current_step_idx = 1
+    node_timings_ms: dict[str, float] = {}
     step_start_time = time.perf_counter()
 
     try:
@@ -196,6 +194,7 @@ async def process_clinical_document(
                 step_end_time = time.perf_counter()
                 duration_ms = (step_end_time - step_start_time) * 1000.0
                 step_start_time = step_end_time
+                node_timings_ms[node_name] = round(duration_ms, 2)
 
                 current_node_name = node_name
                 step_idx, step_label, default_desc = NODE_META.get(
@@ -299,6 +298,19 @@ async def process_clinical_document(
         if not result.metadata:
             result.metadata = {}
         result.metadata["thread_id"] = active_thread_id
+        result.metadata["latency_breakdown"] = {
+            "parsing_ms": node_timings_ms.get("extract_text", 0.0),
+            "extraction_ms": node_timings_ms.get("extract_diagnoses", 0.0),
+            "normalization_ms": node_timings_ms.get("analyze_context", 0.0),
+            "classification_ms": node_timings_ms.get("classify_diagnoses", 0.0),
+            "retrieval_ms": node_timings_ms.get("retrieve_candidates", 0.0),
+            "ranking_reasoning_ms": node_timings_ms.get("rank_candidates", 0.0),
+            "validation_ms": node_timings_ms.get("validate_codes", 0.0),
+            "confidence_assessment_ms": node_timings_ms.get("evaluate_confidence", 0.0),
+            "serialization_ms": node_timings_ms.get("finalize_output", 0.0),
+            "total_ms": round(total_elapsed_ms, 2),
+        }
+        result.metadata["node_timings_ms"] = node_timings_ms
 
     if repo:
         try:

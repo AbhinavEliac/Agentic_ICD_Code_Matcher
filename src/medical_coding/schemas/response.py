@@ -56,6 +56,26 @@ class CodedDiagnosisResponse(BaseModel):
         default=None,
         description="Matched CPT procedural code if matched, None if not.",
     )
+    matching_status: Literal["MATCHED", "NO_DATABASE_MATCH"] = Field(
+        default="MATCHED",
+        description="Whether this diagnosis matched a database code or abstained as NO_DATABASE_MATCH.",
+    )
+    database_code: str | None = Field(
+        default=None,
+        description="Exact authoritative code from Database/ folder.",
+    )
+    database_description: str | None = Field(
+        default=None,
+        description="Exact authoritative description from Database/ folder.",
+    )
+    source_section: str | None = Field(
+        default=None,
+        description="Clinical document section where evidence was located.",
+    )
+    source_span: tuple[int, int] | None = Field(
+        default=None,
+        description="Exact character span [start, end] of clinical evidence in source text.",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -70,6 +90,19 @@ class CodedDiagnosisResponse(BaseModel):
                     data["cpt"] = code_val
                 else:
                     data["icd10cm"] = code_val
+
+            effective_code = code_val or data.get("icd10cm") or data.get("icdo") or data.get("cpt")
+            if effective_code and not data.get("database_code"):
+                data["database_code"] = str(effective_code)
+
+            if data.get("description") and not data.get("database_description"):
+                data["database_description"] = data.get("description")
+
+            if not effective_code:
+                data.setdefault("matching_status", "NO_DATABASE_MATCH")
+            else:
+                data.setdefault("matching_status", "MATCHED")
+
         return data
 
     @property
@@ -106,6 +139,22 @@ class CodingResult(BaseModel):
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional encounter or audit metadata.",
+    )
+    excluded_candidates: list[dict[str, str]] = Field(
+        default_factory=list,
+        description="Collection of non-diagnostic or rejected terms excluded by clinical gate.",
+    )
+    validation: dict[str, bool] = Field(
+        default_factory=lambda: {
+            "evidence_grounded": True,
+            "database_grounded": True,
+            "unsupported_specificity": False,
+            "hallucinated_codes": False,
+            "noise_capture": False,
+            "duplicate_candidates": False,
+            "primary_secondary_validated": True,
+        },
+        description="Deterministic architectural validation summary flags.",
     )
 
     @model_validator(mode="after")

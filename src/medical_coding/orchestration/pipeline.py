@@ -1,16 +1,13 @@
 """High-level asynchronous orchestrator for the medical coding pipeline with bounded parallelism."""
 
 import asyncio
-import time
 from pathlib import Path
 from typing import Any
 
 from medical_coding.config.settings import Settings, get_settings
-from medical_coding.graph.state import create_initial_state
 from medical_coding.graph.workflow import get_compiled_graph
 from medical_coding.pdf.concurrency import BoundedDocumentGate
 from medical_coding.schemas.clinical import ClinicalDocument
-from medical_coding.schemas.enums import ExecutionStatus
 from medical_coding.schemas.response import CodingResult
 from medical_coding.utils.logging import get_logger
 

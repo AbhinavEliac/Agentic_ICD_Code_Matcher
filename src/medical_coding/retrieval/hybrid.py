@@ -78,7 +78,7 @@ class HybridICDRetriever(BaseICDRetriever):
             return []
 
         # Retrieve candidates from both local engines with an expanded initial window
-        search_window = max(k * 3, 20)
+        search_window = max(k * 10, 350)
         lexical_hits = self.lexical_retriever.retrieve(clean_query, top_k=search_window)
         vector_hits = self.vector_retriever.retrieve(clean_query, top_k=search_window)
 
@@ -140,7 +140,13 @@ class HybridICDRetriever(BaseICDRetriever):
             sem = info["semantic_score"]
             lex = info["lexical_score"]
 
-            hybrid_score = (self.weight_semantic * sem) + (self.weight_lexical * lex)
+            if sem > 0.0 and lex > 0.0:
+                hybrid_score = (self.weight_semantic * sem) + (self.weight_lexical * lex)
+            elif sem > 0.0:
+                hybrid_score = sem * 0.85
+            else:
+                hybrid_score = lex * 0.85
+
             rounded_score = max(0.0, min(1.0, round(hybrid_score, 4)))
 
             # Filter against relevance threshold

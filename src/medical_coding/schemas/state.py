@@ -13,6 +13,11 @@ from medical_coding.schemas.clinical import (
     ExtractedDiagnosis,
 )
 from medical_coding.schemas.enums import PipelineStage
+from medical_coding.schemas.evidence import (
+    ClinicalDiagnosisCandidate,
+    ClinicalDiagnosisState,
+    ICDMappingState,
+)
 from medical_coding.schemas.icd import ICDCandidate, RankedSelection
 from medical_coding.schemas.response import CodingResult
 from medical_coding.schemas.validation import AbstentionRecord, ValidatedDiagnosis
@@ -34,12 +39,6 @@ def merge_dicts(existing: dict[str, Any], new_dict: dict[str, Any]) -> dict[str,
         merged.update(new_dict)
     return merged
 
-
-from medical_coding.schemas.evidence import (
-    ClinicalDiagnosisCandidate,
-    ClinicalDiagnosisState,
-    ICDMappingState,
-)
 
 class PipelineGraphState(TypedDict, total=False):
     """Central state passed across all LangGraph nodes in the medical coding pipeline.
@@ -72,7 +71,10 @@ class PipelineGraphState(TypedDict, total=False):
     classified_diagnoses: list[ClassifiedDiagnosis]
     classification_result: EncounterClassificationResult
 
-    # Local Retrieval & Ranking
+    # Local Retrieval & Ranking (Constrained by ClinicalConcept & MatchSpec)
+    clinical_concepts: dict[str, Any]  # Keyed by diagnosis_id -> ClinicalConcept
+    match_specs: dict[str, Any]  # Keyed by diagnosis_id -> MatchSpec
+    compatibility_results: dict[str, Any]  # Keyed by diagnosis_id -> list[CompatibilityResult]
     candidate_pool: dict[str, list[ICDCandidate]]  # Keyed by diagnosis_id
     ranked_selections: list[RankedSelection]
 

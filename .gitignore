@@ -114,3 +114,6 @@ data/samples/*.pdf
 # Search Index Artifacts
 data/indexes/*
 !data/indexes/.gitkeep
+
+# Local Scratch Experiments
+scratch/
