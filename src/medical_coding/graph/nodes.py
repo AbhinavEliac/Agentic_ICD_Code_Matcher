@@ -557,85 +557,86 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
     candidate_pool: dict[str, list[ICDCandidate]] = {}
 
     def _retrieve_for_condition(cond: ClassifiedDiagnosis) -> tuple[str, Any, Any, list[ICDCandidate]]:
-        query = cond.raw_term
+        raw_query = cond.raw_term
         ev_quote = (
             getattr(cond.context.evidence, "quote", "")
             if hasattr(cond, "context") and hasattr(cond.context, "evidence") and cond.context.evidence
             else ""
         )
 
-        # 1. Derive structured ClinicalConcept (Sections 5 & 6)
+        # 1. Clean query for core clinical entity (strip trailing medications, status, or parentheticals)
+        clean_query = re.sub(r"\s*\([^)]*\)", "", raw_query).strip()
+        clean_query = re.split(r"\s*[-–—]\s*|\s*;\s*|\s*:\s*", clean_query)[0].strip()
+        if not clean_query:
+            clean_query = raw_query
+
+        # 2. Derive structured ClinicalConcept (Sections 5 & 6)
         concept = ClinicalConceptReasoner.reason_concept(
             cond,
             evidence_text=ev_quote,
             document_text=raw_doc_text,
         )
 
-        # 2. Build deterministic MatchSpec (Sections 7 & 8)
+        # 3. Build deterministic MatchSpec (Sections 7 & 8)
         match_spec = MatchSpecBuilder.build_match_spec(concept)
 
         hits: list[ICDCandidate] = []
         existing_codes: set[str] = set()
 
-        # 3. Multi-Stage Bounded Retrieval Cascade (Master Prompt Sections 18, 19, 21, 22)
-        # LEVEL 1: Exact query hybrid retrieval
-        queries_to_run = [query]
+        # STAGE 1: Primary Hybrid Retrieval (Single fast dense+sparse search)
+        primary_hits = retriever.retrieve(clean_query, top_k=25)
+        for h in primary_hits:
+            if h.code not in existing_codes:
+                hits.append(h)
+                existing_codes.add(h.code)
 
-        # LEVEL 2: Universal Concept & Token Morphology Expansion (Master Directive Sections 17 & 23)
+        # STAGE 2: Microsecond BM25 Inverted-Index Expansions (Bypasses redundant neural vector calls)
         from medical_coding.retrieval.tokenizer import (
             CLINICAL_ABBREVIATIONS,
+            CLINICAL_MORPHOLOGY,
             get_expanded_query_tokens,
         )
+        lexical_terms: list[str] = []
+        if concept.canonical_name and concept.canonical_name.lower() != clean_query.lower():
+            lexical_terms.append(concept.canonical_name)
+        if raw_query.lower() != clean_query.lower():
+            lexical_terms.append(raw_query)
 
-        query_lower = query.lower()
-        expanded_terms: list[str] = []
-
-        # A. Normalized canonical concept name
-        if concept.canonical_name and concept.canonical_name.lower() != query_lower:
-            expanded_terms.append(concept.canonical_name)
-
-        # B. Generic abbreviation expansion
+        query_lower = clean_query.lower()
         for ab, full in CLINICAL_ABBREVIATIONS.items():
             if re.search(rf"\b{re.escape(ab)}\b", query_lower):
-                expanded_terms.append(re.sub(rf"\b{re.escape(ab)}\b", full, query_lower))
+                lexical_terms.append(re.sub(rf"\b{re.escape(ab)}\b", full, query_lower))
 
-        # C. Concept attribute combination query
         if concept.metastatic_status and concept.body_site:
-            expanded_terms.append(f"secondary malignant neoplasm of {concept.body_site}")
-            expanded_terms.append(f"secondary neoplasm of {concept.body_site}")
+            lexical_terms.append(f"secondary malignant neoplasm of {concept.body_site}")
         elif concept.histology and concept.body_site:
-            expanded_terms.append(f"{concept.histology} of {concept.body_site}")
-            expanded_terms.append(f"malignant neoplasm of {concept.body_site}")
+            lexical_terms.append(f"{concept.histology} of {concept.body_site}")
 
         if concept.acuity and concept.canonical_name:
-            expanded_terms.append(f"{concept.acuity} {concept.canonical_name}")
+            lexical_terms.append(f"{concept.acuity} {concept.canonical_name}")
 
-        # D. Generic morphological query tokens
-        exp_tokens = get_expanded_query_tokens(query)
+        exp_tokens = get_expanded_query_tokens(clean_query)
         if exp_tokens and len(exp_tokens) > 1:
-            morph_query = " ".join(exp_tokens[:6])
-            if morph_query not in expanded_terms:
-                expanded_terms.append(morph_query)
+            morph_q = " ".join(exp_tokens[:6])
+            if morph_q not in lexical_terms:
+                lexical_terms.append(morph_q)
 
-        for exp in expanded_terms:
-            if exp not in queries_to_run:
-                queries_to_run.append(exp)
+        for lt in lexical_terms[:4]:
+            try:
+                lex_hits = retriever.lexical_retriever.retrieve(lt, top_k=15)
+                for h in lex_hits:
+                    if h.code not in existing_codes:
+                        hits.append(h)
+                        existing_codes.add(h.code)
+            except Exception:
+                pass
 
-        # Run hybrid retrieval for each query term in cascade
-        for q in queries_to_run[:4]:
-            q_hits = retriever.retrieve(q, top_k=15)
-            for h in q_hits:
-                if h.code not in existing_codes:
-                    hits.append(h)
-                    existing_codes.add(h.code)
-
-        # LEVEL 3: Clinical Family Prefix Retrieval (Master Prompt Section 20)
+        # STAGE 3: Clinical Family Prefix Retrieval (Master Prompt Section 20)
         if match_spec.allowed_code_families:
             family_recs = catalog.get_by_family_prefixes(match_spec.allowed_code_families)
             if family_recs:
-                query_tokens = set(re.findall(r"\b[a-z0-9]+\b", query.lower()))
+                query_tokens = set(re.findall(r"\b[a-z0-9]+\b", clean_query.lower()))
                 expanded_q_tokens = set(query_tokens)
-                from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
                 for qt in query_tokens:
                     expanded_q_tokens.update(CLINICAL_MORPHOLOGY.get(qt, []))
                 scored_recs: list[tuple[float, Any]] = []
@@ -661,46 +662,31 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                         hits.append(cand)
                         existing_codes.add(rec.code)
 
-        # LEVEL 5: Broad Local Database Fallback (if hits < 5)
+        # STAGE 4: Ultra-fast BM25 Inverted-Index Fallback (Only if hits < 5; eliminates full 80k-row scan!)
         if len(hits) < 5:
             content_words = [
-                w for w in re.findall(r"\b[a-z0-9]{4,}\b", query.lower())
+                w for w in re.findall(r"\b[a-z0-9]{4,}\b", clean_query.lower())
                 if w not in ("with", "without", "acute", "chronic", "status", "post", "from", "type")
             ]
             if content_words:
-                fallback_recs = [
-                    r for r in catalog.get_all_records()
-                    if any(cw in r.description.lower() for cw in content_words)
-                ]
-                for r in fallback_recs[:15]:
-                    if r.code not in existing_codes:
-                        cand = ICDCandidate(
-                            code=r.code,
-                            description=r.description,
-                            is_valid_billable=r.is_valid_billable,
-                            coding_system=getattr(r, "coding_system", "ICD-10-CM"),
-                            retrieval_score=0.45,
-                            retrieval_method="fallback_token_scan",
-                        )
-                        hits.append(cand)
-                        existing_codes.add(r.code)
+                try:
+                    fb_hits = retriever.lexical_retriever.retrieve(" ".join(content_words), top_k=15)
+                    for h in fb_hits:
+                        if h.code not in existing_codes:
+                            hits.append(h)
+                            existing_codes.add(h.code)
+                except Exception:
+                    pass
             elif concept.body_site:
-                fallback_recs = [
-                    r for r in catalog.get_all_records()
-                    if concept.body_site in r.description.lower()
-                ]
-                for r in fallback_recs[:10]:
-                    if r.code not in existing_codes:
-                        cand = ICDCandidate(
-                            code=r.code,
-                            description=r.description,
-                            is_valid_billable=r.is_valid_billable,
-                            coding_system=getattr(r, "coding_system", "ICD-10-CM"),
-                            retrieval_score=0.45,
-                            retrieval_method="hybrid",
-                        )
-                        hits.append(cand)
-                        existing_codes.add(r.code)
+                try:
+                    fb_hits = retriever.lexical_retriever.retrieve(concept.body_site, top_k=10)
+                    for h in fb_hits:
+                        if h.code not in existing_codes:
+                            hits.append(h)
+                            existing_codes.add(h.code)
+                except Exception:
+                    pass
+
 
         # 4. Post-Retrieval Compatibility Reasoning (Section 10)
         scored_hits: list[tuple[float, ICDCandidate]] = []
@@ -728,10 +714,10 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         # Handle ICD-O for neoplasms
         is_neoplasm = (
             concept.disease_family in ("breast_malignancy", "lymphoma", "pleural_metastasis", "kaposi_sarcoma", "liver_sarcoma", "neuroendocrine_tumor")
-            or any(w in query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma"])
+            or any(w in raw_query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma"])
         )
         if is_neoplasm:
-            icdo_hits = retriever.retrieve(query, top_k=5, system="ICD-O")
+            icdo_hits = retriever.retrieve(raw_query, top_k=5, system="ICD-O")
             for o_hit in icdo_hits:
                 if o_hit.code not in existing_codes:
                     final_hits.append(o_hit)

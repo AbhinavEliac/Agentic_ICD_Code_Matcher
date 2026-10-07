@@ -979,23 +979,25 @@ class PrimarySecondaryClassifier(BaseAgent):
                 or sec_lower in ("principal diagnosis", "primary diagnosis", "principal diagnoses", "primary diagnoses")
             )
             is_admission_driver = False
-            adm_regex = rf"\b(?:admitted\s+(?:for|with|to)|reason\s+for\s+admission|admitting\s+diagnosis|principal\s+diagnosis)\b[^\n\.\;]*?(?:due\s+to\s+|for\s+|of\s+)?{re.escape(diag_lower)}"
+            adm_regex = rf"\b(?:admitted\s+(?:for|with|to|in)|reason\s+for\s+admission|admitting\s+diagnosis|principal\s+diagnosis)\b[^\n\.\;]*?(?:due\s+to\s+|for\s+|of\s+|in\s+)?{re.escape(diag_lower)}"
             if re.search(adm_regex, full_context) or (doc_lower and re.search(adm_regex, doc_lower)):
                 is_admission_driver = True
             else:
                 # Generalized clause matching: admission occasioning phrase matching clinical tokens or acronym
                 adm_clause_match = re.search(
-                    r"\b(?:admitted\s+(?:for|with|to)|reason\s+for\s+admission|admitting\s+diagnosis|presenting\s+complaint)\b\s*([^\n.;]+)",
+                    r"\b(?:admitted\s+(?:for|with|to|in)|reason\s+for\s+admission|admitting\s+diagnosis|presenting\s+complaint)\b\s*([^\n.;]+)",
                     full_context if "admitted" in full_context else (doc_lower or ""),
                 )
                 if adm_clause_match:
                     adm_clause = adm_clause_match.group(0).lower()
-                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage")]
-                    acronym = "".join(w[0] for w in diag_words)
+                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage", "organism")]
+                    from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
+                    expanded_dwords = set(diag_words)
+                    for dw in diag_words:
+                        expanded_dwords.update(CLINICAL_MORPHOLOGY.get(dw, []))
                     if (
                         re.search(rf"\b{re.escape(diag_lower)}\b", adm_clause)
-                        or (acronym and len(acronym) >= 3 and re.search(rf"\b{acronym}\b", adm_clause))
-                        or (diag_words and sum(1 for w in diag_words if w in adm_clause) >= max(1, len(diag_words) * 0.5))
+                        or any(re.search(rf"\b{re.escape(edw)}\b", adm_clause) for edw in expanded_dwords)
                     ):
                         is_admission_driver = True
 
@@ -1005,13 +1007,16 @@ class PrimarySecondaryClassifier(BaseAgent):
             elif is_admission_driver:
                 score += 6.0
                 reasons.append("Identified as principal condition occasioning admission (+6.0)")
-            elif any(
+
+            if any(
                 term in full_context
                 for term in [
                     "discharge diagnosis",
                     "discharge diagnoses",
                     "final diagnosis",
                     "final diagnoses",
+                    "final coding summary",
+                    "coding summary",
                 ]
             ):
                 score += 5.0
@@ -1079,7 +1084,12 @@ class PrimarySecondaryClassifier(BaseAgent):
                 reasons.append("Actively managed and treated during hospitalization (+1.5)")
 
             # 3. Acuity & Certainty
-            if asm.status == ConditionStatus.ACUTE or "acute" in diag_lower:
+            is_acute_cond = (
+                asm.status == ConditionStatus.ACUTE
+                or getattr(asm, "acuity", None) in (Acuity.ACUTE, "ACUTE")
+                or any(w in diag_lower for w in ["acute", "sepsis", "septic", "infarction", "stemi", "nstemi"])
+            )
+            if is_acute_cond:
                 score += 2.0
                 reasons.append("Acute presentation (+2.0)")
             if asm.certainty == Certainty.CONFIRMED:
@@ -1103,9 +1113,13 @@ class PrimarySecondaryClassifier(BaseAgent):
                 reasons.append("Symptom / manifestation accompanying presentation (-2.0)")
 
             # Infectious organism supplementary to underlying organ pathology (CMS Guideline I.C.1)
-            is_organism = any(
-                org in diag_lower
-                for org in ["helicobacter", "h. pylori", "h pylori", "organism", "infectious agent", "bacterium", "bacteria", "streptococcus", "staphylococcus", "virus", "bacillus"]
+            # Sepsis is a systemic life-threatening syndrome, not a supplementary B95-B97 organism code
+            is_organism = (
+                "sepsis" not in diag_lower
+                and any(
+                    org in diag_lower
+                    for org in ["helicobacter", "h. pylori", "h pylori", "infectious agent", "bacterium", "bacteria", "streptococcus", "staphylococcus", "bacillus"]
+                )
             )
             if is_organism:
                 score -= 2.0
@@ -1189,6 +1203,26 @@ class PrimarySecondaryClassifier(BaseAgent):
             return classifications
 
         # Select the top candidate that meets Section 8 primary criteria
+        def _is_pure_symptom(cand_asm: ContextAssessment) -> bool:
+            d_lower = cand_asm.diagnosis.lower()
+            is_sym = any(
+                sym in d_lower
+                for sym in [
+                    "symptom", "pain", "fatigue", "edema", "overload", "dyspnea",
+                    "shortness of breath", "nausea", "vomiting", "weakness", "fever",
+                    "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress",
+                ]
+            )
+            has_def = (
+                any(d_lower.endswith(sfx) or f"{sfx} " in d_lower for sfx in ("itis", "oma", "osis"))
+                or any(dx in d_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia"])
+            )
+            return is_sym and not has_def
+
+        has_definitive_candidates = any(
+            not _is_pure_symptom(c[0]) for c in scored_candidates if c[1] > 1.5
+        )
+
         chosen_primary_idx = None
         for i, (asm, s, _r_list) in enumerate(scored_candidates):
             if (
@@ -1197,6 +1231,8 @@ class PrimarySecondaryClassifier(BaseAgent):
                 and asm.temporality in (Temporality.CURRENT, "CURRENT")
                 and bool(asm.evidence and asm.evidence.strip())
             ):
+                if has_definitive_candidates and _is_pure_symptom(asm):
+                    continue
                 is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
                 if is_valid:
                     chosen_primary_idx = i
@@ -1225,14 +1261,23 @@ class PrimarySecondaryClassifier(BaseAgent):
 
         if chosen_primary_idx is not None:
             # Primary selected (either unique or prioritized under UHDDS Section II.C)
+            top_ev_quote = (top_asm.evidence or "").strip()
+            pri_reason = (
+                f"Designated as Primary Diagnosis under UHDDS Guidelines (chief condition established after study to be responsible for occasioning admission). "
+                f"Documented evidence: \"{top_ev_quote}\". "
+                f"Clinical criteria: {'; '.join(top_reasons)}."
+            )
+            pri_just = (
+                f"Chief condition occasioning admission and inpatient care: \"{top_ev_quote}\"."
+            )
             classifications.append(
                 ConditionClassification(
                     diagnosis_id=top_asm.condition_id or str(uuid4()),
                     diagnosis=top_asm.diagnosis,
                     role=DiagnosisRole.PRIMARY,
                     is_billable_candidate=True,
-                    classification_reason=f"Selected as Primary Diagnosis (score={top_score:.1f}): {'; '.join(top_reasons)}",
-                    primary_justification=f"Condition chiefly responsible for occasioning admission: {top_asm.evidence}",
+                    classification_reason=pri_reason,
+                    primary_justification=pri_just,
                     admitting_condition_score=top_score,
                     evidence_quote=top_asm.evidence,
                 )
@@ -1248,7 +1293,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                     for sym in [
                         "pain", "colic", "fever", "cough", "dyspnea", "shortness of breath",
                         "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
-                        "discomfort", "wheezing", "fatigue", "malaise"
+                        "discomfort", "wheezing", "fatigue", "malaise", "respiratory distress"
                     ]
                 ) and not (
                     any(sec_lower.endswith(sfx) or f"{sfx} " in sec_lower for sfx in ("itis", "oma", "osis"))
@@ -1262,7 +1307,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                             diagnosis=asm.diagnosis,
                             role=DiagnosisRole.EXCLUDED,
                             is_billable_candidate=False,
-                            classification_reason="Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
+                            classification_reason=f"Symptom integral to the primary diagnosis '{top_asm.diagnosis}'; excluded under CMS Guideline I.B.4: \"{(asm.evidence or '').strip()}\".",
                             admitting_condition_score=score,
                             evidence_quote=asm.evidence,
                         )
@@ -1284,13 +1329,19 @@ class PrimarySecondaryClassifier(BaseAgent):
                     )
                     continue
 
+                sec_ev_quote = (asm.evidence or "").strip()
+                sec_reason = (
+                    f"Designated as Secondary (Comorbid) Diagnosis under UHDDS Guidelines. "
+                    f"Documented co-existing condition active during stay: \"{sec_ev_quote}\". "
+                    f"Clinical management: {'; '.join(r_list)}."
+                )
                 classifications.append(
                     ConditionClassification(
                         diagnosis_id=asm.condition_id or str(uuid4()),
                         diagnosis=asm.diagnosis,
                         role=DiagnosisRole.SECONDARY,
                         is_billable_candidate=True,
-                        classification_reason=f"Co-existing condition managed during admission (score={score:.1f}): {'; '.join(r_list)}",
+                        classification_reason=sec_reason,
                         admitting_condition_score=score,
                         evidence_quote=asm.evidence,
                     )

@@ -1,6 +1,7 @@
 """Asynchronous document and batch execution pipeline orchestrating LangGraph workflows."""
 
 import asyncio
+import re
 import time
 import traceback
 from collections.abc import Callable
@@ -231,6 +232,9 @@ async def process_clinical_document(
     except Exception as exc:
         total_elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         tb_str = traceback.format_exc()
+        task_match = re.search(r"During task with name '([^']+)'", tb_str)
+        if task_match:
+            current_node_name = task_match.group(1)
         logger.exception("Pipeline failed at node %s: %s", current_node_name, exc)
 
         if repo:

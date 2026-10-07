@@ -49,7 +49,7 @@ DOSAGE_FORM_PATTERNS = [
 PRESCRIPTION_SYNTAX_PATTERNS = [
     r"\b(?:\d+\s*(?:mg|mcg|gm|g|ml|iu|units?|tablets?|capsules?|pills?|puffs?|drops?))\b",
     r"\b(?:po|iv|im|sc|prn|daily|od|bd|bid|tds|tid|qid|sos|hs|at\s+bedtime|before\s+meals?|after\s+meals?|subcutaneously|orally|topically)\b",
-    r"^\s*(?:take|apply|instill|inhale|inject|infuse|give)\b",
+    r"^\s*(?:take|apply|instill|inhale|inject|infuse|give|initiated|started\s+on)\b",
 ]
 
 # 4. Section headers, document metadata, allergy statements, and non-diagnostic observations
@@ -63,6 +63,10 @@ METADATA_PATTERNS = [
     r"^\s*chief\s+complaint\b",
     r"^\s*discharge\s+medications?\b",
     r"^\s*investigations?\b",
+    r"^\s*pertinent\s+negatives?\b",
+    r"^\s*negations?(?:\s*/\s*audit)?\b",
+    r"^\s*documentation\s+audit\b",
+    r"^\s*final\s+coding\s+summary\b",
     r"^\s*general\s+condition\b",
     r"^\s*physical\s+examination\b",
     # Allergy statements and negative metadata (Section 3)

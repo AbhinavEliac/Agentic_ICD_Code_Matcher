@@ -170,7 +170,14 @@ class ICDCandidate(BaseModel):
         le=1.0,
         description="Normalized similarity/relevance score from retrieval engine.",
     )
-    retrieval_method: Literal["bm25", "faiss", "hybrid", "family_filtered_lexical"] = Field(
+    retrieval_method: Literal[
+        "bm25",
+        "faiss",
+        "hybrid",
+        "family_filtered_lexical",
+        "fallback_token_scan",
+        "vector_numpy",
+    ] = Field(
         description="Algorithm that produced or consolidated this candidate.",
     )
     is_valid_billable: bool = Field(

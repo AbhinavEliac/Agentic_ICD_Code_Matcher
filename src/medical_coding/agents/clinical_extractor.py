@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 # Standard section header regexes
 SECTION_PATTERNS: list[tuple[str, str]] = [
     ("DISCHARGE_SUMMARY", r"(?:HOSPITAL\s+DISCHARGE\s+SUMMARY|DISCHARGE\s+SUMMARY|CLINICAL\s+SUMMARY)"),
-    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOSIS)"),
+    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|FINAL\s+CODING\s+SUMMARY|CODING\s+SUMMARY|FINAL\s+CODING|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOSIS)"),
     ("PRINCIPAL_DIAGNOSIS", r"(?:PRINCIPAL\s+DIAGNOS[EI]S|PRIMARY\s+DIAGNOS[EI]S|ADMITTING\s+DIAGNOS[EI]S|ADMISSION\s+DIAGNOS[EI]S)"),
     ("SECONDARY_DIAGNOSES", r"(?:SECONDARY\s+DIAGNOS[EI]S|ADDITIONAL\s+DIAGNOS[EI]S|CO-?MORBIDITIES|OTHER\s+DIAGNOS[EI]S)"),
     ("CHIEF_COMPLAINT", r"(?:CHIEF\s+COMPLAINT|REASON\s+FOR\s+ADMISSION|PRESENTING\s+COMPLAINT|ADMITTED\s+FOR)"),
@@ -50,7 +50,9 @@ SECTION_PATTERNS: list[tuple[str, str]] = [
     ("MICROBIOLOGY", r"(?:MICROBIOLOGY|CULTURES?|BLOOD\s+CULTURES?|URINE\s+CULTURES?|SPUTUM\s+CULTURES?|CULTURE\s+AND\s+SENSITIVITY|MICROBIOLOGICAL\s+STUDIES)"),
     ("ALLERGIES", r"(?:DRUG\s+ALLERGIES|ALLERGIES|ALLERGIC\s+HISTORY|ALLERGIC\s+REACTIONS?)"),
     ("MEDICATIONS", r"(?:DISCHARGE\s+MEDICATIONS|MEDICATIONS\s+ON\s+DISCHARGE|ACTIVE\s+MEDICATIONS|MEDICATIONS|CURRENT\s+MEDICATIONS)"),
-    ("ASSESSMENT_PLAN", r"(?:ASSESSMENT\s+AND\s+PLAN|ASSESSMENT|PLAN|IMPRESSION)"),
+    ("PERTINENT_NEGATIVES", r"(?:PERTINENT\s+NEGATIVES|NEGATIONS(?:\s*/\s*AUDIT)?|DOCUMENTATION\s+AUDIT)"),
+    ("ASSESSMENT", r"(?:ASSESSMENT\s+AND\s+PLAN|ASSESSMENT|IMPRESSION)"),
+    ("PLAN", r"(?:DISCHARGE\s+PLAN|TREATMENT\s+PLAN|PLAN)"),
     ("DISCHARGE_INSTRUCTIONS", r"(?:DISCHARGE\s+INSTRUCTIONS|DISPOSITION|DISCHARGE\s+CONDITION|FOLLOW-?UP)"),
 ]
 
@@ -83,7 +85,10 @@ UNCERTAINTY_CUES = [
     r"\?",
 ]
 
-ACUITY_ACUTE_CUES = [r"\bacute\b", r"\bdecompensated\b", r"\bexacerbation\b", r"\bemergent\b", r"\bsevere\s+acute\b"]
+ACUITY_ACUTE_CUES = [
+    r"\bacute\b", r"\bdecompensated\b", r"\bexacerbation\b", r"\bemergent\b", r"\bsevere\s+acute\b",
+    r"\bsepsis\b", r"\bseptic\b", r"\binfarction\b", r"\bstemi\b", r"\bnstemi\b",
+]
 ACUITY_CHRONIC_CUES = [r"\bchronic\b", r"\blongstanding\b", r"\bpre-existing\b", r"\bbaseline\b"]
 
 PROCEDURE_SOURCE_CONTROL_CUES = [
@@ -273,7 +278,7 @@ class EvidenceFirstFactExtractor:
 
         # Phase 1: High-yield diagnosis sections (Discharge Diagnoses, Final Diagnoses, Assessment & Plan)
         for sec in sections:
-            if sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "ASSESSMENT_PLAN"):
+            if sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "ASSESSMENT", "ASSESSMENT_PLAN"):
                 items = self._parse_diagnosis_items(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
@@ -547,6 +552,9 @@ class EvidenceFirstFactExtractor:
             if not cleaned_line or len(cleaned_line) < 3:
                 continue
 
+            if re.match(r"^(?:pertinent\s+negatives?|negations?(?:\s*/\s*audit)?|documentation\s+audit|audit|plan|discharge\s+medications?|medications?)\s*:?$", cleaned_line, re.IGNORECASE):
+                continue
+
             # Split diagnosis from attached narrative / treatment
             diag_term, narrative = self._split_term_and_narrative(cleaned_line)
             if not diag_term or len(diag_term) < 3:
@@ -554,6 +562,15 @@ class EvidenceFirstFactExtractor:
 
             # Check negation
             polarity, certainty = self._assess_polarity_and_certainty(cleaned_line)
+
+            # Check explicit historical / resolved notation in line
+            is_explicit_historical = bool(
+                re.search(
+                    r"\b(?:historical\s*/\s*resolved|historical\b|prior\s+history|childhood\s+asthma|no\s+current\s+treatment|resolved\s+\d+\s+years?\s+ago)\b",
+                    cleaned_line,
+                    re.IGNORECASE,
+                )
+            )
 
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
@@ -582,19 +599,32 @@ class EvidenceFirstFactExtractor:
                 proc_rel = 1.0 if any(re.search(pat, cleaned_line, re.IGNORECASE) for pat in PROCEDURE_SOURCE_CONTROL_CUES) else 0.0
                 treat_rel = 1.0 if any(w in cleaned_line.lower() for w in ["treated", "iv", "antibiotic", "diuresis", "insulin", "surgery", "stent", "infusion"]) else 0.0
 
+                cand_temp = Temporality.HISTORICAL if is_explicit_historical else Temporality.CURRENT
+                cand_role = (
+                    DiagnosisRole.HISTORICAL
+                    if is_explicit_historical
+                    else (
+                        DiagnosisRole.PRIMARY
+                        if (sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and sub_idx == 0)
+                        else DiagnosisRole.SECONDARY
+                    )
+                )
+
                 evidence_obj = StructuredEvidence(
                     text=line,
                     section=sec.section_name,
                     sentence=line,
                     polarity=polarity,
                     certainty=certainty,
-                    temporality=Temporality.CURRENT,
+                    temporality=cand_temp,
                     evidence_type=EvidenceType.DISCHARGE_SUMMARY,
-                    clinical_relevance=1.0,
+                    clinical_relevance=0.0 if is_explicit_historical else 1.0,
                 )
 
                 # Explicit PRINCIPAL_DIAGNOSIS gets highest base score (+15.0); DISCHARGE_DIAGNOSES gets +10.0; SECONDARY gets +3.0
-                if sec.section_name in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS"):
+                if is_explicit_historical:
+                    base_admitting = -50.0
+                elif sec.section_name in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS"):
                     base_admitting = 15.0 if sub_idx == 0 else 5.0
                 elif sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES"):
                     base_admitting = 10.0 if sub_idx == 0 else 4.0
@@ -606,7 +636,7 @@ class EvidenceFirstFactExtractor:
                 scores = MultiDimensionalScore(
                     evidence_score=1.0,
                     diagnostic_certainty=1.0 if certainty == Certainty.CONFIRMED else 0.8 if certainty == Certainty.SUPPORTED else 0.5 if certainty in (Certainty.SUSPECTED, Certainty.POSSIBLE) else 0.0,
-                    encounter_relevance=1.0,
+                    encounter_relevance=0.0 if is_explicit_historical else 1.0,
                     role_confidence=1.0,
                     semantic_match=1.0,
                     specificity_match=1.0,
@@ -617,19 +647,19 @@ class EvidenceFirstFactExtractor:
                 cand = ClinicalDiagnosisCandidate(
                     raw_term=sub_term,
                     normalized_diagnosis=sub_term,
-                    role=DiagnosisRole.PRIMARY if (sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and sub_idx == 0) else DiagnosisRole.SECONDARY,
+                    role=cand_role,
                     certainty=certainty,
-                    temporality=Temporality.CURRENT,
+                    temporality=cand_temp,
                     assertion_status=AssertionStatus.CONFIRMED if certainty == Certainty.CONFIRMED else (AssertionStatus.RULED_OUT if polarity == NegationStatus.NEGATED else AssertionStatus.SUSPECTED),
                     clinical_attributes=diag_attrs,
                     evidence=[evidence_obj],
                     evidence_strength=1.0,
-                    clinical_relevance=1.0,
-                    encounter_relevance=1.0,
+                    clinical_relevance=0.0 if is_explicit_historical else 1.0,
+                    encounter_relevance=0.0 if is_explicit_historical else 1.0,
                     treatment_relevance=treat_rel,
                     procedure_relevance=proc_rel,
                     scores=scores,
-                    is_authorized=polarity != NegationStatus.NEGATED,
+                    is_authorized=(polarity != NegationStatus.NEGATED) and (not is_explicit_historical),
                     classification_reason=f"Extracted from {sec.section_name}" if sub_idx == 0 else f"Extracted as co-occurring condition from {sec.section_name}",
                 )
                 candidates.append(cand)
@@ -646,8 +676,8 @@ class EvidenceFirstFactExtractor:
         if not cleaned:
             return []
 
-        # Split sentences
-        sentences = [s.strip() for s in re.split(r"[\.\n;]+", cleaned) if s.strip()]
+        # Split sentences (do not split decimal numbers like 101.4F or 1.5 mg/dL)
+        sentences = [s.strip() for s in re.split(r"\.(?!\d)|[\n;]+", cleaned) if s.strip()]
         for s in sentences:
             if len(s) < 4:
                 continue

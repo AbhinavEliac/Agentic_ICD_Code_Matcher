@@ -539,6 +539,17 @@ class CandidateRankingAgent(BaseAgent):
                 score = 0.05
                 rationale_parts.append("symptom code superseded by definitive diagnosis")
 
+            # 4b. Traumatic Injury (Chapter 19 S/T codes) vs Internal Medical Pathology Rule
+            # S and T codes represent acute mechanical external trauma (fall, collision, wound, laceration).
+            # Nontraumatic medical diseases (e.g. acute kidney injury/failure N17) must not be coded to traumatic S-codes.
+            is_trauma_code = cand.code.startswith(("S", "T"))
+            has_trauma_doc = any(
+                w in full_context for w in ("trauma", "fall", "mva", "accident", "laceration", "wound", "strike", "stab", "fracture", "assault", "injury from")
+            )
+            if is_trauma_code and not has_trauma_doc:
+                score -= 0.40
+                rationale_parts.append("traumatic injury code without documented trauma mechanism")
+
             # 5. Acuity alignment
             is_acute_doc = bool(re.search(r"\b(?:acute|exacerbation|decompensated|decompensation)\b", full_context))
             is_chronic_doc = bool(re.search(r"\b(?:chronic|longstanding)\b", full_context) or (re.search(r"\bcompensated\b", full_context) and not re.search(r"\bdecompensated\b", full_context)))
@@ -601,7 +612,11 @@ class CandidateRankingAgent(BaseAgent):
                 rationale_parts.append("unspecified laterality when specific side is documented")
 
             # 8. Preference for Unspecified/Baseline over Other when Documentation is General (CMS Guideline I.A.6)
-            if "other " in desc_lower or "other specified" in desc_lower:
+            has_matching_site = any(
+                bool(re.search(rf"\b{re.escape(site_w)}\b", desc_lower)) and bool(re.search(rf"\b{re.escape(site_w)}\b", full_context))
+                for site_w in ["anterior", "inferior", "lateral", "posterior", "apical", "subendocardial", "tarsal", "metatarsal", "malleolus", "femur", "tibia", "fibula", "radius", "ulna", "humerus"]
+            )
+            if ("other " in desc_lower or "other specified" in desc_lower) and not has_matching_site:
                 doc_has_other_detail = any(
                     w in full_context for w in ["other", "specified", "variant", "type"]
                 )
@@ -613,12 +628,24 @@ class CandidateRankingAgent(BaseAgent):
                     ct for ct in expanded_core_tokens
                     if ct not in cand_tokens_set and not any(v in cand_tokens_set for v in CLINICAL_MORPHOLOGY.get(ct, []))
                 ]
-                if missing_core_tokens and "unspecified" in desc_lower:
+                doc_has_specific_site = any(
+                    site_w in full_context
+                    for site_w in ["anterior", "inferior", "lateral", "posterior", "apical", "subendocardial", "tarsal", "metatarsal", "malleolus"]
+                )
+                cand_unspec_site = "unspecified" in desc_lower and any(w in desc_lower for w in ["site", "wall", "artery", "bone", "location"])
+                if doc_has_specific_site and cand_unspec_site:
+                    score -= 0.25
+                    rationale_parts.append("unspecified site when specific anatomical location is documented")
+                elif missing_core_tokens and "unspecified" in desc_lower:
                     score -= 0.15
                     rationale_parts.append(f"unspecified code when specific detail ({', '.join(missing_core_tokens)}) is documented")
-                elif not missing_core_tokens and not ((doc_left or doc_right) and cand_unspec_lat):
+                elif not missing_core_tokens and not ((doc_left or doc_right) and cand_unspec_lat) and not (doc_has_specific_site and cand_unspec_site):
                     score += 0.10
                     rationale_parts.append("canonical base/unspecified code for general documentation")
+
+            if has_matching_site:
+                score += 0.25
+                rationale_parts.append("documented anatomical site match")
 
             scored_candidates.append(
                 (cand, round(score, 4), ", ".join(rationale_parts) or "evidence overlap")
