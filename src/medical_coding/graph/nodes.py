@@ -662,23 +662,45 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                         existing_codes.add(rec.code)
 
         # LEVEL 5: Broad Local Database Fallback (if hits < 5)
-        if len(hits) < 5 and concept.body_site:
-            fallback_recs = [
-                r for r in catalog.get_all_records()
-                if concept.body_site in r.description.lower()
+        if len(hits) < 5:
+            content_words = [
+                w for w in re.findall(r"\b[a-z0-9]{4,}\b", query.lower())
+                if w not in ("with", "without", "acute", "chronic", "status", "post", "from", "type")
             ]
-            for r in fallback_recs[:10]:
-                if r.code not in existing_codes:
-                    cand = ICDCandidate(
-                        code=r.code,
-                        description=r.description,
-                        is_valid_billable=r.is_valid_billable,
-                        coding_system=getattr(r, "coding_system", "ICD-10-CM"),
-                        retrieval_score=0.45,
-                        retrieval_method="hybrid",
-                    )
-                    hits.append(cand)
-                    existing_codes.add(r.code)
+            if content_words:
+                fallback_recs = [
+                    r for r in catalog.get_all_records()
+                    if any(cw in r.description.lower() for cw in content_words)
+                ]
+                for r in fallback_recs[:15]:
+                    if r.code not in existing_codes:
+                        cand = ICDCandidate(
+                            code=r.code,
+                            description=r.description,
+                            is_valid_billable=r.is_valid_billable,
+                            coding_system=getattr(r, "coding_system", "ICD-10-CM"),
+                            retrieval_score=0.45,
+                            retrieval_method="fallback_token_scan",
+                        )
+                        hits.append(cand)
+                        existing_codes.add(r.code)
+            elif concept.body_site:
+                fallback_recs = [
+                    r for r in catalog.get_all_records()
+                    if concept.body_site in r.description.lower()
+                ]
+                for r in fallback_recs[:10]:
+                    if r.code not in existing_codes:
+                        cand = ICDCandidate(
+                            code=r.code,
+                            description=r.description,
+                            is_valid_billable=r.is_valid_billable,
+                            coding_system=getattr(r, "coding_system", "ICD-10-CM"),
+                            retrieval_score=0.45,
+                            retrieval_method="hybrid",
+                        )
+                        hits.append(cand)
+                        existing_codes.add(r.code)
 
         # 4. Post-Retrieval Compatibility Reasoning (Section 10)
         scored_hits: list[tuple[float, ICDCandidate]] = []
@@ -1048,6 +1070,93 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                     )
                 )
 
+    # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING FOR SECONDARIES
+    # Ensure every active secondary diagnosis clinically confirmed is retained in secondary_responses
+    seen_sec_terms = set()
+    if primary_response:
+        if primary_response.normalized_diagnosis:
+            seen_sec_terms.add(primary_response.normalized_diagnosis.lower())
+        if primary_response.raw_term:
+            seen_sec_terms.add(primary_response.raw_term.lower())
+        if primary_response.description:
+            seen_sec_terms.add(primary_response.description.lower())
+    seen_sec_terms.update(
+        s.normalized_diagnosis.lower() for s in secondary_responses if s.normalized_diagnosis
+    )
+    seen_sec_terms.update(s.raw_term.lower() for s in secondary_responses if s.raw_term)
+    seen_sec_terms.update(s.description.lower() for s in secondary_responses if s.description)
+
+    from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
+
+    for c in classified:
+        if c.role == DiagnosisRole.SECONDARY and c.is_billable_candidate:
+            c_term = (
+                getattr(c, "normalized_diagnosis", None)
+                or getattr(c, "raw_term", None)
+                or getattr(c, "diagnosis", "")
+            )
+            if not c_term:
+                continue
+            c_norm = c_term.lower()
+            c_words = {w for w in re.findall(r"[a-z0-9]+", c_norm) if len(w) > 3}
+            is_already_covered = False
+            for s_term in seen_sec_terms:
+                if (s_term in c_norm or c_norm in s_term) and len(s_term) > 4:
+                    is_already_covered = True
+                    break
+                s_words = {w for w in re.findall(r"[a-z0-9]+", s_term) if len(w) > 3}
+                shared = c_words & s_words
+                if len(shared) >= 2 or any(k in shared for k in ("diabetes", "hypertension", "cholecystitis", "infarction", "failure", "calculus", "hypokalemia", "hyperlipidemia", "anemia", "pancreatitis", "gastritis")):
+                    is_already_covered = True
+                    break
+            if is_already_covered:
+                continue
+
+            c_quote = (
+                getattr(c, "evidence_quote", None)
+                or (
+                    c.context.evidence.quote
+                    if hasattr(c, "context") and hasattr(c.context, "evidence") and c.context.evidence
+                    else ""
+                )
+                or ""
+            )
+
+            is_valid_cand, _ = HardClinicalCandidateGate.evaluate_candidate(c_term, c_quote)
+            if not is_valid_cand:
+                continue
+            sec_resp = CodedDiagnosisResponse(
+                raw_term=getattr(c, "raw_term", c_term),
+                normalized_diagnosis=c_term,
+                description=c_term,
+                database_code=None,
+                database_description=None,
+                matching_status="NO_DATABASE_MATCH",
+                source_section=getattr(c, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                source_span=getattr(c, "source_span", None),
+                role=DiagnosisRole.SECONDARY,
+                acuity=Acuity.ACUTE
+                if "acute" in c_term.lower()
+                else Acuity.CHRONIC
+                if "chronic" in c_term.lower()
+                else Acuity.UNSPECIFIED,
+                certainty=Certainty.CONFIRMED,
+                evidence_quote=c_quote,
+                evidence=[{
+                    "quote": c_quote,
+                    "section": getattr(c, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                    "evidence_type": "SECONDARY_DIAGNOSIS",
+                }],
+                confidence_score=0.70,
+                is_terminal_billable=False,
+                icd10cm=None,
+                icdo=None,
+                cpt=None,
+            )
+            secondary_responses.append(sec_resp)
+            seen_sec_terms.add(c_term.lower())
+            seen_sec_terms.add(getattr(c, "raw_term", c_term).lower())
+
     # Determine execution status
     if primary_response or secondary_responses:
         status = ExecutionStatus.SUCCESS if not abstentions else ExecutionStatus.PARTIAL_SUCCESS
@@ -1255,14 +1364,22 @@ def _assess_context_deterministically(
 
     # Rule 2: Past medical history without inpatient monitoring/treatment
     norm_section = section_lower.replace("_", " ")
+    is_hpi = "present illness" in norm_section or "hpi" in norm_section
     is_pmh = (
-        "past medical" in norm_section
-        or "pmh" in norm_section
-        or "past surgical" in norm_section
-        or "psh" in norm_section
-        or "history" in norm_section
-        or term.lower().startswith("history of ")
-        or "history of" in quote_lower
+        not is_hpi
+        and (
+            "past medical" in norm_section
+            or "pmh" in norm_section
+            or "past surgical" in norm_section
+            or "psh" in norm_section
+            or (
+                "history" in norm_section
+                and "present" not in norm_section
+                and "illness" not in norm_section
+            )
+            or term.lower().startswith("history of ")
+            or "history of" in quote_lower
+        )
     )
     has_active_care = any(
         w in quote_lower

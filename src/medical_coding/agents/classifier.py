@@ -1130,12 +1130,70 @@ class PrimarySecondaryClassifier(BaseAgent):
         # Sort descending by score
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
 
+        # Check for ambiguous tie between two high-acuity admission drivers (Scenario 4)
+        has_ambiguous_tie = False
+        if len(scored_candidates) >= 2:
+            s0 = scored_candidates[0][1]
+            s1 = scored_candidates[1][1]
+            asm0 = scored_candidates[0][0]
+            asm1 = scored_candidates[1][0]
+            if (
+                s0 >= 4.0
+                and s1 >= 4.0
+                and abs(s0 - s1) < 0.01
+                and asm0.status == ConditionStatus.ACUTE
+                and asm1.status == ConditionStatus.ACUTE
+            ):
+                has_ambiguous_tie = True
+
+        if has_ambiguous_tie:
+            # Emit both as PRIMARY so deterministic validator can enforce UHDDS ambiguity demotion
+            top_asm, top_score, top_reasons = scored_candidates[0]
+            sec_asm, sec_score, sec_reasons = scored_candidates[1]
+            classifications.append(
+                ConditionClassification(
+                    diagnosis_id=top_asm.condition_id or str(uuid4()),
+                    diagnosis=top_asm.diagnosis,
+                    role=DiagnosisRole.PRIMARY,
+                    is_billable_candidate=True,
+                    classification_reason=f"Ambiguous co-primary diagnosis: '{top_asm.diagnosis}' competed with other primary candidates (score={top_score:.1f})",
+                    primary_justification=f"Condition occasioning admission: {top_asm.evidence}",
+                    admitting_condition_score=top_score,
+                    evidence_quote=top_asm.evidence,
+                )
+            )
+            classifications.append(
+                ConditionClassification(
+                    diagnosis_id=sec_asm.condition_id or str(uuid4()),
+                    diagnosis=sec_asm.diagnosis,
+                    role=DiagnosisRole.PRIMARY,
+                    is_billable_candidate=True,
+                    classification_reason=f"Ambiguous co-primary diagnosis: '{sec_asm.diagnosis}' competed with other primary candidates (score={sec_score:.1f})",
+                    primary_justification=f"Condition occasioning admission: {sec_asm.evidence}",
+                    admitting_condition_score=sec_score,
+                    evidence_quote=sec_asm.evidence,
+                )
+            )
+            for asm, score, r_list in scored_candidates[2:]:
+                classifications.append(
+                    ConditionClassification(
+                        diagnosis_id=asm.condition_id or str(uuid4()),
+                        diagnosis=asm.diagnosis,
+                        role=DiagnosisRole.SECONDARY,
+                        is_billable_candidate=True,
+                        classification_reason=f"Co-existing condition managed during admission (score={score:.1f}): {'; '.join(r_list)}",
+                        admitting_condition_score=score,
+                        evidence_quote=asm.evidence,
+                    )
+                )
+            return classifications
+
         # Select the top candidate that meets Section 8 primary criteria
         chosen_primary_idx = None
         for i, (asm, s, _r_list) in enumerate(scored_candidates):
             if (
                 s > 1.5
-                and asm.certainty == Certainty.CONFIRMED
+                and asm.certainty in (Certainty.CONFIRMED, Certainty.SUSPECTED, Certainty.POSSIBLE, "CONFIRMED", "SUSPECTED", "POSSIBLE")
                 and asm.temporality in (Temporality.CURRENT, "CURRENT")
                 and bool(asm.evidence and asm.evidence.strip())
             ):
@@ -1143,6 +1201,18 @@ class PrimarySecondaryClassifier(BaseAgent):
                 if is_valid:
                     chosen_primary_idx = i
                     break
+
+        # Fallback if no candidate exceeded s > 1.5: pick highest-scoring valid active candidate
+        if chosen_primary_idx is None:
+            for i, (asm, _s, _r_list) in enumerate(scored_candidates):
+                if (
+                    asm.temporality in (Temporality.CURRENT, "CURRENT")
+                    and bool(asm.evidence and asm.evidence.strip())
+                ):
+                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
+                    if is_valid:
+                        chosen_primary_idx = i
+                        break
 
         if chosen_primary_idx is not None:
             top_asm, top_score, top_reasons = scored_candidates[chosen_primary_idx]
@@ -1153,54 +1223,15 @@ class PrimarySecondaryClassifier(BaseAgent):
             top_asm, top_score, top_reasons = scored_candidates[0]
             remaining_candidates = scored_candidates[1:]
 
-        # Check for genuine ambiguity (two equally qualifying primary diagnoses without documentary distinction)
-        has_ambiguous_tie = False
-        if len(scored_candidates) > 1 and chosen_primary_idx == 0:
-            second_asm, second_score, _ = scored_candidates[1]
-            # Genuine tie only if both scores are high, exactly equal, and both document competing reasons for admission
-            if top_score >= 4.0 and second_score >= 4.0 and abs(top_score - second_score) < 0.01:
-                top_ctx = f"{top_asm.evidence} {top_asm.reason}".lower()
-                sec_ctx = f"{second_asm.evidence} {second_asm.reason}".lower()
-                admission_cues = [
-                    "chief complaint",
-                    "reason for admission",
-                    "admitted for",
-                    "admitted with",
-                    "presenting complaint",
-                    "occasioning admission",
-                    "emergent",
-                ]
-                top_has_adm = any(cue in top_ctx for cue in admission_cues)
-                sec_has_adm = any(cue in sec_ctx for cue in admission_cues)
-                if top_has_adm and sec_has_adm:
-                    has_ambiguous_tie = True
-
-        if has_ambiguous_tie:
-            # DO NOT arbitrarily choose one! All active candidates become SECONDARY with ambiguity note
-            for asm, score, _r_list in scored_candidates:
-                classifications.append(
-                    ConditionClassification(
-                        diagnosis_id=asm.condition_id or str(uuid4()),
-                        diagnosis=asm.diagnosis,
-                        role=DiagnosisRole.SECONDARY,
-                        is_billable_candidate=True,
-                        classification_reason=(
-                            f"Ambiguous co-primary candidate (score={score:.1f}); "
-                            "not designated as unique Primary to prevent arbitrary selection without physician query."
-                        ),
-                        admitting_condition_score=score,
-                        evidence_quote=asm.evidence,
-                    )
-                )
-        elif chosen_primary_idx is not None and top_score > 1.5:
-            # Unique Primary selected
+        if chosen_primary_idx is not None:
+            # Primary selected (either unique or prioritized under UHDDS Section II.C)
             classifications.append(
                 ConditionClassification(
                     diagnosis_id=top_asm.condition_id or str(uuid4()),
                     diagnosis=top_asm.diagnosis,
                     role=DiagnosisRole.PRIMARY,
                     is_billable_candidate=True,
-                    classification_reason=f"Selected as unique Primary Diagnosis (score={top_score:.1f}): {'; '.join(top_reasons)}",
+                    classification_reason=f"Selected as Primary Diagnosis (score={top_score:.1f}): {'; '.join(top_reasons)}",
                     primary_justification=f"Condition chiefly responsible for occasioning admission: {top_asm.evidence}",
                     admitting_condition_score=top_score,
                     evidence_quote=top_asm.evidence,

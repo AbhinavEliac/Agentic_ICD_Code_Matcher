@@ -342,7 +342,7 @@ class EvidenceFirstFactExtractor:
 
         # 1. Extract receptor status and molecular markers (e.g., Triple negative, BRCA, PD-L1, GCB type, double expressor)
         mol_m = re.search(
-            r",?\s*\b(triple\s+negative|brca(?:\s*1|\s*2)?\s*(?:pathogenic|mutation|positive|negative)?(?:\s*mutation)?|pd[\s\-]?l1\s*(?:positive|negative)?(?:\s*\(.*?\))?|gcb\s+type|non-gcb\s+type|double\s+expressor|bcl[0-9]+(?:\+|-)?|cd[0-9]+(?:\+|-)?|her2(?:\s*(?:positive|negative|0|\d+))?|egfr(?:\+|-)?)\b",
+            r",?\s*\b(triple\s+negative|brca(?:\s*1|\s*2)?\s*(?:pathogenic|mutation|positive|negative)?(?:\s*mutation)?|pd[\s\-]?l1\s*(?:positive|negative)?(?:\s*\(.*?\))?|(?:non-)?gcb(?:\s+(?:sub)?type)?|double\s+expressor|bcl[0-9]+(?:\+|-)?|cd[0-9]+(?:\+|-)?|her2(?:\s*(?:positive|negative|0|\d+))?|egfr(?:\+|-)?)\b",
             cleaned,
             re.IGNORECASE,
         )

@@ -543,7 +543,12 @@ class CandidateRankingAgent(BaseAgent):
             is_acute_doc = bool(re.search(r"\b(?:acute|exacerbation|decompensated|decompensation)\b", full_context))
             is_chronic_doc = bool(re.search(r"\b(?:chronic|longstanding)\b", full_context) or (re.search(r"\bcompensated\b", full_context) and not re.search(r"\bdecompensated\b", full_context)))
 
-            is_acute_cand = "acute" in desc_lower and "chronic" not in desc_lower
+            is_acute_cand = (
+                ("acute" in desc_lower and "chronic" not in desc_lower)
+                or cand.code.startswith(("I21", "J20", "K35", "K85", "N10", "N17"))
+                or (cand.code.startswith("K80") and "acute" in desc_lower)
+                or (cand.code.startswith("K81") and "acute" in desc_lower)
+            )
             is_chronic_cand = "chronic" in desc_lower and "acute" not in desc_lower
             is_acute_on_chronic_cand = "acute on chronic" in desc_lower or (
                 "acute" in desc_lower and "chronic" in desc_lower

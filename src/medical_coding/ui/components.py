@@ -131,11 +131,15 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         st.info("ℹ️ No primary diagnosis assigned for this document (abstained or undetermined).")
         return
 
-    billable_badge = (
-        '<span class="pill-badge badge-success">✓ HIPAA Billable Leaf</span>'
-        if primary.is_terminal_billable
-        else '<span class="pill-badge badge-danger">⚠ Non-Billable Header</span>'
-    )
+    code_display = primary.code or "[NO LOCAL CODE]"
+    if primary.matching_status == "NO_DATABASE_MATCH" or not primary.code:
+        billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
+    else:
+        billable_badge = (
+            '<span class="pill-badge badge-success">✓ HIPAA Billable Leaf</span>'
+            if primary.is_terminal_billable
+            else '<span class="pill-badge badge-danger">⚠ Non-Billable Header</span>'
+        )
     acuity_badge = f'<span class="pill-badge badge-info">{primary.acuity.value if hasattr(primary.acuity, "value") else primary.acuity}</span>'
     certainty_badge = f'<span class="pill-badge badge-secondary">{primary.certainty.value if hasattr(primary.certainty, "value") else primary.certainty}</span>'
 
@@ -155,7 +159,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         <div class="primary-card">
             <div class="primary-card-header">
                 <div>
-                    <span class="primary-code">{primary.code}</span>
+                    <span class="primary-code">{code_display}</span>
                     <span style="margin-left: 12px;">{billable_badge}</span>
                 </div>
                 <div>
@@ -190,11 +194,15 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
         return
 
     for idx, diag in enumerate(secondaries, start=1):
-        billable_badge = (
-            '<span class="pill-badge badge-success">✓ Billable</span>'
-            if diag.is_terminal_billable
-            else '<span class="pill-badge badge-danger">⚠ Non-Billable</span>'
-        )
+        sec_code_display = diag.code or "[NO LOCAL CODE]"
+        if diag.matching_status == "NO_DATABASE_MATCH" or not diag.code:
+            billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
+        else:
+            billable_badge = (
+                '<span class="pill-badge badge-success">✓ Billable</span>'
+                if diag.is_terminal_billable
+                else '<span class="pill-badge badge-danger">⚠ Non-Billable</span>'
+            )
         acuity_str = diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity)
         certainty_str = diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty)
 
@@ -213,7 +221,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                 <div class="secondary-card">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
                         <div>
-                            <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {diag.code}</strong>
+                            <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {sec_code_display}</strong>
                             <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">

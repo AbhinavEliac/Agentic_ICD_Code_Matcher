@@ -85,8 +85,7 @@ METADATA_PATTERNS = [
 # 5. Tumor attributes / Staging markers (attributes of a neoplasm, not standalone diagnoses)
 STANDALONE_ATTRIBUTE_PATTERNS = [
     r"^\s*stage\s+(?:i|ii|iii|iv|[1-4])[a-z]?\s*$",
-    r"^\s*gcb\s+type\s*$",
-    r"^\s*non-gcb\s+type\s*$",
+    r"^\s*(?:non-)?gcb(?:\s+(?:sub)?type)?\s*$",
     r"^\s*double\s+expressor(?:\s*(?:bcl2/bcl6|myc/bcl2|\(.*\)))?\s*$",
     r"^\s*ki[\s\-]?67\s*(?:index)?\s*(?:>|=|<)?\s*\d+\s*%?\s*$",
     r"^\s*grade\s+(?:i|ii|iii|iv|[1-4])(?:\s+histology)?\s*$",
