@@ -981,10 +981,36 @@ class PrimarySecondaryClassifier(BaseAgent):
             # 1. Section / Reason for Admission Context (UHDDS Authority Hierarchy)
             # Under UHDDS, condition established after study chiefly responsible for occasioning admission
             # or underlying condition occasioning procedural/medical inpatient therapy
+            # Function to test whether diag_lower is the direct primary diagnosis mention in a clause
+            def _check_primary_match(text: str, target_diag: str) -> bool:
+                for match in re.finditer(rf"\b(?:principal|primary)(?:\s+diagnos[ei]s)?\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
+                    clause = match.group(1).lower().strip()
+                    # Strip subsequent conditions attached by "with", "complicated by", "secondary to", ","
+                    for delim in [" with ", " complicated by ", " secondary to ", ","]:
+                        if delim in clause:
+                            clause = clause[:clause.find(delim)].strip()
+                    if re.search(rf"\b{re.escape(target_diag)}\b", clause):
+                        return True
+                return False
+
+            def _check_secondary_match(text: str, target_diag: str) -> bool:
+                for match in re.finditer(rf"\bsecondary(?:\s+diagnos[ei]s)?\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
+                    clause = match.group(1).lower().strip()
+                    if re.search(rf"\b{re.escape(target_diag)}\b", clause):
+                        return True
+                return False
+
             is_explicit_primary = bool(
-                re.search(rf"\b(?:principal|primary)\s+diagnos[ei]s\b[^\n\.\;:]*?:\s*[^\n\.\;]*?{re.escape(diag_lower)}", full_context)
-                or (doc_lower and re.search(rf"\b(?:principal|primary)\s+diagnos[ei]s\b[^\n\.\;:]*?:\s*[^\n\.\;]*?{re.escape(diag_lower)}", doc_lower))
+                _check_primary_match(full_context, diag_lower)
+                or (doc_lower and _check_primary_match(doc_lower, diag_lower))
                 or sec_lower in ("principal diagnosis", "primary diagnosis", "principal diagnoses", "primary diagnoses")
+                or getattr(asm, "role", None) in (DiagnosisRole.PRIMARY, "PRIMARY")
+                or getattr(asm, "is_primary", False)
+            )
+            is_explicit_secondary = bool(
+                _check_secondary_match(full_context, diag_lower)
+                or (doc_lower and _check_secondary_match(doc_lower, diag_lower))
+                or sec_lower in ("secondary diagnosis", "secondary diagnoses", "additional diagnoses")
             )
             is_admission_driver = False
             adm_regex = rf"\b(?:admitted\s+(?:for|with|to|in)|reason\s+for\s+admission|admitting\s+diagnosis|principal\s+diagnosis)\b[^\n\.\;]*?(?:due\s+to\s+|for\s+|of\s+|in\s+)?{re.escape(diag_lower)}"
@@ -1016,9 +1042,15 @@ class PrimarySecondaryClassifier(BaseAgent):
                 score += 6.0
                 reasons.append("Identified as principal condition occasioning admission (+6.0)")
 
-            if any(
-                term in full_context
+            if is_explicit_secondary and not is_explicit_primary:
+                score -= 5.0
+                reasons.append("Explicitly documented as SECONDARY DIAGNOSIS by provider (-5.0)")
+
+            in_final_sec = any(
+                term in sec_lower
                 for term in [
+                    "principal diagnosis",
+                    "primary diagnosis",
                     "discharge diagnosis",
                     "discharge diagnoses",
                     "final diagnosis",
@@ -1026,11 +1058,13 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "final coding summary",
                     "coding summary",
                 ]
-            ):
+            ) or getattr(asm, "section", "") in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS", "DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES")
+
+            if in_final_sec:
                 score += 5.0
                 reasons.append("Explicitly documented under discharge / final diagnoses (+5.0)")
             elif any(
-                term in full_context
+                term in sec_lower or term in full_context
                 for term in [
                     "chief complaint",
                     "reason for admission",
@@ -1063,8 +1097,8 @@ class PrimarySecondaryClassifier(BaseAgent):
             )
             is_leading_primary = bool(
                 is_explicit_primary and not is_complication and (
-                    re.search(rf"{re.escape(diag_lower)}[^\n.;]*?\b(?:with|complicated\s+by)\b", full_context)
-                    or (doc_lower and re.search(rf"{re.escape(diag_lower)}[^\n.;]*?\b(?:with|complicated\s+by)\b", doc_lower))
+                    re.search(rf"\b{re.escape(diag_lower)}\s+(?:with|complicated\s+by)\b", ev_lower)
+                    or (doc_lower and re.search(rf"\b{re.escape(diag_lower)}\s+(?:with|complicated\s+by)\b", doc_lower))
                 )
             )
             if is_complication:

@@ -1233,7 +1233,7 @@ def _extract_conditions_deterministically(
         primary_ev = cand.primary_evidence_quote
         primary_sec = cand.evidence[0].section if cand.evidence else "DOCUMENTATION"
         is_pmh = any(ev.section in ("PAST_MEDICAL_HISTORY", "PAST_SURGICAL_HISTORY") for ev in cand.evidence)
-        if any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in cand.evidence):
+        if any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in cand.evidence) or cand.role == DiagnosisRole.PRIMARY:
             sec_name = "PRINCIPAL_DIAGNOSIS"
         elif any(ev.section in ("SECONDARY_DIAGNOSES", "ADDITIONAL_DIAGNOSES") for ev in cand.evidence):
             sec_name = "SECONDARY_DIAGNOSES"

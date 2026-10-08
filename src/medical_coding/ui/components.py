@@ -8,6 +8,14 @@ from medical_coding.schemas.response import CodedDiagnosisResponse, CodingResult
 from medical_coding.schemas.validation import AbstentionRecord
 
 
+def clean_html(raw_html: str) -> str:
+    """Strip leading and trailing whitespace from each line of an HTML string.
+
+    Prevents CommonMark from interpreting indented HTML lines as Markdown code blocks (<pre><code>).
+    """
+    return "\n".join(line.strip() for line in raw_html.strip().splitlines() if line.strip())
+
+
 def render_header(
     offline_mode: bool = True,
     catalog_size: int = 25,
@@ -26,7 +34,7 @@ def render_header(
     )
     catalog_pill = f'<span class="pill-badge badge-secondary">📚 {catalog_size} ICD Codes</span>'
 
-    st.markdown(
+    header_html = clean_html(
         f"""
         <div class="clinic-header">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
@@ -45,9 +53,9 @@ def render_header(
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+    st.markdown(header_html, unsafe_allow_html=True)
 
 
 def render_kpi_metrics(result: CodingResult) -> None:
@@ -65,37 +73,43 @@ def render_kpi_metrics(result: CodingResult) -> None:
 
     with c1:
         st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Status</div>
-                <div style="margin-top: 8px;">
-                    <span class="pill-badge {status_class}">{status_str}</span>
+            clean_html(
+                f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">Status</div>
+                    <div style="margin-top: 8px;">
+                        <span class="pill-badge {status_class}">{status_str}</span>
+                    </div>
                 </div>
-            </div>
-            """,
+                """
+            ),
             unsafe_allow_html=True,
         )
 
     with c2:
         primary_code = result.primary_diagnosis.code if result.primary_diagnosis else "None"
         st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Primary ICD-10</div>
-                <div class="kpi-value" style="color: #38bdf8;">{primary_code}</div>
-            </div>
-            """,
+            clean_html(
+                f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">Primary ICD-10</div>
+                    <div class="kpi-value" style="color: #38bdf8;">{primary_code}</div>
+                </div>
+                """
+            ),
             unsafe_allow_html=True,
         )
 
     with c3:
         st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Secondary Diags</div>
-                <div class="kpi-value">{len(result.secondary_diagnoses)}</div>
-            </div>
-            """,
+            clean_html(
+                f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">Secondary Diags</div>
+                    <div class="kpi-value">{len(result.secondary_diagnoses)}</div>
+                </div>
+                """
+            ),
             unsafe_allow_html=True,
         )
 
@@ -103,23 +117,27 @@ def render_kpi_metrics(result: CodingResult) -> None:
         abst_count = len(result.abstentions)
         abst_color = "#f87171" if abst_count > 0 else "#94a3b8"
         st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Abstentions</div>
-                <div class="kpi-value" style="color: {abst_color};">{abst_count}</div>
-            </div>
-            """,
+            clean_html(
+                f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">Abstentions</div>
+                    <div class="kpi-value" style="color: {abst_color};">{abst_count}</div>
+                </div>
+                """
+            ),
             unsafe_allow_html=True,
         )
 
     with c5:
         st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-label">Processing Time</div>
-                <div class="kpi-value">{result.processing_time_ms:.1f}<span style="font-size: 13px; font-weight: normal; color: #94a3b8;"> ms</span></div>
-            </div>
-            """,
+            clean_html(
+                f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">Processing Time</div>
+                    <div class="kpi-value">{result.processing_time_ms:.1f}<span style="font-size: 13px; font-weight: normal; color: #94a3b8;"> ms</span></div>
+                </div>
+                """
+            ),
             unsafe_allow_html=True,
         )
 
@@ -154,7 +172,11 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         codes_pills.append(f'<span class="pill-badge badge-success">CPT: {primary.cpt}</span>')
     codes_html = " ".join(codes_pills)
 
-    st.markdown(
+    documented_row = ""
+    if primary.raw_term and primary.raw_term.lower() != (primary.description or "").lower():
+        documented_row = f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {primary.raw_term}</div>'
+
+    primary_html = clean_html(
         f"""
         <div class="primary-card">
             <div class="primary-card-header">
@@ -171,7 +193,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
                 <span style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 2px;">📖 Matched Database Concept:</span>
                 {primary.description}
             </div>
-            {f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {primary.raw_term}</div>' if primary.raw_term and primary.raw_term.lower() != (primary.description or "").lower() else ''}
+            {documented_row}
             <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap;">
                 {acuity_badge}
                 {certainty_badge}
@@ -185,9 +207,9 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
                 <span class="evidence-quote">"{primary.evidence_quote}"</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+    st.markdown(primary_html, unsafe_allow_html=True)
 
 
 def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> None:
@@ -219,33 +241,37 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
             sec_codes_pills.append(f'<span class="pill-badge badge-success">CPT: {diag.cpt}</span>')
         sec_codes_html = " ".join(sec_codes_pills)
 
-        with st.container():
-            st.markdown(
-                f"""
-                <div class="secondary-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
-                        <div>
-                            <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {sec_code_display}</strong>
-                            <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
-                            {f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {diag.raw_term}</div>' if diag.raw_term and diag.raw_term.lower() != (diag.description or "").lower() else ''}
-                        </div>
-                        <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-                            {billable_badge}
-                            <span class="pill-badge badge-secondary">{acuity_str}</span>
-                            <span class="pill-badge badge-secondary">{certainty_str}</span>
-                            {sec_codes_html}
-                        </div>
+        documented_row = ""
+        if diag.raw_term and diag.raw_term.lower() != (diag.description or "").lower():
+            documented_row = f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {diag.raw_term}</div>'
+
+        secondary_html = clean_html(
+            f"""
+            <div class="secondary-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+                    <div>
+                        <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {sec_code_display}</strong>
+                        <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
+                        {documented_row}
                     </div>
-                    <div class="evidence-box">
-                        <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
-                            Clinical Evidence:
-                        </span>
-                        <span class="evidence-quote">"{diag.evidence_quote}"</span>
+                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                        {billable_badge}
+                        <span class="pill-badge badge-secondary">{acuity_str}</span>
+                        <span class="pill-badge badge-secondary">{certainty_str}</span>
+                        {sec_codes_html}
                     </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
+                <div class="evidence-box">
+                    <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
+                        Clinical Evidence:
+                    </span>
+                    <span class="evidence-quote">"{diag.evidence_quote}"</span>
+                </div>
+            </div>
+            """
+        )
+        with st.container():
+            st.markdown(secondary_html, unsafe_allow_html=True)
 
 
 def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
@@ -261,16 +287,18 @@ def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
             raw_term = abst.raw_term or "Unspecified Entity"
 
             st.markdown(
-                f"""
-                <div class="abstention-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                        <strong style="color: #f87171; font-size: 14px;">Condition: {raw_term}</strong>
-                        <span class="pill-badge badge-danger">{reason_str}</span>
+                clean_html(
+                    f"""
+                    <div class="abstention-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <strong style="color: #f87171; font-size: 14px;">Condition: {raw_term}</strong>
+                            <span class="pill-badge badge-danger">{reason_str}</span>
+                        </div>
+                        <div style="font-size: 13px; color: #e2e8f0;">{abst.detail}</div>
+                        <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Enforced at stage: <code>{stage_str}</code></div>
                     </div>
-                    <div style="font-size: 13px; color: #e2e8f0;">{abst.detail}</div>
-                    <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Enforced at stage: <code>{stage_str}</code></div>
-                </div>
-                """,
+                    """
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -284,23 +312,25 @@ def render_validation_audit_trail(primary: CodedDiagnosisResponse | None, second
         all_codes.extend(secondaries)
 
         st.markdown(
-            """
-            <div class="audit-check-item">
-                <span class="check-pass">✔</span> <strong>Catalog Existence Check:</strong> All assigned codes exist in the authoritative local ICD-10-CM dataset.
-            </div>
-            <div class="audit-check-item">
-                <span class="check-pass">✔</span> <strong>HIPAA Terminal Specificity:</strong> Codes are verified billable terminal leaf nodes (non-category headers).
-            </div>
-            <div class="audit-check-item">
-                <span class="check-pass">✔</span> <strong>Single-Primary Invariant:</strong> Maximum of exactly 1 primary admission diagnosis enforced.
-            </div>
-            <div class="audit-check-item">
-                <span class="check-pass">✔</span> <strong>Mutual Excludes1 Constraint:</strong> No mutually contradictory codes co-assigned for this encounter.
-            </div>
-            <div class="audit-check-item">
-                <span class="check-pass">✔</span> <strong>Anti-Hallucination Bound:</strong> Codes were bounded exclusively to the retrieved candidate pool.
-            </div>
-            """,
+            clean_html(
+                """
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Catalog Existence Check:</strong> All assigned codes exist in the authoritative local ICD-10-CM dataset.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>HIPAA Terminal Specificity:</strong> Codes are verified billable terminal leaf nodes (non-category headers).
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Single-Primary Invariant:</strong> Maximum of exactly 1 primary admission diagnosis enforced.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Mutual Excludes1 Constraint:</strong> No mutually contradictory codes co-assigned for this encounter.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Anti-Hallucination Bound:</strong> Codes were bounded exclusively to the retrieved candidate pool.
+                </div>
+                """
+            ),
             unsafe_allow_html=True,
         )
 

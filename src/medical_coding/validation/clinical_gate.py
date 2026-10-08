@@ -85,6 +85,13 @@ METADATA_PATTERNS = [
     r"\babove\s+mentioned\s+complaints\b",
     r"\bfeared\s+health\s+complaint\b",
     r"\bcomplaint\s+in\s+whom\s+no\s+diagnosis\s+is\s+made\b",
+    # Cross-references, section references, and meta-narrative boilerplate
+    r"\b(?:symptoms?|complaints?|conditions?|diagnos[ei]s)\s+(?:described|mentioned|listed|noted|specified)\s+(?:in|under|above|below)\b",
+    r"\b(?:described|mentioned|listed|noted|specified)\s+(?:in|under)\s+(?:the\s+)?(?:final|discharge|admitting|admission)?\s*diagnos[ei]s\b",
+    r"\b(?:symptoms?|complaints?)\s+as\s+(?:above|below|mentioned)\b",
+    r"\b(?:as\s+described\s+above|as\s+mentioned\s+above|described\s+above|as\s+above)\b",
+    r"\babove\s+mentioned\s+(?:complaints?|symptoms?|conditions?)\b",
+    r"\bseveral\s+days\s+of\s+(?:the\s+)?symptoms\b",
     # Allergy statements and negative metadata (Section 3)
     r"^\s*(?:drug\s+)?allerg(?:y|ies)(?:\s*:)?\s*(?:none|nkda|no\s+known\s+(?:drug\s+)?allergies|nil|na|n/a)?\s*$",
     r"^\s*(?:no\s+known\s+(?:drug\s+)?allergies|nkda)\s*$",
@@ -220,8 +227,14 @@ class HardClinicalCandidateGate:
             if re.search(pat, term_lower):
                 return False, f"Section heading, metadata, allergy, or clinical status artifact: '{clean_term}'"
 
-        # Check 4b: Physical exam, vital signs, systemic examination noise
-        if any(w in term_lower for w in ["patient alert", "responsive temperature", "temperature :", "pulse :", "respiratory rate :", "bp :", "spo2 :", "rs :", "cvs :", "cns :", "pa :", "aebe", "s1, s2 heard well", "soft, non tender", "further management", "above mentioned complaints"]):
+        # Check 4b: Physical exam, vital signs, systemic examination noise, and meta-narrative boilerplate
+        if any(w in term_lower for w in [
+            "patient alert", "responsive temperature", "temperature :", "pulse :",
+            "respiratory rate :", "bp :", "spo2 :", "rs :", "cvs :", "cns :", "pa :",
+            "aebe", "s1, s2 heard well", "soft, non tender", "further management",
+            "above mentioned complaints", "symptoms described", "described in the final diagnosis",
+            "described in final diagnosis", "symptoms described in", "several days of the symptoms",
+        ]):
             return False, f"Physical exam, vital sign, or administrative boilerplate artifact: '{clean_term}'"
 
         # Check 5: Standalone tumor staging or genetic attributes

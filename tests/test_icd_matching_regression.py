@@ -153,3 +153,58 @@ async def test_regression_oncology_and_pmh_comorbidities() -> None:
     assert "Z71.1" not in sec_codes
     assert len(res.secondary_diagnoses) == 2
 
+
+@pytest.mark.asyncio
+async def test_regression_primary_label_with_meta_reference_narrative() -> None:
+    """Explicit PRIMARY label must win primary diagnosis; meta-references ('symptoms described in...') must be rejected."""
+    doc = """
+    HOSPITAL DISCHARGE SUMMARY
+    CHIEF COMPLAINT:
+    The patient presented with several days of the symptoms described in the final diagnosis.
+
+    FINAL DIAGNOSES:
+    PRIMARY: Acute right pyelonephritis with right renal calculus.
+    SECONDARY: Right renal calculus
+    """
+    res = await process_clinical_document(source=doc, document_id="doc-reg-primary-meta")
+    assert res is not None
+    assert res.primary_diagnosis is not None
+    # Primary must be Acute pyelonephritis (N10), NOT meta-reference noise
+    assert res.primary_diagnosis.code == "N10"
+    assert "pyelonephritis" in res.primary_diagnosis.description.lower()
+    assert "symptoms described" not in res.primary_diagnosis.raw_term.lower()
+
+    # Meta-reference noise must never appear in secondary diagnoses
+    for sec in res.secondary_diagnoses:
+        assert "symptoms described" not in sec.raw_term.lower()
+        assert "symptoms described" not in (sec.description or "").lower()
+
+    # Right renal calculus must be secondary
+    sec_codes = {s.code for s in res.secondary_diagnoses}
+    assert "N20.0" in sec_codes
+
+
+def test_clean_html_removes_indentation_and_prevents_code_blocks() -> None:
+    """Verify that clean_html removes all leading whitespace from multi-line HTML."""
+    from medical_coding.ui.components import clean_html
+
+    sample_html = """
+        <div class="primary-card">
+            <div class="primary-desc">
+                <span>Database Concept:</span>
+                Acute pyelonephritis
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <span class="pill-badge">ACUTE</span>
+            </div>
+        </div>
+    """
+    cleaned = clean_html(sample_html)
+    for line in cleaned.splitlines():
+        # No line should start with 4 or more spaces (Markdown code block trigger)
+        assert not line.startswith("    "), f"Line starts with 4+ spaces: {line!r}"
+        assert not line.startswith("\t"), f"Line starts with tab: {line!r}"
+    assert cleaned.startswith('<div class="primary-card">')
+
+

@@ -279,7 +279,7 @@ class EvidenceFirstFactExtractor:
 
         # Phase 1: High-yield diagnosis sections (Discharge Diagnoses, Final Diagnoses, Assessment & Plan)
         for sec in sections:
-            if sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "ASSESSMENT", "ASSESSMENT_PLAN"):
+            if sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "ASSESSMENT", "ASSESSMENT_PLAN"):
                 items = self._parse_diagnosis_items(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
@@ -451,8 +451,12 @@ class EvidenceFirstFactExtractor:
 
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-            # Skip absence statements and treatment instructions
-            if HardClinicalCandidateGate.is_absence_statement(sent_clean) or HardClinicalCandidateGate.is_treatment_instruction(sent_clean):
+            # Skip absence statements, treatment instructions, and cross-reference boilerplate
+            if (
+                HardClinicalCandidateGate.is_absence_statement(sent_clean)
+                or HardClinicalCandidateGate.is_treatment_instruction(sent_clean)
+                or re.search(r"\b(?:symptoms?|complaints?)\s+described\s+in\b|\bdescribed\s+in\s+(?:the\s+)?final\s+diagnosis\b|\babove\s+mentioned\s+complaints\b", sent_clean, re.IGNORECASE)
+            ):
                 continue
 
             # Pattern 2: Explicit admission / diagnosis / condition clauses
@@ -463,6 +467,12 @@ class EvidenceFirstFactExtractor:
             )
             if adm_match:
                 clause = adm_match.group(1).strip()
+                clause = re.sub(
+                    r"^(?:(?:several|\d+)\s+(?:days?|weeks?|months?|hours?)\s+of\s+)",
+                    "",
+                    clause,
+                    flags=re.IGNORECASE,
+                ).strip()
                 for tail_delim in [" on ", " treated with ", " managed with ", " secondary to ", " requiring ", " with good response", " with symptom"]:
                     if tail_delim in clause.lower():
                         idx = clause.lower().find(tail_delim)
@@ -470,7 +480,7 @@ class EvidenceFirstFactExtractor:
 
                 # Causal admission: "initiation of chemotherapy for DLBCL" -> "DLBCL"
                 causal_m = re.search(
-                    r"(?:initiation\s+of\s+|cycle\s+\d+\s+of\s+|course\s+of\s+)?(?:chemotherapy|immunotherapy|radiation|treatment|therapy|infusion|management|stenting|surgery)?\s*(?:for|of)\s+([^.,;\n]+)",
+                    r"(?:(?:initiation|cycle\s+\d+|course)\s+of\s+)?(?:chemotherapy|immunotherapy|radiation|treatment|therapy|infusion|management|stenting|surgery)\s+(?:for|of)\s+([^.,;\n]+)",
                     clause,
                     re.IGNORECASE,
                 )
@@ -541,6 +551,14 @@ class EvidenceFirstFactExtractor:
         lines = [line.strip() for line in content.split("\n") if line.strip()]
 
         for line_idx, line in enumerate(lines):
+            # Check explicit provider-designated PRIMARY role before stripping prefixes
+            is_explicit_primary_line = bool(
+                re.match(
+                    r"^\s*(?:primary|principal)\s*(?:diagnosis|diagnoses|condition)?\s*[:\-–—]",
+                    line,
+                    re.IGNORECASE,
+                )
+            )
             # Strip list numbering e.g. "1. Acute right emphysematous pyelonephritis - underwent DJ stenting"
             cleaned_line = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
             # Strip structural role prefixes (e.g., "Primary:", "Principal Diagnosis -", "Secondary:")
@@ -606,7 +624,10 @@ class EvidenceFirstFactExtractor:
                     if is_explicit_historical
                     else (
                         DiagnosisRole.PRIMARY
-                        if (sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and line_idx == 0 and sub_idx == 0)
+                        if (
+                            (is_explicit_primary_line and sub_idx == 0)
+                            or (sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and line_idx == 0 and sub_idx == 0)
+                        )
                         else DiagnosisRole.SECONDARY
                     )
                 )
@@ -625,6 +646,8 @@ class EvidenceFirstFactExtractor:
                 # Explicit PRINCIPAL_DIAGNOSIS gets highest base score (+15.0); DISCHARGE_DIAGNOSES gets +10.0; SECONDARY gets +3.0
                 if is_explicit_historical:
                     base_admitting = -50.0
+                elif is_explicit_primary_line and sub_idx == 0:
+                    base_admitting = 15.0
                 elif sec.section_name in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS"):
                     base_admitting = 15.0 if (line_idx == 0 and sub_idx == 0) else 5.0
                 elif sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES"):
@@ -677,6 +700,10 @@ class EvidenceFirstFactExtractor:
         if not cleaned:
             return []
 
+        # Skip cross-reference boilerplate (e.g. "presented with symptoms described in the final diagnosis")
+        if re.search(r"\b(?:symptoms?|complaints?)\s+described\s+in\b|\bdescribed\s+in\s+(?:the\s+)?final\s+diagnosis\b|\babove\s+mentioned\s+complaints\b", cleaned, re.IGNORECASE):
+            return []
+
         # Split sentences (do not split decimal numbers like 101.4F or 1.5 mg/dL)
         sentences = [s.strip() for s in re.split(r"\.(?!\d)|[\n;]+", cleaned) if s.strip()]
         for s in sentences:
@@ -684,8 +711,14 @@ class EvidenceFirstFactExtractor:
                 continue
 
             cond_term = s
+            cond_term = re.sub(
+                r"^(?:(?:several|\d+)\s+(?:days?|weeks?|months?|hours?)\s+of\s+)",
+                "",
+                cond_term,
+                flags=re.IGNORECASE,
+            ).strip()
             causal_m = re.search(
-                r"(?:admitted\s+(?:for|with)|presented\s+with|evaluation\s+of|reason\s+for\s+admission\s*:?)\s*(?:initiation\s+of\s+)?(?:cycle\s+\d+\s+(?:of\s+)?)?(?:course\s+of\s+)?(?:chemotherapy|immunotherapy|radiation|treatment|therapy|infusion|management|stenting|surgery)?\s*(?:for|of|with)?\s*([^.,;\n]+)",
+                r"(?:admitted\s+(?:for|with)|presented\s+with|evaluation\s+of|reason\s+for\s+admission\s*:?)\s*(?:(?:initiation|cycle\s+\d+|course)\s+of\s+)?(?:chemotherapy|immunotherapy|radiation|treatment|therapy|infusion|management|stenting|surgery)\s+(?:for|of|with)\s+([^.,;\n]+)",
                 s,
                 re.IGNORECASE,
             )
@@ -1408,7 +1441,7 @@ class EvidenceFirstFactExtractor:
                 cand.treatment_relevance = 1.0
                 cand.encounter_relevance = 1.0
                 cand.scores.encounter_relevance = 1.0
-                is_from_principal_sec = any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in cand.evidence)
+                is_from_principal_sec = any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in cand.evidence) or cand.role == DiagnosisRole.PRIMARY
                 cand.scores.admitting_score += (3.0 if is_from_principal_sec else 1.0)
                 cand.temporality = Temporality.CURRENT
                 cand.assertion_status = AssertionStatus.CONFIRMED
