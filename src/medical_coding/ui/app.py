@@ -438,7 +438,7 @@ with tab1:
                 col_img, col_txt = st.columns([1, 1])
                 with col_img:
                     st.markdown("##### 🖼️ Uploaded Clinical Screenshot")
-                    st.image(active_file_bytes, caption=active_filename, use_container_width=True)
+                    st.image(active_file_bytes, caption=active_filename, width="stretch")
                 with col_txt:
                     st.markdown("##### 📄 OCR Extracted Discharge Summary")
                     clinical_text = st.text_area("Extracted Text (Editable):", value=clinical_text, height=350)
@@ -603,7 +603,7 @@ with tab1:
                 col_img, col_txt = st.columns([1, 1])
                 with col_img:
                     st.markdown("##### 🖼️ Synthetic Clinical Screenshot")
-                    st.image(active_file_bytes, caption=active_filename, use_container_width=True)
+                    st.image(active_file_bytes, caption=active_filename, width="stretch")
                 with col_txt:
                     st.markdown("##### 📄 OCR Extracted Text")
                     clinical_text = st.text_area("Extracted Document Content:", value=clinical_text, height=350)

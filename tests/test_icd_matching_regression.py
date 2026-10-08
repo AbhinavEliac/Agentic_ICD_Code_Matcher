@@ -127,3 +127,29 @@ async def test_regression_ruled_out_condition_abstains() -> None:
     assert len(appendicitis_abstentions) > 0 or (
         res.primary_diagnosis and "adenitis" in res.primary_diagnosis.raw_term.lower()
     )
+
+
+@pytest.mark.asyncio
+async def test_regression_oncology_and_pmh_comorbidities() -> None:
+    """Documented oncology primary with active chronic PMH comorbidities and clinical examination."""
+    doc = """
+    FINAL DIAGNOSIS:
+    Metastatic carcinoma left breast
+
+    CLINICAL EXAMINATION: Patient alert and responsive Temperature : 97.02°F pulse: 100 beats per minute Respiratory rate : 20 cycles per minute BP: 145/84 mmHg SPO2: 96% on room air RS : AEBE CVS : S1, S2 heard well CNS : NAD PA : Soft, non tender COURSE IN THE HOSPITAL AND DISCUSSION: Patient was admitted with above mentioned complaints.
+
+    Admitted for further management PERSONAL HISTORY: Known case of hypertension and asthma, on medication.
+    """
+    res = await process_clinical_document(source=doc, document_id="doc-reg-onc-pmh")
+    assert res is not None
+    assert res.primary_diagnosis is not None
+    assert res.primary_diagnosis.code == "C50.912"
+    assert "left" in res.primary_diagnosis.description.lower()
+    assert res.primary_diagnosis.raw_term == "Metastatic carcinoma left breast"
+
+    sec_codes = {s.code for s in res.secondary_diagnoses}
+    assert "I10" in sec_codes
+    assert "J45.909" in sec_codes
+    assert "Z71.1" not in sec_codes
+    assert len(res.secondary_diagnoses) == 2
+
