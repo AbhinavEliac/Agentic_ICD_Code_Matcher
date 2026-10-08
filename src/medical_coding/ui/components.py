@@ -167,7 +167,11 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
                     <strong style="color: #38bdf8;">{conf_pct}%</strong>
                 </div>
             </div>
-            <div class="primary-desc">{primary.description}</div>
+            <div class="primary-desc">
+                <span style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 2px;">📖 Matched Database Concept:</span>
+                {primary.description}
+            </div>
+            {f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {primary.raw_term}</div>' if primary.raw_term and primary.raw_term.lower() != (primary.description or "").lower() else ''}
             <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap;">
                 {acuity_badge}
                 {certainty_badge}
@@ -223,6 +227,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                         <div>
                             <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {sec_code_display}</strong>
                             <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
+                            {f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {diag.raw_term}</div>' if diag.raw_term and diag.raw_term.lower() != (diag.description or "").lower() else ''}
                         </div>
                         <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                             {billable_badge}

@@ -41,10 +41,11 @@ SECTION_PATTERNS: list[tuple[str, str]] = [
     ("SECONDARY_DIAGNOSES", r"(?:SECONDARY\s+DIAGNOS[EI]S|ADDITIONAL\s+DIAGNOS[EI]S|CO-?MORBIDITIES|OTHER\s+DIAGNOS[EI]S)"),
     ("CHIEF_COMPLAINT", r"(?:CHIEF\s+COMPLAINT|REASON\s+FOR\s+ADMISSION|PRESENTING\s+COMPLAINT|ADMITTED\s+FOR)"),
     ("HISTORY_OF_PRESENT_ILLNESS", r"(?:HISTORY\s+OF\s+PRESENT\s+ILLNESS|HPI)"),
-    ("HOSPITAL_COURSE", r"(?:HOSPITAL\s+COURSE|SUMMARY\s+OF\s+HOSPITAL\s+STAY|BRIEF\s+SUMMARY\s+OF\s+HOSPITAL\s+COURSE|COURSE\s+IN\s+HOSPITAL|CLINICAL\s+COURSE)"),
+    ("PHYSICAL_EXAMINATION", r"(?:CLINICAL\s+EXAMINATION|PHYSICAL\s+EXAMINATION|ON\s+EXAMINATION|GENERAL\s+EXAMINATION|SYSTEMIC\s+EXAMINATION)"),
+    ("HOSPITAL_COURSE", r"(?:HOSPITAL\s+COURSE|SUMMARY\s+OF\s+HOSPITAL\s+STAY|BRIEF\s+SUMMARY\s+OF\s+HOSPITAL\s+COURSE|COURSE\s+IN\s+(?:THE\s+)?HOSPITAL(?:\s+AND\s+DISCUSSION)?|CLINICAL\s+COURSE)"),
     ("COMPLICATIONS", r"(?:HOSPITAL\s+COMPLICATIONS|IN-?HOSPITAL\s+COMPLICATIONS|COMPLICATIONS|ADVERSE\s+EVENTS)"),
     ("PROCEDURES", r"(?:PROCEDURES\s+PERFORMED|OPERATIVE\s+PROCEDURES|SURGICAL\s+PROCEDURES|MAJOR\s+PROCEDURES|PROCEDURES)"),
-    ("PAST_MEDICAL_HISTORY", r"(?:PAST\s+MEDICAL\s+HISTORY|PMH|MEDICAL\s+HISTORY|BACKGROUND\s+HISTORY|PAST\s+HISTORY)"),
+    ("PAST_MEDICAL_HISTORY", r"(?:PAST\s+MEDICAL\s+HISTORY|PMH|MEDICAL\s+HISTORY|BACKGROUND\s+HISTORY|PAST\s+HISTORY|PERSONAL\s+HISTORY)"),
     ("PAST_SURGICAL_HISTORY", r"(?:PAST\s+SURGICAL\s+HISTORY|PSH|SURGICAL\s+HISTORY)"),
     ("INVESTIGATIONS", r"(?:RELEVANT\s+INVESTIGATIONS|INVESTIGATIONS|LABORATORY\s+DATA|PERTINENT\s+LABS|DIAGNOSTIC\s+STUDIES|IMAGING|RADIOLOGY|ECHOCARDIOGRAM|CT\s+SCAN|ULTRASOUND|MRI)"),
     ("MICROBIOLOGY", r"(?:MICROBIOLOGY|CULTURES?|BLOOD\s+CULTURES?|URINE\s+CULTURES?|SPUTUM\s+CULTURES?|CULTURE\s+AND\s+SENSITIVITY|MICROBIOLOGICAL\s+STUDIES)"),
@@ -137,12 +138,12 @@ class SectionSegmenter:
         # Find all section header matches
         matches: list[dict[str, Any]] = []
         for sec_name, pat_str in SECTION_PATTERNS:
-            regex = re.compile(rf"(?:^|\n)\s*({pat_str})\s*(?::|--|\n)", re.IGNORECASE)
+            regex = re.compile(rf"(?:^|\n|[.;]\s*|\b(?=[A-Z\s]{{4,}}:))\s*({pat_str})\s*(?::|--|\n)", re.IGNORECASE)
             for m in regex.finditer(text):
                 matches.append({
                     "section_name": sec_name,
                     "header_text": m.group(1).strip(),
-                    "start_pos": m.start(),
+                    "start_pos": m.start(1),
                     "content_start": m.end(),
                 })
 
@@ -539,7 +540,7 @@ class EvidenceFirstFactExtractor:
         candidates: list[ClinicalDiagnosisCandidate] = []
         lines = [line.strip() for line in content.split("\n") if line.strip()]
 
-        for line in lines:
+        for line_idx, line in enumerate(lines):
             # Strip list numbering e.g. "1. Acute right emphysematous pyelonephritis - underwent DJ stenting"
             cleaned_line = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
             # Strip structural role prefixes (e.g., "Primary:", "Principal Diagnosis -", "Secondary:")
@@ -605,7 +606,7 @@ class EvidenceFirstFactExtractor:
                     if is_explicit_historical
                     else (
                         DiagnosisRole.PRIMARY
-                        if (sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and sub_idx == 0)
+                        if (sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and line_idx == 0 and sub_idx == 0)
                         else DiagnosisRole.SECONDARY
                     )
                 )
@@ -625,9 +626,9 @@ class EvidenceFirstFactExtractor:
                 if is_explicit_historical:
                     base_admitting = -50.0
                 elif sec.section_name in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS"):
-                    base_admitting = 15.0 if sub_idx == 0 else 5.0
+                    base_admitting = 15.0 if (line_idx == 0 and sub_idx == 0) else 5.0
                 elif sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES"):
-                    base_admitting = 10.0 if sub_idx == 0 else 4.0
+                    base_admitting = 10.0 if (line_idx == 0 and sub_idx == 0) else 4.0
                 elif sec.section_name in ("SECONDARY_DIAGNOSES", "ADDITIONAL_DIAGNOSES"):
                     base_admitting = 3.0
                 else:
@@ -758,43 +759,86 @@ class EvidenceFirstFactExtractor:
             cleaned = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
             if not cleaned or len(cleaned) < 3:
                 continue
-            term, _ = self._split_term_and_narrative(cleaned)
-            term, pmh_attrs = self._extract_concept_and_attributes(term)
-            if not term or len(term) < 3:
-                continue
-            polarity, certainty = self._assess_polarity_and_certainty(cleaned)
-            is_resolved = "resolved" in cleaned.lower() or "remote" in cleaned.lower()
 
-            ev = StructuredEvidence(
-                text=line,
-                section="PAST_MEDICAL_HISTORY",
-                sentence=line,
-                polarity=polarity,
-                certainty=certainty,
-                temporality=Temporality.RESOLVED if is_resolved else Temporality.HISTORICAL,
-                evidence_type=EvidenceType.HISTORY,
-                clinical_relevance=0.2,
+            cleaned_preamble = re.sub(
+                r"^(?:known\s+case\s+of|k/c/o|history\s+of|h/o|patient\s+is\s+a\s+known\s+case\s+of)\s*",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            has_active_rx = bool(
+                re.search(
+                    r"\b(?:on\s+medication|on\s+treatment|on\s+rx|treated|managed)\b",
+                    cleaned_preamble,
+                    re.IGNORECASE,
+                )
             )
-            scores = MultiDimensionalScore(
-                evidence_score=0.8,
-                diagnostic_certainty=1.0,
-                encounter_relevance=0.0,
-                role_confidence=0.0,
-                admitting_score=-10.0,
-            )
-            cand = ClinicalDiagnosisCandidate(
-                raw_term=term,
-                normalized_diagnosis=term,
-                role=DiagnosisRole.HISTORICAL,
-                certainty=certainty,
-                temporality=Temporality.RESOLVED if is_resolved else Temporality.HISTORICAL,
-                clinical_attributes=pmh_attrs,
-                evidence=[ev],
-                scores=scores,
-                is_authorized=False,
-                classification_reason="Past medical history condition without documented active inpatient care",
-            )
-            candidates.append(cand)
+            cleaned_concept = re.sub(
+                r",?\s*\b(?:on\s+medication|on\s+treatment|on\s+rx)\b.*$",
+                "",
+                cleaned_preamble,
+                flags=re.IGNORECASE,
+            ).strip()
+
+            sub_items = re.split(r"\s+and\s+|\s*,\s*", cleaned_concept)
+            for sub_item in sub_items:
+                term, _ = self._split_term_and_narrative(sub_item)
+                term, pmh_attrs = self._extract_concept_and_attributes(term)
+                if not term or len(term) < 3:
+                    continue
+
+                from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
+                is_valid_cand, _ = HardClinicalCandidateGate.evaluate_candidate(term, line)
+                if not is_valid_cand:
+                    continue
+
+                polarity, certainty = self._assess_polarity_and_certainty(cleaned)
+                is_resolved = "resolved" in cleaned.lower() or "remote" in cleaned.lower()
+
+                if has_active_rx and not is_resolved and polarity != NegationStatus.NEGATED:
+                    cand_temp = Temporality.CURRENT
+                    cand_role = DiagnosisRole.SECONDARY
+                    is_auth = True
+                    base_admitting = 3.0
+                    reason = "Pre-existing chronic comorbidity on active medication therapy"
+                else:
+                    cand_temp = Temporality.RESOLVED if is_resolved else Temporality.HISTORICAL
+                    cand_role = DiagnosisRole.HISTORICAL
+                    is_auth = False
+                    base_admitting = -10.0
+                    reason = "Past medical history condition without documented active inpatient care"
+
+                ev = StructuredEvidence(
+                    text=line,
+                    section="PAST_MEDICAL_HISTORY",
+                    sentence=line,
+                    polarity=polarity,
+                    certainty=certainty,
+                    temporality=cand_temp,
+                    evidence_type=EvidenceType.HISTORY,
+                    clinical_relevance=1.0 if has_active_rx else 0.2,
+                )
+                scores = MultiDimensionalScore(
+                    evidence_score=1.0 if has_active_rx else 0.8,
+                    diagnostic_certainty=1.0,
+                    encounter_relevance=1.0 if has_active_rx else 0.0,
+                    role_confidence=0.8 if has_active_rx else 0.0,
+                    admitting_score=base_admitting,
+                )
+                cand = ClinicalDiagnosisCandidate(
+                    raw_term=term,
+                    normalized_diagnosis=term,
+                    role=cand_role,
+                    certainty=certainty,
+                    temporality=cand_temp,
+                    clinical_attributes=pmh_attrs,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=is_auth,
+                    classification_reason=reason,
+                )
+                candidates.append(cand)
 
         return candidates
 

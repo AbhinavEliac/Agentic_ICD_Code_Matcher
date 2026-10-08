@@ -69,6 +69,22 @@ METADATA_PATTERNS = [
     r"^\s*final\s+coding\s+summary\b",
     r"^\s*general\s+condition\b",
     r"^\s*physical\s+examination\b",
+    r"^\s*(?:clinical|general|systemic)\s+examination\b",
+    r"^\s*course\s+in\s+(?:the\s+)?hospital(?:\s+and\s+discussion)?\b",
+    r"^\s*personal\s+history\b",
+    r"^\s*discussion\b",
+    # Physical exam findings, vitals, and normal systemic observations
+    r"\bpatient\s+alert\s+and\s+responsive\b",
+    r"\b(?:alert\s+and\s+responsive|conscious\s+and\s+oriented)\b",
+    r"\b(?:rs\s*:\s*aebe|cvs\s*:\s*s1|cns\s*:\s*nad|pa\s*:\s*soft)\b",
+    r"\b(?:temperature\s*:|pulse\s*:|respiratory\s+rate\s*:|bp\s*:|spo2\s*:)\b",
+    r"\b(?:soft[,\s]+non[\s\-]?tender|heard\s+well)\b",
+    # Administrative phrases and non-disease encounter boilerplate
+    r"\b(?:patient\s+was\s+)?admitted\s+with\s+above\s+mentioned\s+complaints\b",
+    r"\b(?:admitted\s+for\s+)?further\s+management\b",
+    r"\babove\s+mentioned\s+complaints\b",
+    r"\bfeared\s+health\s+complaint\b",
+    r"\bcomplaint\s+in\s+whom\s+no\s+diagnosis\s+is\s+made\b",
     # Allergy statements and negative metadata (Section 3)
     r"^\s*(?:drug\s+)?allerg(?:y|ies)(?:\s*:)?\s*(?:none|nkda|no\s+known\s+(?:drug\s+)?allergies|nil|na|n/a)?\s*$",
     r"^\s*(?:no\s+known\s+(?:drug\s+)?allergies|nkda)\s*$",
@@ -203,6 +219,10 @@ class HardClinicalCandidateGate:
         for pat in METADATA_PATTERNS:
             if re.search(pat, term_lower):
                 return False, f"Section heading, metadata, allergy, or clinical status artifact: '{clean_term}'"
+
+        # Check 4b: Physical exam, vital signs, systemic examination noise
+        if any(w in term_lower for w in ["patient alert", "responsive temperature", "temperature :", "pulse :", "respiratory rate :", "bp :", "spo2 :", "rs :", "cvs :", "cns :", "pa :", "aebe", "s1, s2 heard well", "soft, non tender", "further management", "above mentioned complaints"]):
+            return False, f"Physical exam, vital sign, or administrative boilerplate artifact: '{clean_term}'"
 
         # Check 5: Standalone tumor staging or genetic attributes
         for pat in STANDALONE_ATTRIBUTE_PATTERNS:

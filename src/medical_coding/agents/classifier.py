@@ -416,6 +416,10 @@ class ContextAndRelevanceAgent(BaseAgent):
                         "stent",
                         "started on",
                         "received",
+                        "medication",
+                        "on medication",
+                        "treatment",
+                        "rx",
                     ]
                 )
             )
@@ -501,6 +505,10 @@ class ContextAndRelevanceAgent(BaseAgent):
                     "surgery",
                     "stent",
                     "replacement",
+                    "medication",
+                    "on medication",
+                    "treatment",
+                    "rx",
                 ]
             )
             has_monitoring = any(
@@ -1041,6 +1049,35 @@ class PrimarySecondaryClassifier(BaseAgent):
             if any(term in full_context for term in ["history of present illness", "hpi"]):
                 score += 2.0
                 reasons.append("Detailed in history of present illness (+2.0)")
+
+            # Secondary / Historical Section Hierarchy:
+            if sec_lower in ("past medical history", "personal history", "pmh", "medical history"):
+                score -= 10.0
+                reasons.append("Documented under past/personal history (-10.0)")
+
+            # Complication vs Primary Etiology distinction (e.g. Acute pyelonephritis complicated by septic shock):
+            is_complication = bool(
+                re.search(rf"\b(?:complicated\s+by)\b[^\n.;]*?{re.escape(diag_lower)}", full_context)
+                or (doc_lower and re.search(rf"\b(?:complicated\s+by)\b[^\n.;]*?{re.escape(diag_lower)}", doc_lower))
+                or "complicated by" in (asm.reason or "").lower()
+            )
+            is_leading_primary = bool(
+                is_explicit_primary and not is_complication and (
+                    re.search(rf"{re.escape(diag_lower)}[^\n.;]*?\b(?:with|complicated\s+by)\b", full_context)
+                    or (doc_lower and re.search(rf"{re.escape(diag_lower)}[^\n.;]*?\b(?:with|complicated\s+by)\b", doc_lower))
+                )
+            )
+            if is_complication:
+                score -= 2.0
+                reasons.append("Documented as secondary complication rather than underlying primary disease (-2.0)")
+            elif is_leading_primary:
+                score += 2.0
+                reasons.append("Underlying occasioning primary condition prior to complications (+2.0)")
+
+            # Injury coding precedence: skeletal fractures outrank co-occurring ligament sprains/strains (CMS Guideline 19.b)
+            if any(sp in diag_lower for sp in ["sprain", "strain"]) and any("fracture" in c.diagnosis.lower() for c in assessments):
+                score -= 2.0
+                reasons.append("Ligament sprain secondary to co-occurring skeletal fracture (-2.0)")
 
             # 2. Major Interventions & Procedures
             if any(

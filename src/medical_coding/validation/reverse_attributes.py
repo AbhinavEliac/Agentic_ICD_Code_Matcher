@@ -27,6 +27,7 @@ NON_SPECIFICITY_WORDS: set[str] = {
     "acute", "chronic", "subacute", "spontaneous", "disruption", "injury", "sites",
     "secondary", "neoplasm", "neoplasms", "tumor", "tumour", "intrahepatic", "bile", "duct",
     "coronary", "artery", "arteries", "vessel", "vessels", "wall", "vein", "veins",
+    "essential", "uncomplicated",
 }
 
 # Clinical attribute qualifiers mapped to documentary confirmation tokens/synonyms

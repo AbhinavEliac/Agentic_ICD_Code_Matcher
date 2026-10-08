@@ -644,8 +644,14 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                     desc_tokens = set(re.findall(r"\b[a-z0-9]+\b", rec.description.lower()))
                     overlap = len(expanded_q_tokens.intersection(desc_tokens))
                     frac = overlap / len(expanded_q_tokens) if expanded_q_tokens else 0.5
-                    if rec.code.endswith(".9") or rec.code.endswith(".919") or rec.code.endswith(".90"):
-                        frac += 0.20
+                    if "left" in clean_query.lower() and "left" in rec.description.lower():
+                        frac += 0.25
+                    elif "right" in clean_query.lower() and "right" in rec.description.lower():
+                        frac += 0.25
+                    elif ("left" in clean_query.lower() or "right" in clean_query.lower()) and "unspecified" in rec.description.lower():
+                        frac -= 0.20
+                    elif rec.code.endswith(".9") or rec.code.endswith(".919") or rec.code.endswith(".90"):
+                        frac += 0.10
                     scored_recs.append((frac, rec))
                 scored_recs.sort(key=lambda x: x[0], reverse=True)
 
@@ -1142,6 +1148,12 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             secondary_responses.append(sec_resp)
             seen_sec_terms.add(c_term.lower())
             seen_sec_terms.add(getattr(c, "raw_term", c_term).lower())
+
+    # Suppress Z71.1 ("feared health complaint in whom no diagnosis is made") when real clinical conditions exist
+    if primary_response and primary_response.code == "Z71.1" and secondary_responses:
+        primary_response = secondary_responses.pop(0)
+        primary_response.role = DiagnosisRole.PRIMARY
+    secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
 
     # Determine execution status
     if primary_response or secondary_responses:
