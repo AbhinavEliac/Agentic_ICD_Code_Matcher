@@ -8,7 +8,7 @@
 [![Retrieval](https://img.shields.io/badge/Retrieval-FAISS%20%2B%20BM25-emerald.svg)](https://github.com/facebookresearch/faiss)
 [![UI](https://img.shields.io/badge/Interface-Streamlit-red.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![API](https://img.shields.io/badge/REST-FastAPI-teal.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tests Passing](https://img.shields.io/badge/Tests-158%2F158%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-161%2F161%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![Code Quality](https://img.shields.io/badge/Linter-Ruff%20Clean-black.svg?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
 [![Compliance](https://img.shields.io/badge/Standard-UHDDS%20%26%20HIPAA-success.svg)](https://www.cms.gov/medicare/coding-billing/icd-10-codes)
 [![Offline Security](https://img.shields.io/badge/Air--Gapped-100%25%20Offline%20(Zero%20Egress)-darkgreen.svg)](#security--data-privacy)
@@ -71,12 +71,13 @@ In clinical health systems, autonomous medical coding is high-stakes. Traditiona
 |:--|:---|:---|:---|
 | **1** | **No ICD Code Generation by LLM** | The extraction prompt bans code generation. Model outputs only clinical conditions + verbatim documentary evidence. | Output filtered; only retrieved candidates considered. |
 | **2** | **Catalog Boundary Guarantee** | Candidates retrieved via BM25 + FAISS are cross-checked against `LocalICDCatalog`. Non-existent codes are discarded prior to ranking. | Code purged from candidate pool. |
-| **3** | **Single Primary Diagnosis** | Official UHDDS definition enforced: maximum ONE primary condition chiefly responsible for admission. | Multiple primary candidates demoted or routed to physician query. |
+| **3** | **Single Primary Diagnosis & UHDDS Precedence** | Official UHDDS definition enforced: maximum ONE primary condition chiefly responsible for admission. Explicit provider primary designations take strict precedence over compound mentions or secondary clauses. | Multiple primary candidates demoted or disambiguated; compound clauses safely split. |
 | **4** | **Verbatim Evidence Provenance** | Every code must link to an exact textual quote and character offsets from the clinical narrative. | Diagnosis without evidence is discarded. |
 | **5** | **Historical & Ruled-Out Exclusion** | Negated ("denies", "no evidence of") and unmanaged historical PMH conditions are classified as `EXCLUDED`. | Marked non-billable; omitted from coding submission. |
-| **6** | **Terminal Leaf Specificity** | Non-billable category headers (e.g. 3-character codes) are rejected; only terminal leaf nodes are valid. | Realigned to valid terminal code or abstained. |
-| **7** | **Mutual Excludes1 Detection** | Pairs violating CDC *Excludes1* guidelines cannot be co-billed. | Conflict flagged; lower priority code dropped or queried. |
-| **8** | **Auditable Abstention Engine** | Whenever evidence is insufficient or ambiguous, the pipeline emits a structured `AbstentionRecord`. | Explicit diagnostic abstention reasoning logged. |
+| **6** | **Meta-Narrative & Cross-Reference Suppression** | Chart navigation references ("see primary diagnosis for discussion", "refer to assessment above") and non-disease procedural notes are purged before candidate retrieval. | Filtered at clinical gate; prevented from polluting diagnostic candidates. |
+| **7** | **Terminal Leaf Specificity** | Non-billable category headers (e.g. 3-character codes) are rejected; only terminal leaf nodes are valid. | Realigned to valid terminal code or abstained. |
+| **8** | **Mutual Excludes1 Detection** | Pairs violating CDC *Excludes1* guidelines cannot be co-billed. | Conflict flagged; lower priority code dropped or queried. |
+| **9** | **Auditable Abstention Engine** | Whenever evidence is insufficient or ambiguous, the pipeline emits a structured `AbstentionRecord`. | Explicit diagnostic abstention reasoning logged. |
 
 ---
 
@@ -167,7 +168,11 @@ flowchart TD
   - **Temporality**: `CURRENT` vs `HISTORICAL` (PMH) vs `FAMILY_HISTORY`.
   - **Certainty**: `CONFIRMED` vs `SUSPECTED` vs `RULED_OUT`.
   - **Acuity**: `ACUTE` vs `CHRONIC` vs `ACUTE_ON_CHRONIC` vs `UNSPECIFIED`.
-* **Node 5 (`classify_diagnoses`)**: Enforces official Uniform Hospital Discharge Data Set (UHDDS) rules. Designates at most **ONE** Primary Diagnosis (chief reason for admission). Active co-existing conditions are classified as Secondary. Historical conditions without active inpatient monitoring/treatment are classified as `EXCLUDED`.
+* **Node 5 (`classify_diagnoses`)**: Enforces official Uniform Hospital Discharge Data Set (UHDDS) rules:
+  - **Single Primary Anchor**: Designates at most **ONE** Primary Diagnosis (chief reason for admission). Explicit provider headers (`PRIMARY DIAGNOSIS:`, `PRINCIPAL:`, `1. Primary:`) strictly take precedence over narrative mentions or secondary lists.
+  - **Compound Clause Disambiguation**: For compound diagnoses (e.g., `PRIMARY: Acute Systolic Heart Failure with Hypertensive Emergency`), the anchor entity is preserved as Primary while trailing clauses are partitioned as Secondary.
+  - **Secondary Comorbidities**: Active co-existing conditions receiving inpatient monitoring, evaluation, or therapy are designated as Secondary.
+  - **Exclusion & Meta-Purging**: Historical conditions without active inpatient monitoring/treatment and chart navigation meta-narratives (e.g., "see primary diagnosis for discussion") are classified as `EXCLUDED`.
 
 #### Phase 3: Dual-Engine Retrieval & Pool-Constrained Ranking
 * **Node 6 (`retrieve_candidates`)**: Queries the authoritative local ICD-10-CM dataset using a dual search mechanism:
@@ -204,7 +209,7 @@ flowchart TD
 | **REST Service** | **FastAPI** | `>=0.112.0` | Non-blocking async endpoints, OpenAPI/Swagger documentation |
 | **Persistence** | **SQLite + SQLAlchemy** | WAL (Write-Ahead Logging) | Thread-safe, transaction-isolated clinical encounter vault |
 | **Schema Validation**| **Pydantic** | `v2.x` | Strict typing, runtime invariant checking, serialization |
-| **Quality & Tests** | **Pytest & Ruff** | 158 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage |
+| **Quality & Tests** | **Pytest & Ruff** | 161 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage |
 
 ---
 
@@ -266,7 +271,7 @@ Agentic_ICD_Code_Matcher/
 │   ├── utils/                        # Logging, string matching, ICD format helpers
 │   └── validation/                   # Deterministic rules, reverse attribute checker & firewalls
 │
-└── tests/                            # 158 unit, integration, and full regression tests
+└── tests/                            # 161 unit, integration, and full regression tests
     ├── test_adversarial_suite.py     # 6 adversarial domain firewall tests (negation, PMH, attributes)
     ├── test_api.py                   # FastAPI endpoint validation
     ├── test_candidate_ranking.py     # Pool-constrained candidate ranking tests
@@ -277,13 +282,16 @@ Agentic_ICD_Code_Matcher/
     ├── test_database.py              # SQLite WAL mode & encounter persistence tests
     ├── test_end_to_end_pipeline.py   # Complete 10-node LangGraph integration tests
     ├── test_full_regression_matrix.py # 11 canonical benchmark inpatient clinical cases
+    ├── test_generalized_reasoning_adversarial.py # Adversarial reasoning, symptom integral & attribute separation
     ├── test_graph.py                 # Graph compilation & topology tests
-    ├── test_icd_matching_regression.py # Authoritative database code regressions
+    ├── test_icd_matching_regression.py # Authoritative database code regressions & UI rendering tests
     ├── test_imports.py               # Zero circular dependency checks
     ├── test_ingestion.py             # Dataset loader & catalog integrity tests
     ├── test_llm_infrastructure.py    # Offline model lifecycle & inference locking tests
     ├── test_multimodal_e2e.py        # Plaintext + PDF multimodal verification tests
+    ├── test_multisystem_database.py  # Multi-system ICD-10-CM, ICD-O & CPT catalog matching
     ├── test_pdf_processing.py        # PyMuPDF & concurrency semaphore tests
+    ├── test_pipeline_persistence.py  # SQLite encounter & session persistence tests
     ├── test_retrieval.py             # BM25, FAISS, and hybrid RRF tests
     ├── test_schemas.py               # Pydantic schema validation tests
     ├── test_state.py                 # State transitions & execution snapshot tests
@@ -445,7 +453,7 @@ Open your browser to `http://localhost:8501`.
    - Ingest PDF discharge summaries or paste clinical notes.
    - Pre-loaded with realistic clinical scenarios (Acute Systolic Heart Failure, STEMI, COPD with Pneumonia, Sepsis with AKI, Negation/Rule-Out demonstration).
    - Generates and downloads synthetic clinical PDFs for testing.
-   - **Clinical Decision Cards**: Displays Primary Diagnosis in bold, billable status, confidence score, acuity, certainty, and highlighted verbatim evidence quotes.
+   - **Clinical Decision Cards**: Displays Primary Diagnosis in bold, billable status, confidence score, acuity, certainty, and highlighted verbatim evidence quotes with sanitized CommonMark-safe HTML rendering (preventing raw markdown code block spills) and responsive layout.
    - **Audit Trail**: Real-time non-LLM checks confirming catalog existence, leaf specificity, and *Excludes1* non-contradiction.
 2. **📑 Concurrent Batch PDF Ingestion**:
    - Upload and process $\ge 10$ clinical PDFs simultaneously with live status tracking and CSV export.
@@ -492,7 +500,7 @@ The system handles concurrent document processing through `BatchPDFProcessor`:
 ## 10. Verification, Testing & Diagnostic Case Studies
 
 ### Running the Test Suite
-The repository includes **158 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
+The repository includes **161 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
 
 ```bash
 pytest -v
@@ -502,7 +510,7 @@ Output:
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.13.13, pytest-9.1.1, pluggy-1.6.0
-collected 158 items
+collected 161 items
 
 tests/test_adversarial_suite.py ......                                   [  4%]
 tests/test_api.py ....                                                   [  6%]
@@ -514,19 +522,22 @@ tests/test_context_assessment.py .............                           [ 35%]
 tests/test_database.py .....                                             [ 38%]
 tests/test_end_to_end_pipeline.py ........                               [ 43%]
 tests/test_full_regression_matrix.py ...........                         [ 50%]
-tests/test_graph.py ..                                                   [ 51%]
-tests/test_icd_matching_regression.py .......                            [ 56%]
-tests/test_imports.py .                                                  [ 56%]
-tests/test_ingestion.py ......                                           [ 60%]
-tests/test_llm_infrastructure.py .........                               [ 66%]
-tests/test_multimodal_e2e.py ....                                        [ 68%]
-tests/test_pdf_processing.py ...........                                 [ 75%]
-tests/test_retrieval.py ..............                                   [ 84%]
-tests/test_schemas.py ...                                                [ 86%]
-tests/test_state.py ....                                                 [ 89%]
-tests/test_validation.py .................                                [100%]
+tests/test_generalized_reasoning_adversarial.py ........                 [ 55%]
+tests/test_graph.py ..                                                   [ 56%]
+tests/test_icd_matching_regression.py ..........                         [ 62%]
+tests/test_imports.py .                                                  [ 63%]
+tests/test_ingestion.py ......                                           [ 67%]
+tests/test_llm_infrastructure.py .........                               [ 72%]
+tests/test_multimodal_e2e.py ....                                        [ 75%]
+tests/test_multisystem_database.py ..                                    [ 76%]
+tests/test_pdf_processing.py ...........                                 [ 83%]
+tests/test_pipeline_persistence.py ...                                   [ 85%]
+tests/test_retrieval.py ..............                                   [ 93%]
+tests/test_schemas.py ...                                                [ 95%]
+tests/test_state.py ....                                                 [ 98%]
+tests/test_validation.py ....                                            [100%]
 
-============================ 158 passed in 58.14s =============================
+============================ 161 passed in 61.25s =============================
 ```
 
 ### Code Quality & Linting

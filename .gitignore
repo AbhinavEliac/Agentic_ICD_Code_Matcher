@@ -117,3 +117,4 @@ data/indexes/*
 
 # Local Scratch Experiments
 scratch/
+.kiro/
