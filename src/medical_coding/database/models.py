@@ -47,6 +47,11 @@ class ProcessedDocument(Base):
     abstention_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     processing_time_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
+    # Surgical Oncology & Procedures
+    procedures_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    operative_findings_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    oncology_context_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+
     # Metadata & Auditing
     metadata_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -85,6 +90,27 @@ class ProcessedDocument(Base):
         except Exception:
             pass
 
+        procedures = []
+        if getattr(self, "procedures_json", None):
+            try:
+                procedures = json.loads(self.procedures_json)
+            except Exception:
+                procedures = []
+
+        operative_findings = []
+        if getattr(self, "operative_findings_json", None):
+            try:
+                operative_findings = json.loads(self.operative_findings_json)
+            except Exception:
+                operative_findings = []
+
+        oncology_context = {}
+        if getattr(self, "oncology_context_json", None):
+            try:
+                oncology_context = json.loads(self.oncology_context_json)
+            except Exception:
+                oncology_context = {}
+
         return {
             "id": self.id,
             "document_id": self.document_id,
@@ -101,6 +127,9 @@ class ProcessedDocument(Base):
             "primary_confidence": self.primary_confidence,
             "secondary_count": self.secondary_count,
             "abstention_count": self.abstention_count,
+            "procedures": procedures,
+            "operative_findings": operative_findings,
+            "oncology_context": oncology_context,
             "processing_time_ms": self.processing_time_ms,
             "metadata": meta,
             "created_at": self.created_at.isoformat() if self.created_at else None,

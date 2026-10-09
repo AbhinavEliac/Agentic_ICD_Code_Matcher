@@ -104,7 +104,7 @@ def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings=settings)
     Base.metadata.create_all(bind=engine)
 
-    # Safely migrate new columns to diagnosis_records if it was created under previous schema
+    # Safely migrate new columns to diagnosis_records and processed_documents if created under previous schema
     try:
         inspector = inspect(engine)
         if "diagnosis_records" in inspector.get_table_names():
@@ -116,6 +116,17 @@ def init_db(settings: Settings | None = None) -> None:
                     conn.execute(text("ALTER TABLE diagnosis_records ADD COLUMN icdo VARCHAR(32);"))
                 if "cpt" not in columns:
                     conn.execute(text("ALTER TABLE diagnosis_records ADD COLUMN cpt VARCHAR(32);"))
+                conn.commit()
+
+        if "processed_documents" in inspector.get_table_names():
+            doc_columns = {col["name"] for col in inspector.get_columns("processed_documents")}
+            with engine.connect() as conn:
+                if "procedures_json" not in doc_columns:
+                    conn.execute(text("ALTER TABLE processed_documents ADD COLUMN procedures_json TEXT DEFAULT '[]';"))
+                if "operative_findings_json" not in doc_columns:
+                    conn.execute(text("ALTER TABLE processed_documents ADD COLUMN operative_findings_json TEXT DEFAULT '[]';"))
+                if "oncology_context_json" not in doc_columns:
+                    conn.execute(text("ALTER TABLE processed_documents ADD COLUMN oncology_context_json TEXT DEFAULT '{}';"))
                 conn.commit()
     except Exception as exc:
         logger.warning("Database column migration check notice: %s", exc)

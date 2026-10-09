@@ -22,7 +22,7 @@ def test_validation_passes_valid_billable_code(
     assert validated is not None
     assert validated.code == "I50.21"
     assert validated.role == DiagnosisRole.PRIMARY
-    assert len(validated.checks) == 2
+    assert len(validated.checks) == 5
     assert all(c.passed for c in validated.checks)
 
 

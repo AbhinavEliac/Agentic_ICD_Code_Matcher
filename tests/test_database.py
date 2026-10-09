@@ -264,3 +264,59 @@ def test_export_documents_df(repo: MedicalCodingRepository) -> None:
     assert len(df) == 1
     assert df.iloc[0]["document_id"] == "ENC-DF"
     assert df.iloc[0]["primary_code"] == "I50.21"
+
+
+def test_save_and_retrieve_surgical_oncology_and_procedures(repo: MedicalCodingRepository) -> None:
+    """Test saving and retrieving procedures, operative findings, and structured oncology context."""
+    res = CodingResult(
+        document_id="ENC-ONC-001",
+        status=ExecutionStatus.SUCCESS,
+        primary_diagnosis=CodedDiagnosisResponse(
+            code="C50.911",
+            description="Malignant neoplasm of unspecified site of right female breast",
+            role=DiagnosisRole.PRIMARY,
+            acuity=Acuity.CHRONIC,
+            certainty=Certainty.CONFIRMED,
+            evidence_quote="invasive ductal carcinoma of right breast",
+            confidence_score=0.96,
+            is_terminal_billable=True,
+        ),
+        procedures=["Right modified radical mastectomy", "Sentinel lymph node biopsy"],
+        operative_findings=[
+            {
+                "finding": "Ovarian follicular cyst",
+                "adhesions": True,
+                "eligibility": "EXCLUDED_BY_UHDDS",
+            }
+        ],
+        oncology_context={
+            "histology": "invasive ductal carcinoma",
+            "grade": "Grade 2",
+            "er_status": "positive",
+            "pr_status": "positive",
+            "her2_status": "negative",
+            "ki67": "18%",
+        },
+        processing_time_ms=88.5,
+    )
+
+    saved = repo.save_coding_result(
+        result=res,
+        raw_text="Patient underwent right modified radical mastectomy for invasive ductal carcinoma.",
+        filename="operative_report.txt",
+    )
+
+    assert saved["document_id"] == "ENC-ONC-001"
+    assert "Right modified radical mastectomy" in saved["procedures"]
+    assert len(saved["operative_findings"]) == 1
+    assert saved["oncology_context"]["er_status"] == "positive"
+
+    # Query back from DB
+    retrieved = repo.get_document_by_id("ENC-ONC-001")
+    assert retrieved is not None
+    assert retrieved["procedures"] == ["Right modified radical mastectomy", "Sentinel lymph node biopsy"]
+    assert len(retrieved["operative_findings"]) == 1
+    assert retrieved["operative_findings"][0]["finding"] == "Ovarian follicular cyst"
+    assert retrieved["oncology_context"]["histology"] == "invasive ductal carcinoma"
+    assert retrieved["oncology_context"]["her2_status"] == "negative"
+

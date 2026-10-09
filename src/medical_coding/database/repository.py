@@ -81,6 +81,13 @@ class MedicalCodingRepository:
                 doc.abstention_count = len(result.abstentions)
                 doc.processing_time_ms = result.processing_time_ms
                 doc.metadata_json = json.dumps(meta_dict)
+                doc.procedures_json = json.dumps(result.procedures) if getattr(result, "procedures", None) else "[]"
+                doc.operative_findings_json = (
+                    json.dumps(result.operative_findings) if getattr(result, "operative_findings", None) else "[]"
+                )
+                doc.oncology_context_json = (
+                    json.dumps(result.oncology_context) if getattr(result, "oncology_context", None) else "{}"
+                )
 
                 # Clear previous diagnoses, abstentions, checks for clean re-save
                 doc.diagnoses.clear()
@@ -106,6 +113,13 @@ class MedicalCodingRepository:
                     ),
                     secondary_count=len(result.secondary_diagnoses),
                     abstention_count=len(result.abstentions),
+                    procedures_json=json.dumps(result.procedures) if getattr(result, "procedures", None) else "[]",
+                    operative_findings_json=(
+                        json.dumps(result.operative_findings) if getattr(result, "operative_findings", None) else "[]"
+                    ),
+                    oncology_context_json=(
+                        json.dumps(result.oncology_context) if getattr(result, "oncology_context", None) else "{}"
+                    ),
                     processing_time_ms=result.processing_time_ms,
                     metadata_json=json.dumps(meta_dict),
                     created_at=datetime.now(UTC),
