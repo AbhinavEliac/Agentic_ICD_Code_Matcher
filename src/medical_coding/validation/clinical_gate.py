@@ -147,6 +147,10 @@ PROCEDURE_TERMS = {
     "cholecystectomy", "appendectomy", "hysterectomy", "lumpectomy", "angioplasty",
     "bypass", "dialysis", "hemodialysis", "paracentesis", "thoracentesis", "fet",
     "frozen embryo transfer", "infusion", "chemotherapy", "radiotherapy", "radiation",
+    "salpingo-oophorectomy", "salpingooophorectomy", "oophorectomy", "salpingectomy",
+    "lymphadenectomy", "axillary dissection", "lymph node dissection",
+    "sentinel node biopsy", "sentinel lymph node biopsy", "cystectomy",
+    "adhesiolysis", "lysis of adhesions", "ablation", "cauterization",
 }
 
 PROCEDURE_SUFFIXES = (

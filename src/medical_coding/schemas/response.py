@@ -128,6 +128,18 @@ class CodingResult(BaseModel):
         default_factory=list,
         description="Audit records for all conditions where coding was abstained.",
     )
+    procedures: list[str] = Field(
+        default_factory=list,
+        description="Extracted procedural and surgical events segregated from diagnoses.",
+    )
+    operative_findings: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Operative and intraoperative findings evaluated under distinct clinical gate.",
+    )
+    oncology_context: dict[str, Any] | None = Field(
+        default=None,
+        description="Structured oncology biomarkers and tumor biology attributes.",
+    )
     processing_time_ms: float = Field(
         ge=0.0,
         description="Total end-to-end execution latency in milliseconds.",

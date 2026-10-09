@@ -259,6 +259,18 @@ class ClinicalDiagnosisState(BaseModel):
     uncertain_conditions: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
     all_candidates: list[ClinicalDiagnosisCandidate] = Field(default_factory=list)
     has_unique_primary: bool = False
+    procedures: list[str] = Field(
+        default_factory=list,
+        description="Extracted surgical and clinical procedures segregated from diagnoses.",
+    )
+    operative_findings: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Extracted operative/intraoperative findings evaluated under distinct clinical eligibility gate.",
+    )
+    oncology_context: Any | None = Field(
+        default=None,
+        description="Structured oncology context including histology, grade, receptors, Ki-67, and response.",
+    )
     audit_notes: list[str] = Field(default_factory=list)
 
 
@@ -313,9 +325,17 @@ class CancerConcept(BaseModel):
     metastatic_sites: list[str] = Field(default_factory=list, description="Verified metastatic anatomical sites.")
     receptor_status: dict[str, str] = Field(default_factory=dict, description="e.g. {'ER': 'negative', 'PR': 'negative', 'HER2': '0', 'PD-L1': 'positive'}.")
     molecular_attributes: list[str] = Field(default_factory=list, description="e.g. ['BRCA pathogenic', 'BRCA1 positive'].")
+    ki67: str | None = Field(default=None, description="Ki-67 proliferation index (e.g. '> 80%', 'low', 'high').")
+    treatment_response: str | None = Field(default=None, description="Pathologic or clinical response to neoadjuvant/adjuvant therapy.")
+    prior_treatments: list[str] = Field(default_factory=list, description="Prior treatments (e.g. neoadjuvant chemotherapy, endocrine therapy).")
     treatment_history: list[str] = Field(default_factory=list, description="Past chemotherapy/radiotherapy/surgery.")
     current_treatment: list[str] = Field(default_factory=list, description="Current inpatient chemotherapy or management.")
     evidence: str = Field(default="", description="Verbatim documentary evidence.")
+
+    @property
+    def receptors(self) -> dict[str, str]:
+        """Convenience property alias for receptor_status."""
+        return self.receptor_status
 
 
 class OrthopedicConcept(BaseModel):

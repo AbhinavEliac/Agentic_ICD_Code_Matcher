@@ -23,6 +23,7 @@ from medical_coding.schemas.enums import (
     Temporality,
 )
 from medical_coding.schemas.evidence import (
+    CancerConcept,
     ClinicalDiagnosisCandidate,
     ClinicalDiagnosisState,
     MultiDimensionalScore,
@@ -45,6 +46,8 @@ SECTION_PATTERNS: list[tuple[str, str]] = [
     ("HOSPITAL_COURSE", r"(?:HOSPITAL\s+COURSE|SUMMARY\s+OF\s+HOSPITAL\s+STAY|BRIEF\s+SUMMARY\s+OF\s+HOSPITAL\s+COURSE|COURSE\s+IN\s+(?:THE\s+)?HOSPITAL(?:\s+AND\s+DISCUSSION)?|CLINICAL\s+COURSE)"),
     ("COMPLICATIONS", r"(?:HOSPITAL\s+COMPLICATIONS|IN-?HOSPITAL\s+COMPLICATIONS|COMPLICATIONS|ADVERSE\s+EVENTS)"),
     ("PROCEDURES", r"(?:PROCEDURES\s+PERFORMED|OPERATIVE\s+PROCEDURES|SURGICAL\s+PROCEDURES|MAJOR\s+PROCEDURES|PROCEDURES)"),
+    ("OPERATIVE_FINDINGS", r"(?:INTRAOPERATIVE\s+FINDINGS|OPERATIVE\s+FINDINGS|SURGICAL\s+FINDINGS|INTRA-?OPERATIVE\s+FINDINGS|OPERATIVE\s+NOTE\s+FINDINGS|FINDINGS)"),
+    ("ONCOLOGY_BIOMARKERS", r"(?:BIOMARKERS\s*(?:&|AND)?\s*RECEPTOR\s+STATUS|PATHOLOGY(?:\s+REPORT)?|HISTOPATHOLOGY|RECEPTOR\s+STATUS|IMMUNOHISTOCHEMISTRY|TUMOR\s+CHARACTERISTICS)"),
     ("PAST_MEDICAL_HISTORY", r"(?:PAST\s+MEDICAL\s+HISTORY|PMH|MEDICAL\s+HISTORY|BACKGROUND\s+HISTORY|PAST\s+HISTORY|PERSONAL\s+HISTORY)"),
     ("PAST_SURGICAL_HISTORY", r"(?:PAST\s+SURGICAL\s+HISTORY|PSH|SURGICAL\s+HISTORY)"),
     ("INVESTIGATIONS", r"(?:RELEVANT\s+INVESTIGATIONS|INVESTIGATIONS|LABORATORY\s+DATA|PERTINENT\s+LABS|DIAGNOSTIC\s+STUDIES|IMAGING|RADIOLOGY|ECHOCARDIOGRAM|CT\s+SCAN|ULTRASOUND|MRI)"),
@@ -182,17 +185,25 @@ class SectionSegmenter:
 class EvidenceFirstFactExtractor:
     """Extracts evidence-grounded clinical facts from partitioned document sections."""
 
+    def __init__(self) -> None:
+        self._extracted_procedures: list[str] = []
+        self._operative_findings: list[dict[str, Any]] = []
+
     def extract_clinical_state(
         self,
         text: str,
-        document_id: str,
+        document_id: str = "doc-default",
+        doc_id: str | None = None,
     ) -> ClinicalDiagnosisState:
         """Extract all clinical diagnosis candidates, score them, and determine roles."""
+        effective_doc_id = doc_id or document_id
+        self._extracted_procedures = []
+        self._operative_findings = []
         sections = SectionSegmenter.segment(text)
         candidates = self._extract_candidates_from_sections(sections, text)
 
         # Classify candidates using strict evidence hierarchy
-        state = self._classify_and_structure_state(candidates, sections, document_id)
+        state = self._classify_and_structure_state(candidates, sections, effective_doc_id)
         return state
 
     def _register_candidate(
@@ -220,6 +231,8 @@ class EvidenceFirstFactExtractor:
             item.raw_term, item.primary_evidence_quote
         )
         if not is_valid:
+            if "procedure" in reject_reason.lower() or "surgical" in reject_reason.lower():
+                self._extracted_procedures.append(item.raw_term)
             logger.debug("Candidate gate rejected '%s': %s", item.raw_term, reject_reason)
             return
 
@@ -319,8 +332,21 @@ class EvidenceFirstFactExtractor:
 
         # Phase 6: Procedures & Indications (Operative procedures, interventional indications)
         for sec in sections:
-            if sec.section_name == "PROCEDURES":
+            if sec.section_name in ("PROCEDURES", "PAST_SURGICAL_HISTORY"):
+                proc_lines = [l.strip() for l in sec.content.split("\n") if l.strip()]
+                for l in proc_lines:
+                    l_clean = re.sub(r"^\d+[\.\)\-]\s*", "", l).strip()
+                    if len(l_clean) >= 3:
+                        self._extracted_procedures.append(l_clean)
                 items = self._parse_procedure_indications(sec.content, sec)
+                for item in items:
+                    self._register_candidate(candidates_by_key, item)
+
+        # Phase 6b: Operative Findings (Intraoperative observations, cysts, adhesions)
+        for sec in sections:
+            if sec.section_name == "OPERATIVE_FINDINGS":
+                op_findings, items = self._parse_operative_findings(sec.content, sec)
+                self._operative_findings.extend(op_findings)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
 
@@ -610,6 +636,8 @@ class EvidenceFirstFactExtractor:
                 if polarity != NegationStatus.NEGATED:
                     is_valid_cand, gate_reason = HardClinicalCandidateGate.evaluate_candidate(sub_term, cleaned_line)
                     if not is_valid_cand:
+                        if "procedure" in gate_reason.lower() or "surgical" in gate_reason.lower():
+                            self._extracted_procedures.append(sub_term)
                         logger.info("Clinical gate rejected candidate in %s: '%s' (%s)", sec.section_name, sub_term, gate_reason)
                         continue
 
@@ -1172,6 +1200,239 @@ class EvidenceFirstFactExtractor:
 
         return candidates
 
+    def _parse_operative_findings(
+        self,
+        content: str,
+        sec: ClinicalDocumentSection,
+    ) -> tuple[list[dict[str, Any]], list[ClinicalDiagnosisCandidate]]:
+        """Extract intraoperative findings with distinct clinical-coding eligibility gate."""
+        findings: list[dict[str, Any]] = []
+        candidates: list[ClinicalDiagnosisCandidate] = []
+        cleaned = content.strip()
+        if not cleaned:
+            return findings, candidates
+
+        lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+        for line in lines:
+            line_clean = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
+            if len(line_clean) < 3 or HardClinicalCandidateGate.is_absence_statement(line_clean):
+                continue
+
+            # Identify finding entities (e.g. "ovarian cyst", "pelvic adhesions", "liver normal")
+            is_normal = any(w in line_clean.lower() for w in ["normal", "unremarkable", "intact", "no pathology", "no abnormalities", "clear"])
+            is_incidental = any(w in line_clean.lower() for w in ["incidental", "benign", "small", "simple", "minor", "asymptomatic"])
+
+            term = line_clean
+            for delim in [",", "-", "–", ":"]:
+                if delim in term:
+                    term = term.split(delim)[0].strip()
+            term = re.sub(r"^(?:a|an|the)\s+", "", term, flags=re.IGNORECASE).strip()
+
+            finding_record = {
+                "term": term,
+                "quote": line,
+                "section": sec.section_name,
+                "is_normal": is_normal,
+                "is_incidental": is_incidental,
+                "requires_coding": not is_normal and not is_incidental,
+            }
+            findings.append(finding_record)
+
+            if is_normal:
+                continue
+
+            # Distinct clinical-coding eligibility gate:
+            # Under UHDDS criteria, incidental intraoperative findings without dedicated surgical intervention
+            # or postoperative therapy are excluded from billable coding.
+            is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(term, line)
+            if not is_valid:
+                continue
+
+            polarity, certainty = self._assess_polarity_and_certainty(line)
+            ev = StructuredEvidence(
+                text=line,
+                section=sec.section_name,
+                sentence=line,
+                polarity=polarity,
+                certainty=certainty,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.PROCEDURE,
+                clinical_relevance=0.3 if is_incidental else 0.8,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0,
+                diagnostic_certainty=1.0 if certainty == Certainty.CONFIRMED else 0.8,
+                encounter_relevance=0.3 if is_incidental else 0.8,
+                role_confidence=0.5,
+                admitting_score=1.0 if not is_incidental else -5.0,
+            )
+            cand = ClinicalDiagnosisCandidate(
+                raw_term=term,
+                normalized_diagnosis=term,
+                role=DiagnosisRole.SECONDARY if not is_incidental else DiagnosisRole.EXCLUDED,
+                certainty=certainty,
+                temporality=Temporality.CURRENT,
+                assertion_status=AssertionStatus.CONFIRMED,
+                evidence=[ev],
+                scores=scores,
+                is_authorized=not is_incidental and polarity != NegationStatus.NEGATED,
+                classification_reason=f"Operative finding in {sec.section_name}" if not is_incidental else f"Incidental operative finding in {sec.section_name}; excluded under UHDDS criteria",
+            )
+            candidates.append(cand)
+
+        return findings, candidates
+
+    @staticmethod
+    def _extract_structured_oncology_context(text: str) -> CancerConcept | None:
+        """Capture structured oncology context: histology, grade, receptor status, Ki-67, metastatic sites, prior treatment, and response."""
+        text_lower = text.lower()
+
+        # Check if document describes neoplasm / malignancy
+        has_neoplasm = any(
+            w in text_lower
+            for w in [
+                "carcinoma", "cancer", "neoplasm", "malignancy", "tumor", "tumour",
+                "adenocarcinoma", "lymphoma", "sarcoma", "melanoma", "dcis"
+            ]
+        )
+        if not has_neoplasm:
+            return None
+
+        # 1. Primary Site
+        primary_site = "breast" if "breast" in text_lower else "unknown"
+        if primary_site == "unknown":
+            for site in ["ovary", "ovarian", "colon", "lung", "prostate", "cervix", "uterus", "kidney"]:
+                if site in text_lower:
+                    primary_site = site
+                    break
+
+        # 2. Laterality of primary tumor
+        laterality = None
+        site_pat = primary_site if primary_site != "unknown" else r"(?:breast|ovary|lung|kidney)"
+        if re.search(rf"\bright\s+(?:\w+\s+)?{site_pat}\b|\b{site_pat}\b[^\n,.]*?\bright\b", text_lower):
+            laterality = "right"
+        elif re.search(rf"\bleft\s+(?:\w+\s+)?{site_pat}\b|\b{site_pat}\b[^\n,.]*?\bleft\b", text_lower):
+            laterality = "left"
+        elif re.search(rf"\bbilateral\s+(?:\w+\s+)?{site_pat}\b|\b{site_pat}\b[^\n,.]*?\bbilateral\b", text_lower):
+            laterality = "bilateral"
+        elif "right" in text_lower and "left" not in text_lower:
+            laterality = "right"
+        elif "left" in text_lower and "right" not in text_lower:
+            laterality = "left"
+        elif "bilateral" in text_lower:
+            laterality = "bilateral"
+
+        # 3. Histology
+        histology = None
+        for hist_pat in [
+            r"\binvasive\s+ductal\s+carcinoma\b",
+            r"\binfiltrating\s+ductal\s+carcinoma\b",
+            r"\binvasive\s+lobular\s+carcinoma\b",
+            r"\bductal\s+carcinoma\s+in\s+situ\b",
+            r"\bdcis\b",
+            r"\bhigh[- ]grade\s+serous\s+carcinoma\b",
+            r"\bserous\s+carcinoma\b",
+            r"\badenocarcinoma\b",
+            r"\bsquamous\s+cell\s+carcinoma\b",
+        ]:
+            m = re.search(hist_pat, text_lower)
+            if m:
+                histology = m.group(0).title()
+                break
+
+        # 4. Grade
+        grade = None
+        grade_m = re.search(r"\b(?:grade\s*([1-3]|i{1,3})|poorly\s+differentiated|moderately\s+differentiated|well\s+differentiated)\b", text_lower)
+        if grade_m:
+            grade = grade_m.group(0).capitalize()
+
+        # 5. Receptor Status (ER, PR, HER2)
+        receptor_status: dict[str, str] = {}
+        er_m = re.search(r"\ber\s*(?:[:=]|\s+is|\s+was)?\s*([><=]?\s*\d+%\s*(?:positive|\+)|positive|\+|negative|\-|equivocal|[><=]?\s*\d+%)", text, re.IGNORECASE)
+        if er_m:
+            v = er_m.group(1).lower().strip()
+            receptor_status["ER"] = "positive" if "+" in v or "pos" in v else "negative" if "-" in v or "neg" in v else v
+            receptor_status["er"] = receptor_status["ER"]
+
+        pr_m = re.search(r"\bpr\s*(?:[:=]|\s+is|\s+was)?\s*([><=]?\s*\d+%\s*(?:positive|\+)|positive|\+|negative|\-|equivocal|[><=]?\s*\d+%)", text, re.IGNORECASE)
+        if pr_m:
+            v = pr_m.group(1).lower().strip()
+            receptor_status["PR"] = "positive" if "+" in v or "pos" in v else "negative" if "-" in v or "neg" in v else v
+            receptor_status["pr"] = receptor_status["PR"]
+
+        her2_m = re.search(r"\bher2(?:\s*/\s*neu)?\s*(?:[:=]|\s+is|\s+was)?\s*(positive|\+|negative|\-|equivocal|[0-3]\+?)\b", text, re.IGNORECASE)
+        if her2_m:
+            v = her2_m.group(1).lower().strip()
+            receptor_status["HER2"] = v
+            receptor_status["her2"] = v
+
+        # 6. Ki-67 Proliferation Index
+        ki67 = None
+        ki67_m = re.search(
+            r"\bki-?67(?:\s+(?:proliferation\s+index|labeling\s+index|index))?\s*(?:[:=]|\s+is|\s+was)?\s*([><=]?\s*\d+%(?:\s*(?:high|low))?|high|low)",
+            text,
+            re.IGNORECASE,
+        )
+        if ki67_m:
+            ki67 = ki67_m.group(1).strip()
+
+        # 7. Metastatic Status & Sites
+        met_sites: list[str] = []
+        if re.search(r"\bno\s+(?:evidence\s+of\s+)?(?:distant\s+)?metastases\b|\bnon[- ]metastatic\b|\bm0\b", text_lower):
+            met_status = "NON_METASTATIC"
+        elif re.search(r"\bmetastat(?:ic|es)\b|\bm1\b", text_lower):
+            met_status = "METASTATIC"
+            for site in ["bone", "liver", "lung", "brain", "pleura", "peritoneum", "adrenal", "lymph node"]:
+                if site in text_lower:
+                    met_sites.append(site)
+        else:
+            met_status = "UNKNOWN"
+
+        # 8. Prior Treatments
+        prior_tx: list[str] = []
+        for tx_pat in [
+            r"\bneoadjuvant\s+chemotherapy\b",
+            r"\badjuvant\s+chemotherapy\b",
+            r"\bradiotherapy\b|\bradiation\b",
+            r"\btamoxifen\b",
+            r"\bletrozole\b",
+            r"\banastrozole\b",
+            r"\btrastuzumab\b|\bherceptin\b",
+        ]:
+            if re.search(tx_pat, text_lower):
+                prior_tx.append(re.search(tx_pat, text_lower).group(0))
+
+        # 9. Response to Treatment
+        resp = None
+        for resp_pat in [
+            r"\bpathologic(?:al)?\s+complete\s+response\b|\bpcr\b",
+            r"\bcomplete\s+(?:pathologic(?:al)?\s+|clinical\s+)?response\b",
+            r"\bpartial\s+(?:pathologic(?:al)?\s+|clinical\s+)?response\b",
+            r"\bstable\s+disease\b",
+            r"\bprogressive\s+disease\b",
+            r"\bresidual\s+(?:invasive\s+)?(?:disease|carcinoma)\b",
+            r"\bno\s+residual\s+invasive\s+disease\b",
+        ]:
+            m = re.search(resp_pat, text_lower)
+            if m:
+                resp = m.group(0).title()
+                break
+
+        return CancerConcept(
+            primary_site=primary_site,
+            laterality=laterality,
+            malignancy_type="carcinoma",
+            histology=histology,
+            grade=grade,
+            metastatic_status=met_status,
+            metastatic_sites=met_sites,
+            receptor_status=receptor_status,
+            ki67=ki67,
+            treatment_response=resp,
+            prior_treatments=prior_tx,
+            evidence=text[:200],
+        )
+
     def _split_compound_clinical_phrase(self, phrase: str) -> list[str]:
         """Split compound clinical phrases into independent clinical concepts.
 
@@ -1626,6 +1887,22 @@ class EvidenceFirstFactExtractor:
                         sec_cand.classification_reason = f"Symptom integral to the primary diagnosis '{top.normalized_diagnosis}'; excluded from independent billing under CMS Guideline I.B.4"
                         continue
 
+                    # Check 3: Intraoperative finding without dedicated surgical or therapeutic intervention
+                    if any(ev.section == "OPERATIVE_FINDINGS" for ev in sec_cand.evidence) or sec_cand.role == DiagnosisRole.EXCLUDED:
+                        full_content_lower = " ".join(s.content for s in sections).lower()
+                        has_intervention = any(
+                            w in full_content_lower
+                            for w in ["cystectomy", "extensive adhesiolysis", "surgical excision of cyst", "pathology confirmed malignancy"]
+                        )
+                        if not has_intervention:
+                            sec_cand.role = DiagnosisRole.EXCLUDED
+                            sec_cand.is_authorized = False
+                            sec_cand.classification_reason = (
+                                f"[OPERATIVE_FINDINGS] Incidental finding '{sec_cand.normalized_diagnosis}' without documented "
+                                "dedicated inpatient intervention or therapy; excluded from billable coding under UHDDS criteria."
+                            )
+                            continue
+
                     is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
                         sec_cand.normalized_diagnosis, sec_cand.primary_evidence_quote
                     )
@@ -1633,6 +1910,24 @@ class EvidenceFirstFactExtractor:
                         sec_cand.role = DiagnosisRole.SECONDARY
                         sec_cand.classification_reason = f"Active co-existing condition managed during admission: {sec_cand.primary_evidence_quote}"
                         secondary_diags.append(sec_cand)
+
+        # Extract structured oncology context across entire document narrative
+        full_doc_text = " ".join(s.content for s in sections)
+        oncology_context = self._extract_structured_oncology_context(full_doc_text)
+        if oncology_context and primary_diag:
+            primary_diag.clinical_attributes["oncology_context"] = oncology_context.model_dump()
+            if oncology_context.histology:
+                primary_diag.clinical_attributes["histology"] = oncology_context.histology
+            if oncology_context.grade:
+                primary_diag.clinical_attributes["grade"] = oncology_context.grade
+            if oncology_context.receptor_status:
+                primary_diag.clinical_attributes["receptor_status"] = oncology_context.receptor_status
+            if oncology_context.ki67:
+                primary_diag.clinical_attributes["ki67"] = oncology_context.ki67
+            if oncology_context.treatment_response:
+                primary_diag.clinical_attributes["treatment_response"] = oncology_context.treatment_response
+            if oncology_context.prior_treatments:
+                primary_diag.clinical_attributes["prior_treatments"] = oncology_context.prior_treatments
 
         return ClinicalDiagnosisState(
             document_id=document_id,
@@ -1643,5 +1938,8 @@ class EvidenceFirstFactExtractor:
             uncertain_conditions=uncertain_conditions,
             all_candidates=candidates,
             has_unique_primary=primary_diag is not None,
+            procedures=list(dict.fromkeys(self._extracted_procedures)),
+            operative_findings=self._operative_findings,
+            oncology_context=oncology_context,
             audit_notes=[f"Classified {len(candidates)} total entities: 1 Primary, {len(secondary_diags)} Secondary, {len(historical_conditions)} Historical, {len(ruled_out_conditions)} Ruled out."],
         )

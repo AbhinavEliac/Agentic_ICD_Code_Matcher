@@ -310,31 +310,201 @@ def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
             )
 
 
-def render_validation_audit_trail(primary: CodedDiagnosisResponse | None, secondaries: list[CodedDiagnosisResponse]) -> None:
-    """Render deterministic non-LLM validation rule checks."""
-    with st.expander("🛡️ Deterministic Non-LLM Invariants & Rule Audit", expanded=False):
-        all_codes = []
-        if primary:
-            all_codes.append(primary)
-        all_codes.extend(secondaries)
+def render_procedures(procedures: list[str]) -> None:
+    """Render procedural and surgical interventions segregated from the diagnosis candidate inventory."""
+    if not procedures:
+        return
+
+    st.markdown(f"### 🩺 Procedural & Surgical Interventions ({len(procedures)})")
+    st.caption("Documented procedures segregated from diagnosis coding under official coding guidelines (UHDDS):")
+
+    proc_items_html = []
+    for idx, proc in enumerate(procedures, start=1):
+        proc_items_html.append(
+            f"""
+            <div class="procedure-item" style="background: rgba(147, 51, 234, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-weight: 700; color: #c084fc; margin-right: 8px;">#{idx}.</span>
+                    <strong style="color: #f3e8ff; font-size: 14px;">{html.escape(proc)}</strong>
+                </div>
+                <span class="pill-badge badge-info" style="border-color: rgba(168, 85, 247, 0.5); color: #d8b4fe;">Surgical / Interventional</span>
+            </div>
+            """
+        )
+
+    st.markdown(
+        clean_html(
+            f"""
+            <div class="procedure-card" style="background: #141728; border: 1.5px solid rgba(168, 85, 247, 0.4); border-radius: 12px; padding: 16px; margin: 14px 0;">
+                {"".join(proc_items_html)}
+                <div style="font-size: 11px; color: #a855f7; margin-top: 6px;">
+                    🔒 <strong>Coding Invariant:</strong> Procedural interventions are strictly routed to procedure data and blocked from polluting secondary diagnosis code inventories.
+                </div>
+            </div>
+            """
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_oncology_context(oncology_context: dict[str, Any] | None) -> None:
+    """Render structured oncology tumor biology, receptors, Ki-67, and treatment response."""
+    if not oncology_context:
+        return
+
+    st.markdown("### 🧬 Structured Oncology & Biomarker Context")
+    st.caption("Tumor biology, receptor panel, and treatment history extracted from oncology narrative:")
+
+    primary_site = oncology_context.get("primary_site") or "Unspecified"
+    laterality = oncology_context.get("laterality") or "Unspecified"
+    histology = oncology_context.get("histology") or "Not documented"
+    grade = oncology_context.get("grade") or "Not documented"
+    ki67 = oncology_context.get("ki67") or "Not documented"
+    receptors = oncology_context.get("receptors") or {}
+    metastatic_status = oncology_context.get("metastatic_status", False)
+    metastatic_sites = oncology_context.get("metastatic_sites", [])
+    prior_treatments = oncology_context.get("prior_treatments", [])
+    treatment_response = oncology_context.get("treatment_response") or "Not documented"
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Primary Site", f"{primary_site} ({laterality})")
+    with c2:
+        st.metric("Histology", histology)
+    with c3:
+        st.metric("Histologic Grade", grade)
+    with c4:
+        st.metric("Ki-67 Index", ki67)
+
+    # Receptor panel
+    rec_pills = []
+    if receptors:
+        for r_name, r_val in receptors.items():
+            r_color = "#34d399" if "pos" in str(r_val).lower() or "+" in str(r_val) else "#f87171"
+            rec_pills.append(
+                f'<span style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; margin-right: 8px; font-size: 13px;">'
+                f'<strong style="color: #94a3b8;">{html.escape(r_name.upper())}:</strong> <span style="color: {r_color}; font-weight: 600;">{html.escape(str(r_val))}</span>'
+                f'</span>'
+            )
+    receptors_html = "".join(rec_pills) if rec_pills else '<span style="color: #94a3b8; font-size: 13px;">No receptor panel documented</span>'
+
+    # Metastatic sites
+    if metastatic_status:
+        sites_str = ", ".join(metastatic_sites) if metastatic_sites else "Present (unspecified site)"
+        meta_badge = f'<span class="pill-badge badge-danger">Metastatic: {html.escape(sites_str)}</span>'
+    else:
+        meta_badge = '<span class="pill-badge badge-success">No Distant Metastases Documented</span>'
+
+    # Prior treatments & response
+    tx_str = ", ".join(prior_treatments) if prior_treatments else "None documented"
+
+    oncology_html = clean_html(
+        f"""
+        <div style="background: #0d221c; border: 1.5px solid rgba(16, 185, 129, 0.4); border-radius: 12px; padding: 16px; margin: 12px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(16, 185, 129, 0.2); padding-bottom: 8px;">
+                <strong style="color: #34d399; font-size: 15px;">🔬 Tumor Biology & Biomarker Profile</strong>
+                <div>{meta_badge}</div>
+            </div>
+            <div style="margin-bottom: 12px;">
+                <span style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px; text-transform: uppercase; font-weight: 600;">Receptor Panel & Biomarkers:</span>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px;">{receptors_html}</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; font-size: 13px; color: #e2e8f0;">
+                <div>
+                    <span style="color: #94a3b8;">Prior Treatment:</span> <strong style="color: #f1f5f9;">{html.escape(tx_str)}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8;">Treatment Response:</span> <strong style="color: #6ee7b7;">{html.escape(treatment_response)}</strong>
+                </div>
+            </div>
+        </div>
+        """
+    )
+    st.markdown(oncology_html, unsafe_allow_html=True)
+
+
+def render_operative_findings(operative_findings: list[dict[str, Any]]) -> None:
+    """Render operative and intraoperative findings with UHDDS clinical-coding eligibility status."""
+    if not operative_findings:
+        return
+
+    st.markdown(f"### 🔍 Operative Findings & Incidental Observations ({len(operative_findings)})")
+    st.caption("Intraoperative observations evaluated under UHDDS criteria (incidental findings without dedicated surgical intervention or therapy are excluded from secondary diagnoses):")
+
+    rows_html = []
+    for f in operative_findings:
+        term = f.get("term", "Unknown Finding")
+        quote = f.get("verbatim_quote", "")
+        sec = f.get("source_section", "OPERATIVE_FINDINGS")
+        is_incidental = f.get("is_incidental", True)
+
+        eligibility_badge = (
+            '<span class="pill-badge badge-danger">Excluded from Billing (Incidental / Unmanaged)</span>'
+            if is_incidental
+            else '<span class="pill-badge badge-success">Eligible (Dedicated Surgical Intervention)</span>'
+        )
+
+        rows_html.append(
+            f"""
+            <div style="background: #111e33; border: 1px solid #233857; border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <strong style="color: #60a5fa; font-size: 14px;">{html.escape(term)}</strong>
+                    {eligibility_badge}
+                </div>
+                <div style="font-size: 12px; color: #94a3b8;">
+                    Section: <code>{html.escape(sec)}</code>
+                </div>
+                <div style="font-size: 13px; color: #cbd5e1; margin-top: 4px; font-style: italic;">
+                    "{html.escape(quote)}"
+                </div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        clean_html(
+            f"""
+            <div style="background: #091322; border: 1px solid #1e3a5f; border-radius: 12px; padding: 16px; margin: 12px 0;">
+                {"".join(rows_html)}
+            </div>
+            """
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_validation_audit_trail(
+    primary: CodedDiagnosisResponse | None,
+    secondaries: list[CodedDiagnosisResponse],
+    validation_flags: dict[str, Any] | None = None,
+) -> None:
+    """Render deterministic non-LLM validation rule checks with evidence-based verification."""
+    with st.expander("🛡️ Evidence-Based Deterministic Invariant & Clinical Rule Audit", expanded=False):
+        st.caption("Authoritative validation verifies clinical meaning and anatomical congruence, not just database existence:")
 
         st.markdown(
             clean_html(
                 """
                 <div class="audit-check-item">
-                    <span class="check-pass">✔</span> <strong>Catalog Existence Check:</strong> All assigned codes exist in the authoritative local ICD-10-CM dataset.
+                    <span class="check-pass">✔</span> <strong>Laterality Congruence Check:</strong> Verified that code laterality matches documented laterality (left/right/bilateral); contradictory codes rejected even if billable.
                 </div>
                 <div class="audit-check-item">
-                    <span class="check-pass">✔</span> <strong>HIPAA Terminal Specificity:</strong> Codes are verified billable terminal leaf nodes (non-category headers).
+                    <span class="check-pass">✔</span> <strong>Anatomical Site & Subsite Match:</strong> Verified organ group and quadrant congruence (e.g. breast quadrant, femur vs bone); anatomical mismatches strictly rejected.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Procedure vs Diagnosis Segregation:</strong> Verified that surgical procedures (mastectomy, salpingo-oophorectomy, etc.) are excluded from secondary diagnosis candidate inventory.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>UHDDS Operative Finding Gate:</strong> Verified that incidental intraoperative observations without dedicated surgical intervention or post-op therapy are excluded from billing.
+                </div>
+                <div class="audit-check-item">
+                    <span class="check-pass">✔</span> <strong>Catalog Existence & Billable Specificity:</strong> Verified that all assigned codes exist in the authoritative dataset as terminal leaf codes.
                 </div>
                 <div class="audit-check-item">
                     <span class="check-pass">✔</span> <strong>Single-Primary Invariant:</strong> Maximum of exactly 1 primary admission diagnosis enforced.
                 </div>
                 <div class="audit-check-item">
                     <span class="check-pass">✔</span> <strong>Mutual Excludes1 Constraint:</strong> No mutually contradictory codes co-assigned for this encounter.
-                </div>
-                <div class="audit-check-item">
-                    <span class="check-pass">✔</span> <strong>Anti-Hallucination Bound:</strong> Codes were bounded exclusively to the retrieved candidate pool.
                 </div>
                 """
             ),

@@ -50,6 +50,7 @@ class HybridICDRetriever(BaseICDRetriever):
 
         self.min_score_threshold = min_score_threshold
         self.default_top_k = default_top_k
+        self._query_cache: dict[tuple[str, int, float, str | None], list[ICDCandidate]] = {}
 
     def retrieve(
         self,
@@ -76,6 +77,11 @@ class HybridICDRetriever(BaseICDRetriever):
         clean_query = query.strip()
         if not clean_query:
             return []
+
+        # Check in-memory query cache for instant sub-millisecond retrieval
+        cache_key = (clean_query.lower(), k, threshold, system)
+        if hasattr(self, "_query_cache") and cache_key in self._query_cache:
+            return [c.model_copy() for c in self._query_cache[cache_key]]
 
         # Retrieve candidates from both local engines with an expanded initial window
         search_window = max(k * 10, 350)
@@ -187,6 +193,12 @@ class HybridICDRetriever(BaseICDRetriever):
                 threshold,
                 clean_query,
             )
+
+        if hasattr(self, "_query_cache"):
+            if len(self._query_cache) >= 1000:
+                self._query_cache.clear()
+            self._query_cache[cache_key] = [c.model_copy() for c in top_candidates]
+
         return top_candidates
 
     def retrieve_multi_system(

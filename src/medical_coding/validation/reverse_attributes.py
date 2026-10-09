@@ -189,9 +189,10 @@ class ReverseAttributeChecker:
         )
         req_right = bool(
             re.search(
-                r"\b(?:right\s+side|of\s+right|in\s+right|right\s+(?:kidney|ureter|leg|arm|lung|flank|ear|eye|ovary|testis|foot|hand|shoulder|hip|knee))\b",
+                r"\b(?:right\s+side|of\s+right|in\s+right|right\s+(?:female\s+)?breast|right\s+(?:kidney|ureter|leg|arm|lung|flank|ear|eye|ovary|testis|foot|hand|shoulder|hip|knee|fallopian|tube|extremity|quadrant|lobe|adrenal|femur|humerus))\b",
                 desc_clean,
             )
+            or re.search(r"\b(?:quadrant\s+of\s+right|of\s+right\s+female\s+breast)\b", desc_clean)
             or desc_clean.endswith(", right")
             or desc_clean.endswith(" right side")
             or ", right " in desc_clean
@@ -199,9 +200,10 @@ class ReverseAttributeChecker:
         )
         req_left = bool(
             re.search(
-                r"\b(?:left\s+side|of\s+left|in\s+left|left\s+(?:kidney|ureter|leg|arm|lung|flank|ear|eye|ovary|testis|foot|hand|shoulder|hip|knee))\b",
+                r"\b(?:left\s+side|of\s+left|in\s+left|left\s+(?:female\s+)?breast|left\s+(?:kidney|ureter|leg|arm|lung|flank|ear|eye|ovary|testis|foot|hand|shoulder|hip|knee|fallopian|tube|extremity|quadrant|lobe|adrenal|femur|humerus))\b",
                 desc_clean,
             )
+            or re.search(r"\b(?:quadrant\s+of\s+left|of\s+left\s+female\s+breast)\b", desc_clean)
             or desc_clean.endswith(", left")
             or desc_clean.endswith(" left side")
             or ", left " in desc_clean
@@ -218,13 +220,17 @@ class ReverseAttributeChecker:
         if req_bilateral:
             if doc_bilateral:
                 return True, None
-            return False, "bilateral laterality"
+            if doc_right or doc_left:
+                return False, "conflicting unilateral documentation (code requires bilateral laterality)"
+            return False, "unsupported bilateral laterality"
 
         if req_right:
             if doc_right and not doc_left:
                 return True, None
             if not doc_right:
-                return False, "right laterality"
+                if doc_left:
+                    return False, "conflicting left laterality (code requires right)"
+                return False, "unsupported right laterality"
             if doc_left:
                 return False, "conflicting left laterality"
 
@@ -232,9 +238,81 @@ class ReverseAttributeChecker:
             if doc_left and not doc_right:
                 return True, None
             if not doc_left:
-                return False, "left laterality"
+                if doc_right:
+                    return False, "conflicting right laterality (code requires left)"
+                return False, "unsupported left laterality"
             if doc_right:
                 return False, "conflicting right laterality"
+
+        return True, None
+
+    @classmethod
+    def validate_anatomical_site(
+        cls,
+        code_description: str,
+        evidence_text: str,
+        diagnosis_term: str = "",
+    ) -> tuple[bool, str | None]:
+        """Verify that anatomical organ and quadrant in code description matches documented diagnosis."""
+        desc_lower = code_description.lower()
+        combined = f"{diagnosis_term} {evidence_text}".lower()
+
+        organ_patterns: dict[str, list[str]] = {
+            "breast": [r"\bbreasts?\b", r"\bmammary\b", r"\bnipple\b", r"\bareola\b"],
+            "ovary": [r"\bovary\b", r"\bovaries\b", r"\bovarian\b", r"\badnexa\b", r"\badnexal\b", r"\boophor\w*"],
+            "fallopian_tube": [r"\bfallopian\b", r"\bsalpinx\b", r"\bsalpingo\w*"],
+            "uterus": [r"\buterus\b", r"\buterine\b", r"\bendometr\w*", r"\bmyometr\w*"],
+            "cervix": [r"\bcervix\b", r"\bcervical\b"],
+            "prostate": [r"\bprostate\b", r"\bprostatic\b"],
+            "testis": [r"\btestis\b", r"\btesticle\b", r"\btesticular\b", r"\bscrotum\b"],
+            "lung": [r"\blung\b", r"\blungs\b", r"\bbronch\w*", r"\bpleura\w*"],
+            "colon": [r"\bcolon\b", r"\bcolorectal\b", r"\brectum\b", r"\brectal\b", r"\bsigmoid\b", r"\bcecum\b", r"\bappendix\b", r"\bappendiceal\b"],
+            "kidney": [r"\bkidney\b", r"\brenal\b", r"\bnephr\w*"],
+            "bladder": [r"\bbladder\b", r"\burinary\s+bladder\b"],
+            "skin": [r"\bskin\b", r"\bcutaneous\b", r"\bmelanoma\b", r"\bepiderm\w*"],
+            "thyroid": [r"\bthyroid\b"],
+            "stomach": [r"\bstomach\b", r"\bgastric\b"],
+            "liver": [r"\bliver\b", r"\bhepatic\b"],
+            "pancreas": [r"\bpancreas\b", r"\bpancreatic\b"],
+            "bone": [r"\bbone\b", r"\bfemur\b", r"\btibia\b", r"\bhumerus\b", r"\bfibula\b", r"\bradius\b", r"\bulna\b"],
+        }
+
+        # Determine documented organs in diagnosis term + evidence
+        doc_organs = {
+            organ for organ, pats in organ_patterns.items()
+            if any(re.search(pat, combined) for pat in pats)
+        }
+
+        # Determine organs specified in code description
+        code_organs = {
+            organ for organ, pats in organ_patterns.items()
+            if any(re.search(pat, desc_lower) for pat in pats)
+        }
+
+        # If documented organ is specific and code organ is entirely disjoint
+        if doc_organs and code_organs and not doc_organs.intersection(code_organs):
+            gyn_organs = {"ovary", "fallopian_tube", "uterus", "cervix"}
+            if not (doc_organs.issubset(gyn_organs) and code_organs.issubset(gyn_organs)):
+                return (
+                    False,
+                    f"anatomical site mismatch: code is for {', '.join(sorted(code_organs))} "
+                    f"but documented condition is {', '.join(sorted(doc_organs))}",
+                )
+
+        # Breast quadrants check: If code specifies a specific quadrant, evidence must support it
+        quadrant_specs = {
+            "upper-outer quadrant": [r"upper[- ]outer\s+quadrant", r"\buoq\b", r"upper\s+and\s+outer"],
+            "upper-inner quadrant": [r"upper[- ]inner\s+quadrant", r"\buiq\b", r"upper\s+and\s+inner"],
+            "lower-outer quadrant": [r"lower[- ]outer\s+quadrant", r"\bloq\b", r"lower\s+and\s+outer"],
+            "lower-inner quadrant": [r"lower[- ]inner\s+quadrant", r"\bliq\b", r"lower\s+and\s+inner"],
+            "nipple and areola": [r"\bnipple\b", r"\bareola\b"],
+            "axillary tail": [r"axillary\s+tail", r"tail\s+of\s+spence"],
+        }
+        for q_name, q_pats in quadrant_specs.items():
+            if any(re.search(pat, desc_lower) for pat in q_pats):
+                has_q = any(re.search(pat, combined) for pat in q_pats)
+                if not has_q:
+                    return False, f"unsupported quadrant specificity: code specifies '{q_name}'"
 
         return True, None
 
@@ -278,6 +356,15 @@ class ReverseAttributeChecker:
         )
         if not lat_valid and lat_error:
             unsupported.append(lat_error)
+
+        # Anatomical Site & Quadrant validation
+        anat_valid, anat_error = cls.validate_anatomical_site(
+            code_description=code_description,
+            evidence_text=evidence_text,
+            diagnosis_term=diagnosis_term,
+        )
+        if not anat_valid and anat_error:
+            unsupported.append(anat_error)
 
         # Diabetes Type 1 vs Type 2 distinction
         desc_lower = code_description.lower()

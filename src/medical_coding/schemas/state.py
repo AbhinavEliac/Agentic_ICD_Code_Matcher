@@ -61,6 +61,8 @@ class PipelineGraphState(TypedDict, total=False):
     # Clinical Extraction & Context Analysis (Evidence-First Architecture)
     clinical_diagnosis_state: ClinicalDiagnosisState | None
     diagnosis_candidates: list[ClinicalDiagnosisCandidate]
+    extracted_procedures: list[str]
+    operative_findings: list[dict[str, Any]]
     icd_mapping_states: list[ICDMappingState]
 
     # Legacy attributes preserved for backwards compatibility

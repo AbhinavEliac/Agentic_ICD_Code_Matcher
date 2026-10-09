@@ -418,6 +418,8 @@ def extract_diagnoses_node(state: PipelineGraphState) -> dict[str, Any]:
             "extracted_diagnoses": legacy_extracted,
             "clinical_diagnosis_state": clinical_diag_state,
             "diagnosis_candidates": clinical_diag_state.all_candidates if clinical_diag_state else [],
+            "extracted_procedures": getattr(clinical_diag_state, "procedures", []) if clinical_diag_state else [],
+            "operative_findings": getattr(clinical_diag_state, "operative_findings", []) if clinical_diag_state else [],
             "current_stage": PipelineStage.EXTRACTION,
         }
     except Exception as e:
@@ -1209,6 +1211,9 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         primary_diagnosis=primary_response,
         secondary_diagnoses=secondary_responses,
         abstentions=abstentions,
+        procedures=state.get("extracted_procedures", []) or (getattr(diag_state, "procedures", []) if diag_state else []),
+        operative_findings=state.get("operative_findings", []) or (getattr(diag_state, "operative_findings", []) if diag_state else []),
+        oncology_context=diag_state.oncology_context.model_dump() if diag_state and getattr(diag_state, "oncology_context", None) else None,
         excluded_candidates=excluded_candidates,
         validation={
             "evidence_grounded": True,
@@ -1225,6 +1230,9 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             "audit_trail": audit_trail,
             "validated_code_count": len(validated),
             "abstention_count": len(abstentions),
+            "extracted_procedures": state.get("extracted_procedures", []) or (getattr(diag_state, "procedures", []) if diag_state else []),
+            "operative_findings": state.get("operative_findings", []) or (getattr(diag_state, "operative_findings", []) if diag_state else []),
+            "oncology_context": diag_state.oncology_context.model_dump() if diag_state and getattr(diag_state, "oncology_context", None) else None,
         },
     )
 

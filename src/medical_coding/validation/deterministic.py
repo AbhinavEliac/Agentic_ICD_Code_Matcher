@@ -104,7 +104,7 @@ class DeterministicValidator:
                 stage=PipelineStage.VALIDATION,
             )
 
-        # 3. Semantic Code Attribute Validation (CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
+        # 3. Clinical Meaning & Anatomical Consistency Checks
         ev_text = (
             getattr(condition.context.evidence, "quote", "")
             if hasattr(condition, "context") and hasattr(condition.context, "evidence") and condition.context.evidence
@@ -113,59 +113,103 @@ class DeterministicValidator:
         if selection.supporting_evidence:
             ev_text = f"{ev_text} {' '.join(selection.supporting_evidence)}"
 
-        is_attr_valid, unsupp_attrs = ReverseAttributeChecker.validate_code_attributes(
-            code_description=candidate.description,
-            evidence_text=ev_text,
-            diagnosis_term=condition.raw_term,
-        )
-        if not is_attr_valid:
+        def _evaluate_candidate_clinical_meaning(cand: ICDCandidate) -> tuple[bool, str | None, bool, str | None, bool, list[str]]:
+            anat_ok, anat_err = ReverseAttributeChecker.validate_anatomical_site(
+                code_description=cand.description,
+                evidence_text=ev_text,
+                diagnosis_term=condition.raw_term,
+            )
+            lat_ok, lat_err = ReverseAttributeChecker.validate_laterality(
+                code_description=cand.description,
+                evidence_text=ev_text,
+                diagnosis_term=condition.raw_term,
+            )
+            attr_ok, attr_errs = ReverseAttributeChecker.validate_code_attributes(
+                code_description=cand.description,
+                evidence_text=ev_text,
+                diagnosis_term=condition.raw_term,
+            )
+            return anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs
+
+        anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs = _evaluate_candidate_clinical_meaning(candidate)
+        is_clinically_valid = anat_ok and lat_ok and attr_ok
+
+        if not is_clinically_valid:
             better_candidate = None
             if selection.candidate_pool:
                 for alt_cand in selection.candidate_pool:
                     if not self.catalog.is_valid_code(alt_cand.code) or not self.catalog.is_billable_code(alt_cand.code):
                         continue
-                    alt_valid, _ = ReverseAttributeChecker.validate_code_attributes(
-                        code_description=alt_cand.description,
-                        evidence_text=ev_text,
-                        diagnosis_term=condition.raw_term,
-                    )
-                    if alt_valid:
+                    a_ok, _, l_ok, _, at_ok, _ = _evaluate_candidate_clinical_meaning(alt_cand)
+                    if a_ok and l_ok and at_ok:
                         better_candidate = alt_cand
                         break
 
             if better_candidate:
                 candidate = better_candidate
                 code = better_candidate.code
+                anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs = _evaluate_candidate_clinical_meaning(candidate)
+            else:
+                failure_reasons = []
+                if not anat_ok and anat_err:
+                    failure_reasons.append(anat_err)
+                if not lat_ok and lat_err:
+                    failure_reasons.append(lat_err)
+                if not attr_ok and attr_errs:
+                    failure_reasons.extend(attr_errs)
+                fail_summary = "; ".join(failure_reasons) or "clinical meaning mismatch"
+
                 checks.append(
                     ValidationCheck(
-                        rule_name="SemanticAttributeMatch",
-                        passed=True,
-                        details=f"Realigned code to supported candidate '{code}' ({candidate.description}) without unsupported {', '.join(unsupp_attrs)}.",
+                        rule_name="AnatomicalSiteMatch",
+                        passed=anat_ok,
+                        details=f"Anatomical site confirmed in documentation: '{ev_text[:80]}'" if anat_ok else f"Failed: {anat_err}",
                     )
                 )
-            else:
+                checks.append(
+                    ValidationCheck(
+                        rule_name="LateralityMatch",
+                        passed=lat_ok,
+                        details="Laterality supported by documentation." if lat_ok else f"Failed: {lat_err}",
+                    )
+                )
                 checks.append(
                     ValidationCheck(
                         rule_name="SemanticAttributeMatch",
-                        passed=False,
-                        details=f"Code '{code}' specifies unsupported attributes: {', '.join(unsupp_attrs)}.",
+                        passed=attr_ok,
+                        details="All clinical qualifiers supported." if attr_ok else f"Failed: unsupported {', '.join(attr_errs)}",
                     )
                 )
                 return None, AbstentionRecord(
                     diagnosis_id=condition.diagnosis_id,
                     raw_term=condition.raw_term,
                     reason=AbstentionReason.UNSUPPORTED_SPECIFICITY,
-                    detail=f"Code '{code}' requires unsupported clinical attributes ({', '.join(unsupp_attrs)}) not evidenced in documentation.",
+                    detail=f"Code '{code}' ({candidate.description}) failed clinical semantic validation: {fail_summary}.",
                     stage=PipelineStage.VALIDATION,
                 )
-        else:
-            checks.append(
-                ValidationCheck(
-                    rule_name="SemanticAttributeMatch",
-                    passed=True,
-                    details=f"All clinical qualifiers in '{code}' ({candidate.description}) are supported by documentation.",
-                )
+
+        # Record evidence-based validation checks for passed code
+        checks.append(
+            ValidationCheck(
+                rule_name="AnatomicalSiteMatch",
+                passed=True,
+                details=f"Anatomical site in '{code}' ({candidate.description}) verified against documented evidence: '{ev_text[:80]}...'",
             )
+        )
+        checks.append(
+            ValidationCheck(
+                rule_name="LateralityMatch",
+                passed=True,
+                details=f"Laterality in '{code}' matches documented evidence.",
+            )
+        )
+        checks.append(
+            ValidationCheck(
+                rule_name="SemanticAttributeMatch",
+                passed=True,
+                details=f"All clinical qualifiers and attributes in '{code}' ({candidate.description}) are supported by documentation.",
+            )
+        )
 
         cand_sys = getattr(candidate, "coding_system", None) or "ICD-10-CM"
         icd10cm_val = selection.selected_icd10cm or (code if cand_sys == "ICD-10-CM" else None)

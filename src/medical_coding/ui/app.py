@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -25,8 +26,11 @@ from medical_coding.ui.components import (
     render_failure_alert,
     render_header,
     render_kpi_metrics,
+    render_oncology_context,
+    render_operative_findings,
     render_pdf_page_inspector,
     render_primary_diagnosis,
+    render_procedures,
     render_process_oversight_timeline,
     render_secondary_diagnoses,
     render_validation_audit_trail,
@@ -189,14 +193,26 @@ def render_coding_session_results(
     # Primary Diagnosis
     render_primary_diagnosis(coding_result.primary_diagnosis)
 
+    # Structured Oncology & Biomarker Context (if present)
+    if coding_result.oncology_context:
+        render_oncology_context(coding_result.oncology_context)
+
+    # Procedural & Surgical Interventions (segregated from secondary diagnoses)
+    if coding_result.procedures:
+        render_procedures(coding_result.procedures)
+
     # Secondary Diagnoses
     render_secondary_diagnoses(coding_result.secondary_diagnoses)
+
+    # Operative Findings & Incidental Observations (evaluated under UHDDS gate)
+    if coding_result.operative_findings:
+        render_operative_findings(coding_result.operative_findings)
 
     # Explicit Abstentions & Rule-Outs
     render_abstentions(coding_result.abstentions)
 
     # Deterministic Rule Audit Trail
-    render_validation_audit_trail(coding_result.primary_diagnosis, coding_result.secondary_diagnoses)
+    render_validation_audit_trail(coding_result.primary_diagnosis, coding_result.secondary_diagnoses, coding_result.validation)
 
     # Structured JSON Response Payload
     with st.expander("🔍 View Structured JSON Response Payload", expanded=False):
