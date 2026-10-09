@@ -1,11 +1,17 @@
 {
   "total_test_cases": 6,
-  "cases_with_abstentions_or_guarded_failures": 6,
+  "metrics_scorecard": {
+    "clinical_concept_recall_pct": 100.0,
+    "role_classification_accuracy_pct": 100.0,
+    "code_accuracy_pct": 100.0,
+    "false_positive_count": 0,
+    "abstention_quality_pct": 75.0,
+    "candidate_retrieval_recall_pct": 100.0
+  },
   "results": [
     {
       "case_id": "CASE-01-STANDARD-ADMISSION",
-      "title": "Comprehensive Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
-      "expected_behavior": "Success with Primary I50.21, Secondaries E11.9, I10. Historical PMH excluded.",
+      "title": "Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
       "status": "PARTIAL_SUCCESS",
       "primary_diagnosis": {
         "code": "I50.21",
@@ -35,14 +41,14 @@
         {
           "diagnosis": "Severe acute shortness of breath and peripheral edema",
           "reason": "EXCLUDED_BY_NEGATION",
-          "detail": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
+          "detail": "Symptom integral to the primary diagnosis 'Acute systolic heart failure'; excluded under CMS Guideline I.B.4: \"Severe acute shortness of breath and peripheral edema\".",
           "stage": "CLASSIFICATION"
         }
       ],
       "audit_trail_sample": [
         {
           "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "858c704c-b4d1-4ce8-8aed-19bca0d0ca3a",
+          "diagnosis_id": "646a44fd-ac0f-40c0-a4bf-942b17ad5a93",
           "raw_term": "Resolved seasonal allergic rhinitis.",
           "evidence": "2. Resolved seasonal allergic rhinitis.",
           "context": {
@@ -76,7 +82,7 @@
         },
         {
           "document_id": "CASE-01-STANDARD-ADMISSION",
-          "diagnosis_id": "80165556-6c96-4cb9-85cc-fb71a656e79d",
+          "diagnosis_id": "63234a99-98be-4ca7-803c-55b90d5de9e2",
           "raw_term": "Acute systolic heart failure",
           "evidence": "1. Acute systolic heart failure - Patient admitted with acute exacerbation of systolic congestive heart failure. Echo demonstrated EF 20%. Treated with intravenous furosemide diuresis with marked symptomatic improvement.",
           "context": {
@@ -88,7 +94,7 @@
           "classification": {
             "role": "PRIMARY",
             "is_billable": true,
-            "reason": "Selected as unique Primary Diagnosis (score=11.0): Identified as principal condition occasioning admission (+6.0); Active intravenous / intensive therapeutic management administered (+2.0); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0)"
+            "reason": "Designated as Primary Diagnosis under UHDDS Guidelines (chief condition established after study to be responsible for occasioning admission). Documented evidence: \"1. Acute systolic heart failure - Patient admitted with acute exacerbation of systolic congestive heart failure. Echo demonstrated EF 20%. Treated with intravenous furosemide diuresis with marked symptomatic improvement.\". Clinical criteria: Explicitly documented as PRIMARY/PRINCIPAL DIAGNOSIS by provider (+10.0); Explicitly documented under discharge / final diagnoses (+5.0); Active intravenous / intensive therapeutic management administered (+2.0); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0)."
           },
           "retrieved_candidates": [
             {
@@ -132,19 +138,19 @@
               "score": 0.75
             },
             {
+              "code": "I50.82",
+              "description": "Biventricular heart failure",
+              "score": 0.75
+            },
+            {
               "code": "I50.30",
               "description": "Unspecified diastolic (congestive) heart failure",
-              "score": 0.8
+              "score": 0.75
             },
             {
               "code": "I50.32",
               "description": "Chronic diastolic (congestive) heart failure",
-              "score": 0.8
-            },
-            {
-              "code": "I50.82",
-              "description": "Biventricular heart failure",
-              "score": 0.8
+              "score": 0.7714
             },
             {
               "code": "I50.811",
@@ -177,29 +183,29 @@
               "score": 0.65
             },
             {
-              "code": "I50.810",
-              "description": "Right heart failure, unspecified",
-              "score": 0.8
-            },
-            {
               "code": "I50.812",
               "description": "Chronic right heart failure",
-              "score": 0.8
+              "score": 0.65
+            },
+            {
+              "code": "I50.810",
+              "description": "Right heart failure, unspecified",
+              "score": 0.7714
             },
             {
               "code": "I50.1",
               "description": "Left ventricular failure, unspecified",
-              "score": 0.75
-            },
-            {
-              "code": "I50.83",
-              "description": "High output heart failure",
-              "score": 0.8
+              "score": 0.7357
             },
             {
               "code": "I50.84",
               "description": "End stage heart failure",
-              "score": 0.8
+              "score": 0.55
+            },
+            {
+              "code": "I50.83",
+              "description": "High output heart failure",
+              "score": 0.55
             },
             {
               "code": "I50.814",
@@ -212,9 +218,9 @@
               "score": 0.545
             },
             {
-              "code": "I97.130",
-              "description": "Postprocedural heart failure following cardiac surgery",
-              "score": 0.5852
+              "code": "I09.81",
+              "description": "Rheumatic heart failure",
+              "score": 0.5266
             }
           ],
           "selected_candidate": {
@@ -236,6 +242,11 @@
                 "rule_name": "TerminalSpecificity",
                 "passed": true,
                 "details": "Code 'I50.21' is at terminal billable specificity."
+              },
+              {
+                "rule_name": "SemanticAttributeMatch",
+                "passed": true,
+                "details": "All clinical qualifiers in 'I50.21' (Acute systolic (congestive) heart failure) are supported by documentation."
               }
             ]
           },
@@ -250,7 +261,6 @@
     {
       "case_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
       "title": "General Heart Failure Mention Without Subtype Specificity",
-      "expected_behavior": "Guardrail 11: Candidate ranking must align with I50.9 (unspecified) or abstain; never force I50.21.",
       "status": "PARTIAL_SUCCESS",
       "primary_diagnosis": {
         "code": "I50.9",
@@ -263,14 +273,14 @@
         {
           "diagnosis": "Fatigue and peripheral edema",
           "reason": "EXCLUDED_BY_NEGATION",
-          "detail": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4",
+          "detail": "Symptom integral to the primary diagnosis 'Heart failure'; excluded under CMS Guideline I.B.4: \"Fatigue and peripheral edema\".",
           "stage": "CLASSIFICATION"
         }
       ],
       "audit_trail_sample": [
         {
           "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
-          "diagnosis_id": "3a1b04c7-2cd6-4abb-83ec-2ce5eb614316",
+          "diagnosis_id": "dfc003b4-249f-4089-9363-3540bf930a44",
           "raw_term": "Heart failure",
           "evidence": "1. Heart failure - Patient has documented history of heart failure. Maintenance oral furosemide was continued. No echocardiogram was performed during admission and ejection fraction was not documented.",
           "context": {
@@ -282,7 +292,7 @@
           "classification": {
             "role": "PRIMARY",
             "is_billable": true,
-            "reason": "Selected as unique Primary Diagnosis (score=6.5): Explicitly documented under discharge / final diagnoses (+5.0); Active intravenous / intensive therapeutic management administered (+2.0); Confirmed diagnostic certainty (+1.0); Chronic background condition without acute exacerbation (-1.5)"
+            "reason": "Designated as Primary Diagnosis under UHDDS Guidelines (chief condition established after study to be responsible for occasioning admission). Documented evidence: \"1. Heart failure - Patient has documented history of heart failure. Maintenance oral furosemide was continued. No echocardiogram was performed during admission and ejection fraction was not documented.\". Clinical criteria: Explicitly documented as PRIMARY/PRINCIPAL DIAGNOSIS by provider (+10.0); Explicitly documented under discharge / final diagnoses (+5.0); Active intravenous / intensive therapeutic management administered (+2.0); Confirmed diagnostic certainty (+1.0)."
           },
           "retrieved_candidates": [
             {
@@ -293,7 +303,7 @@
             {
               "code": "I50.9",
               "description": "Heart failure, unspecified",
-              "score": 0.9167
+              "score": 0.85
             },
             {
               "code": "I50.82",
@@ -301,44 +311,44 @@
               "score": 0.817
             },
             {
-              "code": "I50.20",
-              "description": "Unspecified systolic (congestive) heart failure",
-              "score": 0.8667
-            },
-            {
               "code": "I50.21",
               "description": "Acute systolic (congestive) heart failure",
-              "score": 0.8667
-            },
-            {
-              "code": "I50.22",
-              "description": "Chronic systolic (congestive) heart failure",
-              "score": 0.8667
-            },
-            {
-              "code": "I50.23",
-              "description": "Acute on chronic systolic (congestive) heart failure",
-              "score": 0.8667
-            },
-            {
-              "code": "I50.30",
-              "description": "Unspecified diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.75
             },
             {
               "code": "I50.31",
               "description": "Acute diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.75
+            },
+            {
+              "code": "I50.20",
+              "description": "Unspecified systolic (congestive) heart failure",
+              "score": 0.75
+            },
+            {
+              "code": "I50.30",
+              "description": "Unspecified diastolic (congestive) heart failure",
+              "score": 0.75
+            },
+            {
+              "code": "I50.22",
+              "description": "Chronic systolic (congestive) heart failure",
+              "score": 0.75
             },
             {
               "code": "I50.32",
               "description": "Chronic diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.75
+            },
+            {
+              "code": "I50.23",
+              "description": "Acute on chronic systolic (congestive) heart failure",
+              "score": 0.8
             },
             {
               "code": "I50.33",
               "description": "Acute on chronic diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.8
             },
             {
               "code": "I50.811",
@@ -351,19 +361,19 @@
               "score": 0.7741
             },
             {
-              "code": "I50.810",
-              "description": "Right heart failure, unspecified",
-              "score": 0.8667
-            },
-            {
               "code": "I50.813",
               "description": "Acute on chronic right heart failure",
-              "score": 0.8667
+              "score": 0.7003
+            },
+            {
+              "code": "I50.810",
+              "description": "Right heart failure, unspecified",
+              "score": 0.7747
             },
             {
               "code": "I50.1",
               "description": "Left ventricular failure, unspecified",
-              "score": 0.7833
+              "score": 0.75
             },
             {
               "code": "I50.84",
@@ -378,22 +388,22 @@
             {
               "code": "I50.40",
               "description": "Unspecified combined systolic (congestive) and diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.8
             },
             {
               "code": "I50.41",
               "description": "Acute combined systolic (congestive) and diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.8
             },
             {
               "code": "I50.42",
               "description": "Chronic combined systolic (congestive) and diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.8
             },
             {
               "code": "I50.43",
               "description": "Acute on chronic combined systolic (congestive) and diastolic (congestive) heart failure",
-              "score": 0.8667
+              "score": 0.8
             },
             {
               "code": "I50.814",
@@ -430,6 +440,11 @@
                 "rule_name": "TerminalSpecificity",
                 "passed": true,
                 "details": "Code 'I50.9' is at terminal billable specificity."
+              },
+              {
+                "rule_name": "SemanticAttributeMatch",
+                "passed": true,
+                "details": "All clinical qualifiers in 'I50.9' (Heart failure, unspecified) are supported by documentation."
               }
             ]
           },
@@ -441,7 +456,7 @@
         },
         {
           "document_id": "CASE-02-UNSUPPORTED-SPECIFICITY",
-          "diagnosis_id": "e93bc4bc-1e42-4491-8224-26be11e409bb",
+          "diagnosis_id": "3a2b3c82-236a-4703-83ac-ede1c8405c95",
           "raw_term": "Fatigue and peripheral edema",
           "evidence": "Fatigue and peripheral edema",
           "context": {
@@ -453,7 +468,7 @@
           "classification": {
             "role": "EXCLUDED",
             "is_billable": false,
-            "reason": "Symptom integral to the primary diagnosis; excluded under CMS Guideline I.B.4"
+            "reason": "Symptom integral to the primary diagnosis 'Heart failure'; excluded under CMS Guideline I.B.4: \"Fatigue and peripheral edema\"."
           },
           "retrieved_candidates": [],
           "selected_candidate": {
@@ -478,7 +493,6 @@
     {
       "case_id": "CASE-03-RULED-OUT-CONDITION",
       "title": "Ruled-Out Acute Condition (Myocardial Infarction)",
-      "expected_behavior": "Guardrail 4: Ruled-out MI cannot be coded as confirmed or primary; triggers abstention or exclusion.",
       "status": "PARTIAL_SUCCESS",
       "primary_diagnosis": {
         "code": "R07.4",
@@ -498,7 +512,7 @@
       "audit_trail_sample": [
         {
           "document_id": "CASE-03-RULED-OUT-CONDITION",
-          "diagnosis_id": "2e7e84ee-0a27-41ea-b1c0-c767223116b7",
+          "diagnosis_id": "8d3e3f9e-7073-4d62-8dae-89a57681c902",
           "raw_term": "Non-cardiac chest pain",
           "evidence": "1. Non-cardiac chest pain - Evaluated for acute coronary syndrome. Acute myocardial infarction was definitively ruled out by serial negative high-sensitivity troponins and normal ECG.",
           "context": {
@@ -532,7 +546,7 @@
         },
         {
           "document_id": "CASE-03-RULED-OUT-CONDITION",
-          "diagnosis_id": "29adba3a-9803-4a25-9c85-b48ad4b884a5",
+          "diagnosis_id": "68ef741c-4b87-4804-a3a8-4250ef31430b",
           "raw_term": "Acute substernal chest discomfort",
           "evidence": "Acute substernal chest discomfort",
           "context": {
@@ -544,7 +558,7 @@
           "classification": {
             "role": "PRIMARY",
             "is_billable": true,
-            "reason": "Selected as unique Primary Diagnosis (score=4.5): Documented as chief complaint or direct reason for admission (+3.5); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0); Symptom / manifestation accompanying presentation (-2.0)"
+            "reason": "Designated as Primary Diagnosis under UHDDS Guidelines (chief condition established after study to be responsible for occasioning admission). Documented evidence: \"Acute substernal chest discomfort\". Clinical criteria: Explicitly documented as PRIMARY/PRINCIPAL DIAGNOSIS by provider (+10.0); Explicitly documented under discharge / final diagnoses (+5.0); Acute presentation (+2.0); Confirmed diagnostic certainty (+1.0); Symptom / manifestation accompanying presentation (-2.0)."
           },
           "retrieved_candidates": [
             {
@@ -598,19 +612,19 @@
               "score": 0.75
             },
             {
+              "code": "L03.323",
+              "description": "Acute lymphangitis of chest wall",
+              "score": 0.75
+            },
+            {
+              "code": "J06.0",
+              "description": "Acute laryngopharyngitis",
+              "score": 0.75
+            },
+            {
               "code": "H53.149",
               "description": "Visual discomfort, unspecified",
               "score": 0.75
-            },
-            {
-              "code": "R10.24",
-              "description": "Suprapubic pain",
-              "score": 0.75
-            },
-            {
-              "code": "L03.323",
-              "description": "Acute lymphangitis of chest wall",
-              "score": 0.65
             },
             {
               "code": "D57.811",
@@ -638,14 +652,39 @@
               "score": 0.5
             },
             {
+              "code": "D57.431",
+              "description": "Sickle-cell thalassemia beta zero with acute chest syndrome",
+              "score": 0.5
+            },
+            {
+              "code": "99465",
+              "description": "Delivery/birthing room resuscitation, provision of positive pressure ventilation and/or chest compressions in the presence of acute inadequate ventilation and/or cardiac output",
+              "score": 0.5
+            },
+            {
               "code": "H53.141",
               "description": "Visual discomfort, right eye",
-              "score": 0.5066
+              "score": 0.5
             },
             {
               "code": "H53.142",
               "description": "Visual discomfort, left eye",
-              "score": 0.5066
+              "score": 0.5
+            },
+            {
+              "code": "60271",
+              "description": "Thyroidectomy, including substernal thyroid; cervical approach",
+              "score": 0.5
+            },
+            {
+              "code": "74022",
+              "description": "Radiologic examination, abdomen; complete acute abdomen series, including supine, erect, and/or decubitus views, single view chest",
+              "score": 0.5
+            },
+            {
+              "code": "60270",
+              "description": "Thyroidectomy, including substernal thyroid; sternal split or transthoracic approach",
+              "score": 0.5
             }
           ],
           "selected_candidate": {
@@ -667,6 +706,11 @@
                 "rule_name": "TerminalSpecificity",
                 "passed": true,
                 "details": "Code 'R07.4' is at terminal billable specificity."
+              },
+              {
+                "rule_name": "SemanticAttributeMatch",
+                "passed": true,
+                "details": "All clinical qualifiers in 'R07.4' (Chest pain, unspecified) are supported by documentation."
               }
             ]
           },
@@ -681,7 +725,6 @@
     {
       "case_id": "CASE-04-HISTORICAL-PMH-ONLY",
       "title": "Past Medical History Without Inpatient Care (Remote CVA)",
-      "expected_behavior": "Guardrail 5: Historical-only conditions cannot automatically become coded secondary diagnoses.",
       "status": "SUCCESS",
       "primary_diagnosis": null,
       "secondary_diagnoses": [],
@@ -690,7 +733,7 @@
       "audit_trail_sample": [
         {
           "document_id": "CASE-04-HISTORICAL-PMH-ONLY",
-          "diagnosis_id": "8efa00aa-a42d-43be-9c32-aea64f8f7752",
+          "diagnosis_id": "e82ab099-e910-45f7-8696-2fd0557fc238",
           "raw_term": "Remote stroke in 2014 without residual neurological deficit.",
           "evidence": "1. Remote stroke in 2014 without residual neurological deficit.",
           "context": {
@@ -721,7 +764,6 @@
     {
       "case_id": "CASE-05-EMPTY-DOCUMENT",
       "title": "Empty / Whitespace-Only Document",
-      "expected_behavior": "Guardrail 12: Missing/insufficient text causes explicit document-level abstention/abortion.",
       "status": "ABSTAINED",
       "primary_diagnosis": null,
       "secondary_diagnoses": [],
@@ -739,7 +781,6 @@
     {
       "case_id": "CASE-06-NON-CLINICAL-GIBBERISH",
       "title": "Non-Clinical Gibberish Text",
-      "expected_behavior": "Guardrail 12: Insufficient clinical evidence triggers graceful extraction abstention.",
       "status": "ABSTAINED",
       "primary_diagnosis": null,
       "secondary_diagnoses": [],

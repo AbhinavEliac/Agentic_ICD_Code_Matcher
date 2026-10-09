@@ -338,10 +338,18 @@ class HardClinicalCandidateGate:
             if not words.intersection(PATHOLOGY_KEYWORDS):
                 return ClinicalEntityType.INVESTIGATION
 
-        # 10. Symptoms & Signs
-        if any(sym in term_lower for sym in ["pain", "cough", "nausea", "vomiting", "dyspnea", "shortness of breath", "fatigue", "malaise", "colic", "dizziness"]):
+        # 10. Organisms and Microbiological Findings
+        if any(org in term_lower for org in ["e. coli", "escherichia coli", "klebsiella", "pseudomonas", "staphylococcus", "streptococcus", "candida", "h. pylori", "helicobacter"]):
+            return ClinicalEntityType.CLINICAL_FINDING
+
+        # 10b. Laboratory Results & Abnormal Findings
+        if any(lab in term_lower for lab in ["leukocytosis", "thrombocytopenia", "elevated troponin", "elevated creatinine", "hypokalemia", "hyperkalemia", "hyponatremia", "acidosis", "alkalosis"]):
+            return ClinicalEntityType.LAB_RESULT
+
+        # 10c. Symptoms & Signs
+        if any(sym in term_lower for sym in ["pain", "cough", "nausea", "vomiting", "dyspnea", "shortness of breath", "fatigue", "malaise", "colic", "dizziness", "dyspepsia", "indigestion", "heartburn", "headache", "discomfort", "orthopnea", "hematuria"]):
             return ClinicalEntityType.SYMPTOM
-        if any(sign in term_lower for sign in ["tachycardia", "tachypnea", "fever", "hypotension", "wheezing", "rales", "edema", "swelling"]):
+        if any(sign in term_lower for sign in ["tachycardia", "tachypnea", "fever", "hypotension", "wheezing", "rales", "edema", "swelling", "cyanosis", "jaundice", "pallor"]):
             return ClinicalEntityType.SIGN
 
         # 11. Neoplasms

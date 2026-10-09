@@ -212,7 +212,7 @@ def render_coding_session_results(
             data=json_data,
             file_name=f"{document_id}_coding_report.json",
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
             key=f"dl_json_{thread_id}",
         )
     with d_col2:
@@ -249,7 +249,7 @@ def render_coding_session_results(
             data=csv_df.to_csv(index=False),
             file_name=f"{document_id}_summary.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
             key=f"dl_csv_{thread_id}",
         )
 
@@ -336,11 +336,13 @@ with tab1:
                         st.rerun()
         with p_col3:
             if active_thread_id:
-                if st.button("✨ Reset Session", use_container_width=True, key="reset_active_thread_btn"):
+                if st.button("✨ Reset Session", width="stretch", key="reset_active_thread_btn"):
                     if "thread_id" in st.query_params:
                         del st.query_params["thread_id"]
                     if "active_thread_id" in st.session_state:
                         del st.session_state["active_thread_id"]
+                    if "doc_id_override" in st.session_state:
+                        del st.session_state["doc_id_override"]
                     st.rerun()
 
     input_mode = st.radio(
@@ -353,12 +355,25 @@ with tab1:
         horizontal=True,
     )
 
-    default_doc_id = (
-        active_thread_record.get("document_id")
-        if active_thread_record
-        else f"ENC-{uuid4().hex[:8].upper()}"
-    )
-    document_id = st.text_input("Encounter Identifier (Document ID):", value=default_doc_id)
+    # Dynamic document ID determination to ensure unique provenance per case
+    if active_thread_record:
+        suggested_doc_id = active_thread_record.get("document_id", f"ENC-{uuid4().hex[:8].upper()}")
+    elif input_mode == "⚡ Interactive Demonstration Scenarios":
+        suggested_doc_id = st.session_state.get("active_demo_id", "ENC-HF-2026-001")
+    elif input_mode == "📁 Multimodal Document Ingestion (PDF / Image / TXT)":
+        suggested_doc_id = st.session_state.get("active_uploaded_doc_id", f"ENC-{uuid4().hex[:8].upper()}")
+    else:
+        suggested_doc_id = st.session_state.get("manual_doc_id", f"ENC-{uuid4().hex[:8].upper()}")
+
+    # Track active modality to reset input when switching
+    if st.session_state.get("last_input_mode") != input_mode:
+        st.session_state["last_input_mode"] = input_mode
+        st.session_state["doc_id_override"] = suggested_doc_id
+
+    doc_id_val = st.session_state.get("doc_id_override", suggested_doc_id)
+    document_id = st.text_input("Encounter Identifier (Document ID):", value=doc_id_val, key="encounter_doc_id_input")
+    st.session_state["doc_id_override"] = document_id
+
     clinical_text = active_thread_record.get("raw_text", "") if active_thread_record else ""
     active_file_bytes: bytes | None = None
     active_filename = active_thread_record.get("input_source", "clinical_document.txt") if active_thread_record else "clinical_document.txt"
@@ -376,6 +391,11 @@ with tab1:
         if uploaded_file is not None:
             active_file_bytes = uploaded_file.getvalue()
             active_filename = uploaded_file.name
+            derived_upload_id = f"ENC-{Path(uploaded_file.name).stem.upper().replace(' ', '_')}"
+            if st.session_state.get("active_uploaded_doc_id") != derived_upload_id:
+                st.session_state["active_uploaded_doc_id"] = derived_upload_id
+                st.session_state["doc_id_override"] = derived_upload_id
+                document_id = derived_upload_id
 
             with st.spinner("🔍 Auto-detecting format and parsing clinical document..."):
                 ingest_result = ingestion_agent.ingest(
@@ -538,33 +558,36 @@ with tab1:
 
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            if st.button("📄 Ingest as Vector PDF", use_container_width=True):
+            if st.button("📄 Ingest as Vector PDF", width="stretch"):
                 pdf_bytes_gen = generate_sample_pdf(case_info["title"], case_info["text"])
                 st.session_state["active_demo_bytes"] = pdf_bytes_gen
                 st.session_state["active_demo_filename"] = f"{case_info['encounter_id']}.pdf"
                 st.session_state["active_demo_format"] = "pdf"
                 st.session_state["active_demo_text"] = case_info["text"]
                 st.session_state["active_demo_id"] = case_info["encounter_id"]
+                st.session_state["doc_id_override"] = case_info["encounter_id"]
                 st.success("Generated synthetic clinical PDF!")
 
         with col_b:
-            if st.button("🖼️ Ingest as Screenshot (OCR)", use_container_width=True):
+            if st.button("🖼️ Ingest as Screenshot (OCR)", width="stretch"):
                 img_bytes_gen = generate_sample_image(case_info["title"], case_info["text"])
                 st.session_state["active_demo_bytes"] = img_bytes_gen
                 st.session_state["active_demo_filename"] = f"{case_info['encounter_id']}_screenshot.png"
                 st.session_state["active_demo_format"] = "image"
                 st.session_state["active_demo_text"] = case_info["text"]
                 st.session_state["active_demo_id"] = case_info["encounter_id"]
+                st.session_state["doc_id_override"] = case_info["encounter_id"]
                 st.success("Rendered clinical screenshot image for OCR parsing!")
 
         with col_c:
-            if st.button("📝 Ingest as Plain Text (.txt)", use_container_width=True):
+            if st.button("📝 Ingest as Plain Text (.txt)", width="stretch"):
                 txt_bytes_gen = generate_sample_txt(case_info["title"], case_info["text"])
                 st.session_state["active_demo_bytes"] = txt_bytes_gen
                 st.session_state["active_demo_filename"] = f"{case_info['encounter_id']}.txt"
                 st.session_state["active_demo_format"] = "txt"
                 st.session_state["active_demo_text"] = case_info["text"]
                 st.session_state["active_demo_id"] = case_info["encounter_id"]
+                st.session_state["doc_id_override"] = case_info["encounter_id"]
                 st.success("Loaded as plain text document!")
 
         if "active_demo_id" in st.session_state:
@@ -650,7 +673,7 @@ with tab1:
     col_run, col_clear = st.columns([3, 1])
 
     with col_run:
-        run_button = st.button("⚡ Run ICD-10 Medical Coding Pipeline", type="primary", use_container_width=True)
+        run_button = st.button("⚡ Run ICD-10 Medical Coding Pipeline", type="primary", width="stretch")
 
     if run_button:
         if not clinical_text and not active_file_bytes:
@@ -976,7 +999,7 @@ with tab3:
                     "Latency (ms)": f"{d['processing_time_ms']:.1f}",
                     "Date": d["created_at"][:19] if d["created_at"] else "N/A",
                 })
-            st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(summary_rows), width="stretch")
 
             # Detailed Encounter Inspector Drawer
             st.markdown("---")
@@ -1068,7 +1091,7 @@ with tab3:
                     data=full_df.to_csv(index=False),
                     file_name="encounters_vault_export.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
             with e_col2:
                 st.download_button(
@@ -1076,7 +1099,7 @@ with tab3:
                     data=json.dumps(stored_docs, indent=2),
                     file_name="encounters_vault_export.json",
                     mime="application/json",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     with vault_tab2:
@@ -1148,7 +1171,7 @@ with tab3:
                     "Latency (ms)": f"{t['duration_ms']:.1f}",
                     "Start Time": t["start_time"][:19] if t["start_time"] else "N/A",
                 })
-            st.dataframe(pd.DataFrame(th_summary_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(th_summary_rows), width="stretch")
 
             st.markdown("---")
             st.markdown("##### 🔎 Inspect Execution Thread Timeline & Audit")
@@ -1168,13 +1191,13 @@ with tab3:
                             f"**Thread:** `{sel_thread['thread_id']}` | **Status:** `{sel_thread['status']}` | **Duration:** `{sel_thread['duration_ms']:.1f}ms`"
                         )
                     with c_act2:
-                        if st.button("🚀 Load into Workspace (Tab 1)", key=f"load_ws_{selected_th_id}", use_container_width=True):
+                        if st.button("🚀 Load into Workspace (Tab 1)", key=f"load_ws_{selected_th_id}", width="stretch"):
                             st.query_params["thread_id"] = selected_th_id
                             st.session_state["active_thread_id"] = selected_th_id
                             st.success(f"Thread {selected_th_id} loaded! Switch to Tab 1.")
                             st.rerun()
                     with c_act3:
-                        if st.button("🗑️ Delete Thread", key=f"del_th_{selected_th_id}", use_container_width=True):
+                        if st.button("🗑️ Delete Thread", key=f"del_th_{selected_th_id}", width="stretch"):
                             repo.delete_pipeline_thread(selected_th_id)
                             st.success(f"Thread {selected_th_id} deleted!")
                             st.rerun()
@@ -1323,4 +1346,4 @@ with tab5:
         }
         for r in all_records
     ])
-    st.dataframe(catalog_df, use_container_width=True)
+    st.dataframe(catalog_df, width="stretch")

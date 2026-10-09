@@ -1,5 +1,6 @@
 """Modular presentation components for the medical coding Streamlit user interface."""
 
+import html
 from typing import Any
 
 import streamlit as st
@@ -149,7 +150,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         st.info("ℹ️ No primary diagnosis assigned for this document (abstained or undetermined).")
         return
 
-    code_display = primary.code or "[NO LOCAL CODE]"
+    code_display = html.escape(primary.code or "[NO LOCAL CODE]")
     if primary.matching_status == "NO_DATABASE_MATCH" or not primary.code:
         billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
     else:
@@ -158,23 +159,26 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
             if primary.is_terminal_billable
             else '<span class="pill-badge badge-danger">⚠ Non-Billable Header</span>'
         )
-    acuity_badge = f'<span class="pill-badge badge-info">{primary.acuity.value if hasattr(primary.acuity, "value") else primary.acuity}</span>'
-    certainty_badge = f'<span class="pill-badge badge-secondary">{primary.certainty.value if hasattr(primary.certainty, "value") else primary.certainty}</span>'
+    acuity_badge = f'<span class="pill-badge badge-info">{html.escape(primary.acuity.value if hasattr(primary.acuity, "value") else str(primary.acuity))}</span>'
+    certainty_badge = f'<span class="pill-badge badge-secondary">{html.escape(primary.certainty.value if hasattr(primary.certainty, "value") else str(primary.certainty))}</span>'
 
     conf_pct = int(primary.confidence_score * 100)
 
     codes_pills = []
     if primary.icd10cm:
-        codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {primary.icd10cm}</span>')
+        codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {html.escape(str(primary.icd10cm))}</span>')
     if primary.icdo:
-        codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {primary.icdo}</span>')
+        codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {html.escape(str(primary.icdo))}</span>')
     if primary.cpt:
-        codes_pills.append(f'<span class="pill-badge badge-success">CPT: {primary.cpt}</span>')
+        codes_pills.append(f'<span class="pill-badge badge-success">CPT: {html.escape(str(primary.cpt))}</span>')
     codes_html = " ".join(codes_pills)
 
     documented_row = ""
     if primary.raw_term and primary.raw_term.lower() != (primary.description or "").lower():
-        documented_row = f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {primary.raw_term}</div>'
+        documented_row = f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {html.escape(str(primary.raw_term))}</div>'
+
+    safe_desc = html.escape(primary.description or "")
+    safe_evidence = html.escape(primary.evidence_quote or "")
 
     primary_html = clean_html(
         f"""
@@ -191,7 +195,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
             </div>
             <div class="primary-desc">
                 <span style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 2px;">📖 Matched Database Concept:</span>
-                {primary.description}
+                {safe_desc}
             </div>
             {documented_row}
             <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap;">
@@ -204,7 +208,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
                 <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
                     📄 Verbatim Clinical Evidence Quote:
                 </span><br/>
-                <span class="evidence-quote">"{primary.evidence_quote}"</span>
+                <span class="evidence-quote">"{safe_evidence}"</span>
             </div>
         </div>
         """
@@ -220,7 +224,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
         return
 
     for idx, diag in enumerate(secondaries, start=1):
-        sec_code_display = diag.code or "[NO LOCAL CODE]"
+        sec_code_display = html.escape(diag.code or "[NO LOCAL CODE]")
         if diag.matching_status == "NO_DATABASE_MATCH" or not diag.code:
             billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
         else:
@@ -229,21 +233,24 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                 if diag.is_terminal_billable
                 else '<span class="pill-badge badge-danger">⚠ Non-Billable</span>'
             )
-        acuity_str = diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity)
-        certainty_str = diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty)
+        acuity_str = html.escape(diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity))
+        certainty_str = html.escape(diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty))
 
         sec_codes_pills = []
         if diag.icd10cm:
-            sec_codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {diag.icd10cm}</span>')
+            sec_codes_pills.append(f'<span class="pill-badge badge-info">ICD-10-CM: {html.escape(str(diag.icd10cm))}</span>')
         if diag.icdo:
-            sec_codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {diag.icdo}</span>')
+            sec_codes_pills.append(f'<span class="pill-badge badge-warning">ICD-O: {html.escape(str(diag.icdo))}</span>')
         if diag.cpt:
-            sec_codes_pills.append(f'<span class="pill-badge badge-success">CPT: {diag.cpt}</span>')
+            sec_codes_pills.append(f'<span class="pill-badge badge-success">CPT: {html.escape(str(diag.cpt))}</span>')
         sec_codes_html = " ".join(sec_codes_pills)
 
         documented_row = ""
         if diag.raw_term and diag.raw_term.lower() != (diag.description or "").lower():
-            documented_row = f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {diag.raw_term}</div>'
+            documented_row = f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {html.escape(str(diag.raw_term))}</div>'
+
+        safe_desc = html.escape(diag.description or "")
+        safe_evidence = html.escape(diag.evidence_quote or "")
 
         secondary_html = clean_html(
             f"""
@@ -251,7 +258,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
                     <div>
                         <strong style="font-size: 18px; color: #38bdf8;">#{idx}. {sec_code_display}</strong>
-                        <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{diag.description}</span>
+                        <span style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-left: 10px;">{safe_desc}</span>
                         {documented_row}
                     </div>
                     <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
@@ -265,7 +272,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                     <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
                         Clinical Evidence:
                     </span>
-                    <span class="evidence-quote">"{diag.evidence_quote}"</span>
+                    <span class="evidence-quote">"{safe_evidence}"</span>
                 </div>
             </div>
             """

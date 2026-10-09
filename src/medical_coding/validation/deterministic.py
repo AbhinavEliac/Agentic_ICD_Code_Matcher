@@ -104,6 +104,69 @@ class DeterministicValidator:
                 stage=PipelineStage.VALIDATION,
             )
 
+        # 3. Semantic Code Attribute Validation (CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
+        ev_text = (
+            getattr(condition.context.evidence, "quote", "")
+            if hasattr(condition, "context") and hasattr(condition.context, "evidence") and condition.context.evidence
+            else ""
+        )
+        if selection.supporting_evidence:
+            ev_text = f"{ev_text} {' '.join(selection.supporting_evidence)}"
+
+        is_attr_valid, unsupp_attrs = ReverseAttributeChecker.validate_code_attributes(
+            code_description=candidate.description,
+            evidence_text=ev_text,
+            diagnosis_term=condition.raw_term,
+        )
+        if not is_attr_valid:
+            better_candidate = None
+            if selection.candidate_pool:
+                for alt_cand in selection.candidate_pool:
+                    if not self.catalog.is_valid_code(alt_cand.code) or not self.catalog.is_billable_code(alt_cand.code):
+                        continue
+                    alt_valid, _ = ReverseAttributeChecker.validate_code_attributes(
+                        code_description=alt_cand.description,
+                        evidence_text=ev_text,
+                        diagnosis_term=condition.raw_term,
+                    )
+                    if alt_valid:
+                        better_candidate = alt_cand
+                        break
+
+            if better_candidate:
+                candidate = better_candidate
+                code = better_candidate.code
+                checks.append(
+                    ValidationCheck(
+                        rule_name="SemanticAttributeMatch",
+                        passed=True,
+                        details=f"Realigned code to supported candidate '{code}' ({candidate.description}) without unsupported {', '.join(unsupp_attrs)}.",
+                    )
+                )
+            else:
+                checks.append(
+                    ValidationCheck(
+                        rule_name="SemanticAttributeMatch",
+                        passed=False,
+                        details=f"Code '{code}' specifies unsupported attributes: {', '.join(unsupp_attrs)}.",
+                    )
+                )
+                return None, AbstentionRecord(
+                    diagnosis_id=condition.diagnosis_id,
+                    raw_term=condition.raw_term,
+                    reason=AbstentionReason.UNSUPPORTED_SPECIFICITY,
+                    detail=f"Code '{code}' requires unsupported clinical attributes ({', '.join(unsupp_attrs)}) not evidenced in documentation.",
+                    stage=PipelineStage.VALIDATION,
+                )
+        else:
+            checks.append(
+                ValidationCheck(
+                    rule_name="SemanticAttributeMatch",
+                    passed=True,
+                    details=f"All clinical qualifiers in '{code}' ({candidate.description}) are supported by documentation.",
+                )
+            )
+
         cand_sys = getattr(candidate, "coding_system", None) or "ICD-10-CM"
         icd10cm_val = selection.selected_icd10cm or (code if cand_sys == "ICD-10-CM" else None)
         icdo_val = selection.selected_icdo or (code if cand_sys == "ICD-O" else None)

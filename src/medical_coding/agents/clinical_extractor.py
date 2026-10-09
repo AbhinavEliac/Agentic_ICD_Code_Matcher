@@ -245,7 +245,8 @@ class EvidenceFirstFactExtractor:
             item.normalized_diagnosis = raw_t
 
         canon = self._canonicalize_term(item.raw_term)
-        key = canon.lower().strip()
+        lat = item.clinical_attributes.get("laterality", "") if item.clinical_attributes else ""
+        key = f"{canon.lower().strip()}_{lat}".strip("_")
         if not key or len(key) < 2:
             return
 
@@ -254,6 +255,10 @@ class EvidenceFirstFactExtractor:
         else:
             existing = candidates_by_key[key]
             existing.evidence.extend(item.evidence)
+            if item.role == DiagnosisRole.PRIMARY:
+                existing.role = DiagnosisRole.PRIMARY
+                if item.primary_justification:
+                    existing.primary_justification = item.primary_justification
             if item.temporality == Temporality.CURRENT:
                 existing.temporality = Temporality.CURRENT
                 if existing.role == DiagnosisRole.HISTORICAL:
@@ -473,7 +478,7 @@ class EvidenceFirstFactExtractor:
                     clause,
                     flags=re.IGNORECASE,
                 ).strip()
-                for tail_delim in [" on ", " treated with ", " managed with ", " secondary to ", " requiring ", " with good response", " with symptom"]:
+                for tail_delim in [" on ", " treated with ", " managed with ", " requiring ", " with good response", " with symptom"]:
                     if tail_delim in clause.lower():
                         idx = clause.lower().find(tail_delim)
                         clause = clause[:idx].strip()
@@ -489,7 +494,7 @@ class EvidenceFirstFactExtractor:
                     if len(sub_cand) >= 3:
                         clause = sub_cand
 
-                sub_clauses = re.split(r"\s+and\s+|\s*,\s*", clause)
+                sub_clauses = self._split_compound_clinical_phrase(clause)
                 for sc in sub_clauses:
                     sc = sc.strip()
                     sc = re.sub(r"^(?:a|an|the)\s+", "", sc, flags=re.IGNORECASE).strip()
@@ -915,13 +920,13 @@ class EvidenceFirstFactExtractor:
 
             for clause in matched_clauses:
                 # Strip trailing management phrases from clause
-                for tail in [" requiring ", " managed with ", " treated with ", " on ", " with good response", " secondary to ", " with symptom", " and was ", " and received "]:
+                for tail in [" requiring ", " managed with ", " treated with ", " on ", " with good response", " with symptom", " and was ", " and received "]:
                     if tail in clause.lower():
                         idx = clause.lower().find(tail)
                         clause = clause[:idx].strip()
 
-                # Split compound items e.g. "septic shock and diabetic ketoacidosis"
-                sub_items = re.split(r"\s+and\s+|\s*,\s*", clause)
+                # Split compound items e.g. "septic shock and diabetic ketoacidosis", "acute kidney injury secondary to dehydration"
+                sub_items = self._split_compound_clinical_phrase(clause)
                 for item_str in sub_items:
                     item_str = item_str.strip()
                     item_str = re.sub(r"^(?:a|an|the)\s+", "", item_str, flags=re.IGNORECASE).strip()
@@ -1577,10 +1582,50 @@ class EvidenceFirstFactExtractor:
                 top.primary_justification = f"Documented chief condition occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
                 primary_diag = top
 
-                # Remaining become SECONDARY
+                # Remaining become SECONDARY, unless integral symptom or duplicate of primary
+                top_norm = top.normalized_diagnosis.lower()
+                top_words = set(re.findall(r"[a-z0-9]+", top_norm)) - {
+                    "acute", "chronic", "right", "left", "bilateral", "unspecified", "severe", "mild", "stage", "with", "without"
+                }
+
                 for idx, sec_cand in enumerate(active_candidates):
                     if idx == chosen_idx:
                         continue
+                    sec_norm = sec_cand.normalized_diagnosis.lower()
+                    sec_words = set(re.findall(r"[a-z0-9]+", sec_norm)) - {
+                        "acute", "chronic", "right", "left", "bilateral", "unspecified", "severe", "mild", "stage", "with", "without"
+                    }
+
+                    # Check 1: Duplicate / generalized mention of the primary diagnosis
+                    if sec_words and top_words and (sec_words <= top_words or (len(sec_words & top_words) >= 2 and len(sec_words - top_words) == 0)):
+                        sec_cand.role = DiagnosisRole.PRIMARY
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = f"Corroborating mention of primary diagnosis '{top.normalized_diagnosis}'"
+                        top.evidence.extend(sec_cand.evidence)
+                        continue
+
+                    # Check 2: Integral symptom / sign of primary diagnosis (CMS Guideline I.B.4)
+                    is_integral = any(
+                        sym in sec_norm
+                        for sym in [
+                            "pain", "colic", "fever", "cough", "dyspnea", "shortness of breath",
+                            "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
+                            "discomfort", "wheezing", "fatigue", "malaise", "respiratory distress",
+                            "peripheral edema", "edema", "chest pain", "flank pain", "hematuria"
+                        ]
+                    ) and not (
+                        any(sec_norm.endswith(sfx) or f"{sfx} " in sec_norm for sfx in ("itis", "oma", "osis"))
+                        or any(dx in sec_norm for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia"])
+                    )
+
+                    if is_integral:
+                        from medical_coding.schemas.enums import ClinicalEntityType
+                        sec_cand.role = DiagnosisRole.SYMPTOM
+                        sec_cand.entity_type = ClinicalEntityType.SYMPTOM
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = f"Symptom integral to the primary diagnosis '{top.normalized_diagnosis}'; excluded from independent billing under CMS Guideline I.B.4"
+                        continue
+
                     is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
                         sec_cand.normalized_diagnosis, sec_cand.primary_evidence_quote
                     )

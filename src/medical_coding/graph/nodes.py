@@ -1155,6 +1155,24 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         primary_response.role = DiagnosisRole.PRIMARY
     secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
 
+    # Enforce clean role separation: secondary section must NEVER carry mentions of the primary diagnosis
+    if primary_response:
+        pri_code = primary_response.code
+        pri_words = set(re.findall(r"[a-z0-9]+", f"{(primary_response.description or '').lower()} {(primary_response.raw_term or '').lower()} {(primary_response.normalized_diagnosis or '').lower()}")) - {
+            "acute", "chronic", "with", "without", "and", "the", "for", "type", "stage", "unspecified", "right", "left", "bilateral"
+        }
+        filtered_sec = []
+        for s in secondary_responses:
+            if pri_code and s.code and s.code == pri_code:
+                continue
+            s_words = set(re.findall(r"[a-z0-9]+", f"{(s.description or '').lower()} {(s.raw_term or '').lower()} {(s.normalized_diagnosis or '').lower()}")) - {
+                "acute", "chronic", "with", "without", "and", "the", "for", "type", "stage", "unspecified", "right", "left", "bilateral"
+            }
+            if s_words and pri_words and (s_words <= pri_words or (len(s_words & pri_words) >= 2 and len(s_words - pri_words) <= 1)):
+                continue
+            filtered_sec.append(s)
+        secondary_responses = filtered_sec
+
     # Determine execution status
     if primary_response or secondary_responses:
         status = ExecutionStatus.SUCCESS if not abstentions else ExecutionStatus.PARTIAL_SUCCESS

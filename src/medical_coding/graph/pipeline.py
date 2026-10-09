@@ -423,3 +423,8 @@ async def process_clinical_document_batch(
     )
 
     return batch_status
+
+
+def process_clinical_document_sync(*args: Any, **kwargs: Any) -> CodingResult:
+    """Synchronous execution wrapper for process_clinical_document."""
+    return asyncio.run(process_clinical_document(*args, **kwargs))

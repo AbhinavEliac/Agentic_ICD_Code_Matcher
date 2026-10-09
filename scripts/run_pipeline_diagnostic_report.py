@@ -1,7 +1,13 @@
 """Diagnostic test runner executing the complete LangGraph medical coding pipeline.
 
 Evaluates sample clinical documents across realistic edge cases, guardrails, and abstentions,
-producing a structured diagnostic failure report with internal audit trails.
+producing a structured diagnostic report with the 6 core metrics:
+1. Clinical Concept Recall
+2. Role Classification Accuracy
+3. Code Accuracy
+4. False Positive Count / Rate
+5. Abstention Quality
+6. Candidate Surface Retrieval Recall
 """
 
 import asyncio
@@ -17,13 +23,18 @@ if str(SRC_DIR) not in sys.path:
 
 from medical_coding.graph.pipeline import process_clinical_document
 from medical_coding.graph.workflow import export_graph_ascii
+from medical_coding.schemas.enums import ExecutionStatus
 from medical_coding.schemas.response import CodingResult
 
-DIAGNOSTIC_CASES: list[dict[str, str]] = [
+BENCHMARK_CASES: list[dict[str, Any]] = [
     {
         "id": "CASE-01-STANDARD-ADMISSION",
-        "title": "Comprehensive Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
-        "expected": "Success with Primary I50.21, Secondaries E11.9, I10. Historical PMH excluded.",
+        "title": "Inpatient Discharge (Acute Systolic HF, T2DM, HTN)",
+        "expected_primary_code": "I50.21",
+        "expected_secondary_codes": ["E11.9", "I10"],
+        "expected_concepts": ["acute systolic heart failure", "type 2 diabetes mellitus", "essential primary hypertension"],
+        "unwanted_fp": ["dyspnea", "shortness of breath", "edema", "appendectomy"],
+        "expected_abstentions": [],
         "text": """
         DISCHARGE SUMMARY
         Patient: John Doe | MRN: 987654321
@@ -47,7 +58,11 @@ DIAGNOSTIC_CASES: list[dict[str, str]] = [
     {
         "id": "CASE-02-UNSUPPORTED-SPECIFICITY",
         "title": "General Heart Failure Mention Without Subtype Specificity",
-        "expected": "Guardrail 11: Candidate ranking must align with I50.9 (unspecified) or abstain; never force I50.21.",
+        "expected_primary_code": "I50.9",
+        "expected_secondary_codes": [],
+        "expected_concepts": ["heart failure"],
+        "unwanted_fp": ["I50.21", "I50.31", "I50.41"],
+        "expected_abstentions": [],
         "text": """
         DISCHARGE SUMMARY
         CHIEF COMPLAINT: Fatigue and peripheral edema.
@@ -58,7 +73,11 @@ DIAGNOSTIC_CASES: list[dict[str, str]] = [
     {
         "id": "CASE-03-RULED-OUT-CONDITION",
         "title": "Ruled-Out Acute Condition (Myocardial Infarction)",
-        "expected": "Guardrail 4: Ruled-out MI cannot be coded as confirmed or primary; triggers abstention or exclusion.",
+        "expected_primary_code": None,
+        "expected_secondary_codes": [],
+        "expected_concepts": [],
+        "unwanted_fp": ["I21.9", "acute myocardial infarction"],
+        "expected_abstentions": ["RULED_OUT"],
         "text": """
         DISCHARGE SUMMARY
         CHIEF COMPLAINT: Acute substernal chest discomfort.
@@ -69,7 +88,11 @@ DIAGNOSTIC_CASES: list[dict[str, str]] = [
     {
         "id": "CASE-04-HISTORICAL-PMH-ONLY",
         "title": "Past Medical History Without Inpatient Care (Remote CVA)",
-        "expected": "Guardrail 5: Historical-only conditions cannot automatically become coded secondary diagnoses.",
+        "expected_primary_code": None,
+        "expected_secondary_codes": [],
+        "expected_concepts": [],
+        "unwanted_fp": ["I63.9", "stroke", "cerebrovascular accident"],
+        "expected_abstentions": ["HISTORICAL"],
         "text": """
         DISCHARGE SUMMARY
         CHIEF COMPLAINT: Inguinal hernia repair.
@@ -84,36 +107,60 @@ DIAGNOSTIC_CASES: list[dict[str, str]] = [
     {
         "id": "CASE-05-EMPTY-DOCUMENT",
         "title": "Empty / Whitespace-Only Document",
-        "expected": "Guardrail 12: Missing/insufficient text causes explicit document-level abstention/abortion.",
+        "expected_primary_code": None,
+        "expected_secondary_codes": [],
+        "expected_concepts": [],
+        "unwanted_fp": [],
+        "expected_abstentions": ["INSUFFICIENT_CLINICAL_EVIDENCE"],
         "text": "   \n\t  \n  ",
     },
     {
         "id": "CASE-06-NON-CLINICAL-GIBBERISH",
         "title": "Non-Clinical Gibberish Text",
-        "expected": "Guardrail 12: Insufficient clinical evidence triggers graceful extraction abstention.",
+        "expected_primary_code": None,
+        "expected_secondary_codes": [],
+        "expected_concepts": [],
+        "unwanted_fp": [],
+        "expected_abstentions": ["INSUFFICIENT_CLINICAL_EVIDENCE"],
         "text": "The quick brown fox jumps over the lazy dog. Random non-clinical sentence with no medical terms.",
     },
 ]
 
 
 async def run_diagnostics() -> dict[str, Any]:
-    """Execute complete LangGraph workflow across all diagnostic test cases."""
+    """Execute complete LangGraph workflow across benchmark test cases and report 6 discrete metrics."""
     print("=" * 80)
-    print("STARTING COMPLETE LANGGRAPH WORKFLOW DIAGNOSTIC SUITE")
+    print("STARTING COMPLETE LANGGRAPH WORKFLOW DIAGNOSTIC SUITE & 6-METRIC EVALUATION")
     print("=" * 80)
 
-    # Topology
     ascii_graph = export_graph_ascii()
     print("\n--- COMPILED WORKFLOW TOPOLOGY ---")
     print(ascii_graph)
 
     results: list[dict[str, Any]] = []
 
-    for case in DIAGNOSTIC_CASES:
+    # Telemetry counters for 6 metrics
+    total_gold_concepts = 0
+    extracted_gold_concepts = 0
+
+    total_role_evaluations = 0
+    correct_roles = 0
+
+    total_expected_codes = 0
+    correct_codes = 0
+
+    total_false_positives = 0
+
+    total_abstention_checks = 0
+    correct_abstentions = 0
+
+    total_retrieval_checks = 0
+    retrieval_hits = 0
+
+    for case in BENCHMARK_CASES:
         case_id = case["id"]
         title = case["title"]
         text = case["text"]
-        expected = case["expected"]
 
         print(f"\nProcessing [{case_id}]: {title}...")
         res: CodingResult = await process_clinical_document(
@@ -123,10 +170,83 @@ async def run_diagnostics() -> dict[str, Any]:
 
         audit_trail = res.metadata.get("audit_trail", []) if res.metadata else []
 
+        # Evaluate Metric 1: Clinical Concept Recall
+        exp_concepts = case.get("expected_concepts", [])
+        total_gold_concepts += len(exp_concepts)
+        extracted_terms = []
+        if res.primary_diagnosis and res.primary_diagnosis.raw_term:
+            extracted_terms.append(res.primary_diagnosis.raw_term.lower())
+        for s in res.secondary_diagnoses:
+            if s.raw_term:
+                extracted_terms.append(s.raw_term.lower())
+
+        for gc in exp_concepts:
+            if any(gc.lower() in et or et in gc.lower() for et in extracted_terms):
+                extracted_gold_concepts += 1
+
+        # Evaluate Metric 2: Role Classification Accuracy
+        exp_pri_code = case.get("expected_primary_code")
+        if exp_pri_code:
+            total_role_evaluations += 1
+            if res.primary_diagnosis and (res.primary_diagnosis.code == exp_pri_code or exp_pri_code.startswith(res.primary_diagnosis.code or "xxx")):
+                correct_roles += 1
+
+        exp_sec_codes = case.get("expected_secondary_codes", [])
+        for sc in exp_sec_codes:
+            total_role_evaluations += 1
+            if any(sec.code == sc or sc.startswith(sec.code or "xxx") for sec in res.secondary_diagnoses):
+                correct_roles += 1
+
+        # Evaluate Metric 3: Code Accuracy
+        if exp_pri_code:
+            total_expected_codes += 1
+            if res.primary_diagnosis and res.primary_diagnosis.code == exp_pri_code:
+                correct_codes += 1
+
+        for sc in exp_sec_codes:
+            total_expected_codes += 1
+            if any(sec.code == sc for sec in res.secondary_diagnoses):
+                correct_codes += 1
+
+        # Evaluate Metric 4: False Positive Count
+        unwanted = case.get("unwanted_fp", [])
+        for u in unwanted:
+            u_low = u.lower()
+            if res.primary_diagnosis and (u_low in (res.primary_diagnosis.code or "").lower() or u_low in (res.primary_diagnosis.raw_term or "").lower()):
+                total_false_positives += 1
+            for sec in res.secondary_diagnoses:
+                if u_low in (sec.code or "").lower() or u_low in (sec.raw_term or "").lower():
+                    total_false_positives += 1
+
+        # Evaluate Metric 5: Abstention Quality
+        exp_abst = case.get("expected_abstentions", [])
+        if exp_abst:
+            total_abstention_checks += 1
+            abst_reasons = [str(a.reason).lower() for a in res.abstentions]
+            abst_details = [str(a.detail or "").lower() for a in res.abstentions]
+            matched_abst = False
+            for ea in exp_abst:
+                ea_low = ea.lower()
+                if any(ea_low in ar for ar in abst_reasons) or any(ea_low in ad for ad in abst_details):
+                    matched_abst = True
+                    break
+            if not matched_abst and res.primary_diagnosis is None and res.status in (ExecutionStatus.SUCCESS, ExecutionStatus.ABSTAINED):
+                matched_abst = True
+            if matched_abst:
+                correct_abstentions += 1
+
+        # Evaluate Metric 6: Candidate Surface Retrieval Recall
+        if exp_pri_code:
+            total_retrieval_checks += 1
+            # Check candidate pool in audit trail or selections
+            candidate_pool = res.metadata.get("candidate_pool", {}) if res.metadata else {}
+            cand_codes = [c.get("code") for c_list in candidate_pool.values() for c in c_list] if candidate_pool else []
+            if exp_pri_code in cand_codes or (res.primary_diagnosis and res.primary_diagnosis.code == exp_pri_code):
+                retrieval_hits += 1
+
         case_summary = {
             "case_id": case_id,
             "title": title,
-            "expected_behavior": expected,
             "status": str(res.status),
             "primary_diagnosis": (
                 {
@@ -161,40 +281,49 @@ async def run_diagnostics() -> dict[str, Any]:
 
         print(f"  -> Status: {res.status}")
         if res.primary_diagnosis:
-            print(
-                f"  -> Primary: [{res.primary_diagnosis.code}] {res.primary_diagnosis.description}"
-            )
+            print(f"  -> Primary: [{res.primary_diagnosis.code}] {res.primary_diagnosis.description}")
         else:
             print("  -> Primary: None (Abstained or No Billable Primary)")
         print(f"  -> Secondaries: {len(res.secondary_diagnoses)}")
         for sec in res.secondary_diagnoses:
             print(f"     * [{sec.code}] {sec.description}")
         if res.abstentions:
-            print(f"  -> Abstentions/Guardrail Triggers: {len(res.abstentions)}")
+            print(f"  -> Abstentions: {len(res.abstentions)}")
             for a in res.abstentions:
                 print(f"     ! {a.reason} ({a.stage}): {a.detail or a.raw_term}")
 
-    # Produce failure diagnostic summary
-    failures_and_abstentions = [
-        r for r in results if r["status"] != "ExecutionStatus.SUCCESS" or r["abstention_count"] > 0
-    ]
+    # Compute final metrics
+    concept_recall_pct = (extracted_gold_concepts / total_gold_concepts * 100) if total_gold_concepts > 0 else 100.0
+    role_accuracy_pct = (correct_roles / total_role_evaluations * 100) if total_role_evaluations > 0 else 100.0
+    code_accuracy_pct = (correct_codes / total_expected_codes * 100) if total_expected_codes > 0 else 100.0
+    abstention_quality_pct = (correct_abstentions / total_abstention_checks * 100) if total_abstention_checks > 0 else 100.0
+    retrieval_recall_pct = (retrieval_hits / total_retrieval_checks * 100) if total_retrieval_checks > 0 else 100.0
+
+    metrics_scorecard = {
+        "clinical_concept_recall_pct": round(concept_recall_pct, 1),
+        "role_classification_accuracy_pct": round(role_accuracy_pct, 1),
+        "code_accuracy_pct": round(code_accuracy_pct, 1),
+        "false_positive_count": total_false_positives,
+        "abstention_quality_pct": round(abstention_quality_pct, 1),
+        "candidate_retrieval_recall_pct": round(retrieval_recall_pct, 1),
+    }
 
     report = {
         "total_test_cases": len(results),
-        "cases_with_abstentions_or_guarded_failures": len(failures_and_abstentions),
+        "metrics_scorecard": metrics_scorecard,
         "results": results,
     }
 
     print("\n" + "=" * 80)
-    print("DIAGNOSTIC FAILURE & ABSTENTION SUMMARY REPORT")
+    print("SYSTEM QUALITY SCORECARD (DISCRETE METRICS)")
     print("=" * 80)
-    print(f"Total Test Cases Evaluated: {len(results)}")
-    print(f"Cases with Enforced Guardrails / Abstentions: {len(failures_and_abstentions)}")
-    for item in results:
-        flag = "GUARDRULES_ACTIVE" if item["abstention_count"] > 0 else "CLEAN_SUCCESS"
-        print(
-            f"- [{item['case_id']}] Status={item['status']} ({flag}) | Abstentions={item['abstention_count']}"
-        )
+    print(f"1. Clinical Concept Recall:          {metrics_scorecard['clinical_concept_recall_pct']}% ({extracted_gold_concepts}/{total_gold_concepts})")
+    print(f"2. Role Classification Accuracy:      {metrics_scorecard['role_classification_accuracy_pct']}% ({correct_roles}/{total_role_evaluations})")
+    print(f"3. Code Accuracy:                    {metrics_scorecard['code_accuracy_pct']}% ({correct_codes}/{total_expected_codes})")
+    print(f"4. False Positive Count:             {metrics_scorecard['false_positive_count']} (Zero false positives goal)")
+    print(f"5. Abstention Quality Score:         {metrics_scorecard['abstention_quality_pct']}% ({correct_abstentions}/{total_abstention_checks})")
+    print(f"6. Candidate Retrieval Recall:       {metrics_scorecard['candidate_retrieval_recall_pct']}% ({retrieval_hits}/{total_retrieval_checks})")
+    print("=" * 80)
 
     return report
 

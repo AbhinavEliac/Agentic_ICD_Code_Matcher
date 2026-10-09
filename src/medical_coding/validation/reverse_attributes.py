@@ -125,21 +125,21 @@ def has_positive_mention(synonym: str, text: str) -> bool:
     pattern = rf"\b{syn_esc}\b"
     for match in re.finditer(pattern, text, re.IGNORECASE):
         start = match.start()
-        lookback_start = max(0, start - 45)
+        lookback_start = max(0, start - 60)
         preceding = text[lookback_start:start]
-        # Inspect after last punctuation if present
-        last_punct = max(preceding.rfind("."), preceding.rfind(";"), preceding.rfind(","))
-        if last_punct != -1:
-            preceding = preceding[last_punct + 1 :]
 
-        # Check if preceding snippet contains negation words
+        # Sentence boundaries stop negation scope, but commas in lists do not
+        sent_boundary = max(preceding.rfind("."), preceding.rfind(";"), preceding.rfind("\n"))
+        clause = preceding[sent_boundary + 1 :] if sent_boundary != -1 else preceding
+
+        # Check if preceding snippet or clause contains negation words
         if re.search(
             r"\b(?:no|not|without|denies|denied|negative\s+for|no\s+evidence\s+of|no\s+active|ruled\s+out|free\s+of)\b",
-            preceding,
+            clause,
             re.IGNORECASE,
         ):
             continue
-        if preceding.rstrip().endswith("non-") or preceding.rstrip().endswith("non"):
+        if clause.rstrip().endswith("non-") or clause.rstrip().endswith("non"):
             continue
 
         return True
