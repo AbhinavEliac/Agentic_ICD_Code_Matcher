@@ -6,6 +6,7 @@ from typing import Any
 
 import streamlit as st
 
+from medical_coding.schemas.enums import AbstentionReason
 from medical_coding.schemas.response import CodedDiagnosisResponse, CodingResult
 from medical_coding.schemas.validation import AbstentionRecord
 
