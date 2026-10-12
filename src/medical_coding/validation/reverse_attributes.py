@@ -407,12 +407,32 @@ class ReverseAttributeChecker:
 
         from medical_coding.retrieval.tokenizer import CLINICAL_ABBREVIATIONS
 
+        ORGANISM_EQUIVALENCES: dict[str, list[str]] = {
+            "escherichia": ["e. coli", "e coli", "escherichia", "coliform"],
+            "coli": ["e. coli", "e coli", "escherichia coli", "coli"],
+            "helicobacter": ["h. pylori", "h pylori", "helicobacter"],
+            "pylori": ["h. pylori", "h pylori", "helicobacter pylori", "pylori"],
+            "streptococcus": ["strep", "streptococcal", "s. pneumoniae", "s. pyogenes", "streptococcus"],
+            "staphylococcus": ["staph", "staphylococcal", "s. aureus", "mrsa", "mssa", "staphylococcus"],
+            "pseudomonas": ["p. aeruginosa", "pseudomonal", "pseudomonas"],
+            "klebsiella": ["k. pneumoniae", "klebsiella"],
+            "clostridioides": ["c. diff", "c. difficile", "c difficile", "clostridioides", "clostridium"],
+            "clostridium": ["c. diff", "c. difficile", "c difficile", "clostridium", "clostridioides"],
+            "mycobacterium": ["tb", "tuberculosis", "m. tuberculosis", "mycobacterium"],
+        }
+
+        # Check bracketed synonyms in code description (e.g. [E. coli], [H. pylori])
+        bracketed_synonyms = [b.strip() for b in re.findall(r"\[(.*?)\]", desc_lower) if b.strip()]
+        bracket_supported = any(has_positive_mention(b, combined_evidence) for b in bracketed_synonyms)
+
         for mod in code_modifiers:
             if mod in unsupported:
                 continue
             variants = [mod] + CLINICAL_MORPHOLOGY.get(mod, [])
             if mod in CLINICAL_ABBREVIATIONS:
                 variants.extend(CLINICAL_ABBREVIATIONS[mod].split())
+            if mod in ORGANISM_EQUIVALENCES:
+                variants.extend(ORGANISM_EQUIVALENCES[mod])
             if mod.endswith("s") and len(mod) > 4:
                 variants.append(mod[:-1])
             if mod.endswith("ic") and len(mod) > 4:
@@ -421,6 +441,8 @@ class ReverseAttributeChecker:
                 variants.append(mod[:-2])
 
             supported = any(has_positive_mention(v, combined_evidence) for v in variants)
+            if not supported and bracket_supported and mod in ("escherichia", "helicobacter", "streptococcus", "staphylococcus", "pseudomonas", "klebsiella", "clostridium", "clostridioides"):
+                supported = True
             if not supported:
                 unsupported.append(mod)
 

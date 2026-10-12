@@ -268,9 +268,9 @@ class RankedSelection(BaseModel):
             description="Outcome of candidate evaluation.",
         )
     )
-    matching_status: Literal["MATCHED", "NO_DATABASE_MATCH"] = Field(
+    matching_status: Literal["MATCHED", "NEAREST_MATCH", "NO_DATABASE_MATCH"] = Field(
         default="NO_DATABASE_MATCH",
-        description="Whether a database code was matched or no match was found in the database.",
+        description="Whether a database code was matched, nearest relatable code matched, or no match was found.",
     )
     source_section: str | None = Field(
         default=None,

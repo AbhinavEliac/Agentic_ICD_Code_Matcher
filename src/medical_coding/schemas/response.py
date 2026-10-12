@@ -56,9 +56,9 @@ class CodedDiagnosisResponse(BaseModel):
         default=None,
         description="Matched CPT procedural code if matched, None if not.",
     )
-    matching_status: Literal["MATCHED", "NO_DATABASE_MATCH"] = Field(
+    matching_status: Literal["MATCHED", "NEAREST_MATCH", "NO_DATABASE_MATCH"] = Field(
         default="MATCHED",
-        description="Whether this diagnosis matched a database code or abstained as NO_DATABASE_MATCH.",
+        description="Whether this diagnosis matched a database code, nearest relatable match, or abstained as NO_DATABASE_MATCH.",
     )
     database_code: str | None = Field(
         default=None,

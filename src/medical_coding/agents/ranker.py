@@ -658,6 +658,7 @@ class CandidateRankingAgent(BaseAgent):
         # If top candidate score is below min_confidence, or if top candidate has unsupported attributes:
         # Check if there is another candidate in candidate pool that is billable, has no unsupported attributes,
         # and has core_match_fraction > 0.0
+        matching_status = "MATCHED"
         if top_score < self.min_confidence:
             fallback_cand = None
             for cand, s, rat in scored_candidates:
@@ -674,6 +675,17 @@ class CandidateRankingAgent(BaseAgent):
 
             if fallback_cand:
                 top_cand = fallback_cand
+            elif candidates and evidence_quote:
+                # Per requirement: for [no_local_code] diagnoses with evidence, display the nearest relatable code
+                nearest_cand = scored_candidates[0][0]
+                for cand, s, rat in scored_candidates:
+                    if cand.is_valid_billable:
+                        nearest_cand = cand
+                        break
+                top_cand = nearest_cand
+                top_score = max(0.40, top_score)
+                top_rationale = f"nearest relatable candidate assigned for documented condition ({top_rationale})"
+                matching_status = "NEAREST_MATCH"
             else:
                 abstain_reason = (
                     "UNSUPPORTED_SPECIFICITY"
@@ -723,7 +735,7 @@ class CandidateRankingAgent(BaseAgent):
             supporting_evidence=[evidence_quote],
             confidence=max(0.0, min(1.0, round(top_score, 4))),
             abstention_reason=None,
-            matching_status="MATCHED",
+            matching_status=matching_status,
             candidate_pool=candidates,
             decision="ACCEPTED",
         )

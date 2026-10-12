@@ -243,11 +243,7 @@ def render_coding_session_results(
             error_traceback=tb_str,
             duration_ms=coding_result.processing_time_ms,
         )
-        render_process_oversight_timeline(steps_data, coding_result.processing_time_ms)
         return
-
-    # Render Node-by-Node Process Oversight & Latency Timeline
-    render_process_oversight_timeline(steps_data, coding_result.processing_time_ms)
 
     # High-Level KPIs
     st.markdown("### 📊 Coding Decisions & Evidence Audit")

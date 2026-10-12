@@ -149,6 +149,15 @@ class DeterministicValidator:
                 candidate = better_candidate
                 code = better_candidate.code
                 anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs = _evaluate_candidate_clinical_meaning(candidate)
+            elif getattr(selection, "matching_status", "") == "NEAREST_MATCH":
+                # User requirement: for [no_local_code] type diagnosis, nearest relatable code should get displayed, because they also have evidence
+                checks.append(
+                    ValidationCheck(
+                        rule_name="NearestRelatableMatch",
+                        passed=True,
+                        details=f"Nearest relatable code '{code}' ({candidate.description}) accepted for documented clinical condition.",
+                    )
+                )
             else:
                 failure_reasons = []
                 if not anat_ok and anat_err:
@@ -267,7 +276,7 @@ class DeterministicValidator:
             cpt=cpt_val,
             database_code=code,
             database_description=candidate.description,
-            matching_status="MATCHED",
+            matching_status=getattr(selection, "matching_status", "MATCHED") or "MATCHED",
             source_section=getattr(condition.context.evidence, "source_section", "") or getattr(selection, "source_section", ""),
             source_span=getattr(condition.context.evidence, "source_span", None) or getattr(selection, "source_span", None),
         )

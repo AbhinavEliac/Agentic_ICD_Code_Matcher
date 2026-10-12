@@ -54,6 +54,8 @@ FAMILY_TO_CODE_PREFIXES: dict[str, list[str]] = {
     "myocardial_infarction": ["I21", "I22"],
     "cholecystitis": ["K81", "K80"],
     "cholelithiasis": ["K80"],
+    "choledocholithiasis": ["K80.50", "K80.30", "K80.32", "K80.5", "K80"],
+    "nasal_obstruction": ["J34.89", "J34.9", "R09.81", "J34.2", "J34"],
     "hyperlipidemia": ["E78"],
     "hypokalemia": ["E87.6", "E87"],
     "hyperkalemia": ["E87.5", "E87"],

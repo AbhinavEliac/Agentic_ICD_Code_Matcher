@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 # Standard section header regexes
 SECTION_PATTERNS: list[tuple[str, str]] = [
     ("DISCHARGE_SUMMARY", r"(?:HOSPITAL\s+DISCHARGE\s+SUMMARY|DISCHARGE\s+SUMMARY|CLINICAL\s+SUMMARY)"),
-    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|FINAL\s+CODING\s+SUMMARY|CODING\s+SUMMARY|FINAL\s+CODING|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOSIS|ACTIVE\s+PROBLEMS|PROBLEM\s+LIST|ACTIVE\s+ISSUES)"),
+    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|FINAL\s+CODING\s+SUMMARY|CODING\s+SUMMARY|FINAL\s+CODING|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOS[EI]S|ACTIVE\s+PROBLEMS|PROBLEM\s+LIST|ACTIVE\s+ISSUES)"),
     ("PRINCIPAL_DIAGNOSIS", r"(?:PRINCIPAL\s+DIAGNOS[EI]S|PRIMARY\s+DIAGNOS[EI]S|ADMITTING\s+DIAGNOS[EI]S|ADMISSION\s+DIAGNOS[EI]S)"),
     ("SECONDARY_DIAGNOSES", r"(?:SECONDARY\s+DIAGNOS[EI]S|ADDITIONAL\s+DIAGNOS[EI]S|CO-?MORBIDITIES|OTHER\s+DIAGNOS[EI]S)"),
     ("CHIEF_COMPLAINT", r"(?:CHIEF\s+COMPLAINT|REASON\s+FOR\s+ADMISSION|PRESENTING\s+COMPLAINT|ADMITTED\s+FOR)"),
@@ -175,6 +175,8 @@ class SectionSegmenter:
             content_start = m["content_start"]
             content_end = matches[i + 1]["start_pos"] if i + 1 < len(matches) else len(text)
             content_str = text[content_start:content_end]
+            if not content_str.strip() and i + 1 < len(matches):
+                continue
             sections.append(
                 ClinicalDocumentSection(
                     section_name=m["section_name"],
@@ -190,6 +192,40 @@ class SectionSegmenter:
 
 class EvidenceFirstFactExtractor:
     """Extracts evidence-grounded clinical facts from partitioned document sections."""
+
+    @staticmethod
+    def _protect_organism_abbreviations(text: str) -> tuple[str, dict[str, str]]:
+        """Protect genus abbreviations (e.g., E. coli, H. pylori, S. aureus, C. diff) from being split on period."""
+        replacements: dict[str, str] = {}
+        def _repl(m: re.Match) -> str:
+            token = f"__ORG_ABBR_{len(replacements)}__"
+            replacements[token] = m.group(0)
+            return token
+        # Matches single uppercase letter + dot + space + species word
+        masked = re.sub(r"\b([A-Za-z])\.\s*([A-Za-z]+(?:\s+[a-z]+)?)\b", _repl, text)
+        return masked, replacements
+
+    @staticmethod
+    def _unprotect_organism_abbreviations(text: str, replacements: dict[str, str]) -> str:
+        res = text
+        for token, original in replacements.items():
+            res = res.replace(token, original)
+        return res
+
+    @staticmethod
+    def _split_into_sentences(text: str) -> list[str]:
+        """Split text into sentences while strictly preserving organism names, numbered lists, and decimal numbers."""
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        sentences: list[str] = []
+        for line in lines:
+            masked, rep = EvidenceFirstFactExtractor._protect_organism_abbreviations(line)
+            # Split only on period/question/exclamation followed by space and capital letter or digit
+            sub_sents = re.split(r"(?<!\b[A-Za-z])(?<!\b\d)[.!?]+\s+(?=[A-Z0-9])", masked)
+            for s in sub_sents:
+                s_unmasked = EvidenceFirstFactExtractor._unprotect_organism_abbreviations(s.strip(), rep)
+                if s_unmasked:
+                    sentences.append(s_unmasked)
+        return sentences
 
     def __init__(self) -> None:
         self._extracted_procedures: list[str] = []
@@ -460,7 +496,7 @@ class EvidenceFirstFactExtractor:
             return []
 
         # Split into sentences or lines
-        raw_sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", cleaned) if s.strip()]
+        raw_sentences = self._split_into_sentences(cleaned)
 
         for sent in raw_sentences:
             if len(sent) < 4:
@@ -1014,7 +1050,7 @@ class EvidenceFirstFactExtractor:
 
         from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", cleaned) if s.strip()]
+        sentences = self._split_into_sentences(cleaned)
 
         for sent in sentences:
             if (
@@ -1026,49 +1062,51 @@ class EvidenceFirstFactExtractor:
             ):
                 continue
 
+            masked_sent, rep = self._protect_organism_abbreviations(sent)
+
             # Pattern A: Complication cues: "course was complicated by [X]", "complicated by [X]", "developed [X]", "went into [X]", "manifested [X]"
             comp_match = re.search(
                 r"(?:course\s+(?:was\s+)?complicated\s+by|complicated\s+by|developed|went\s+into|manifested|suffered)\s+([^.]+)",
-                sent,
+                masked_sent,
                 re.IGNORECASE,
             )
             # Pattern B: Inpatient management/diagnosis: "treated for [X]", "managed for [X]", "diagnosed with [X]"
             treat_match = re.search(
                 r"(?:treated\s+(?:for|with\s+(?:iv\s+)?[a-z0-9]+\s+for)|managed\s+for|diagnosed\s+with|inpatient\s+management\s+of)\s+([^.]+)",
-                sent,
+                masked_sent,
                 re.IGNORECASE,
             )
             # Pattern C: Specialist evaluations, consultations, and clinical conclusions
             eval_match = re.search(
                 r"(?:(?:[a-z]+\s+)?(?:evaluation|consultation|consult|assessment|review)\s+(?:concluded|revealed|showed|noted|found|confirmed|diagnosed|suggested)\s+(?:that\s+)?|concluded\s+that\s+|noted\s+to\s+have\s+|found\s+to\s+have\s+|manifested\s+(?:with\s+)?)\s*([^.]+)",
-                sent,
+                masked_sent,
                 re.IGNORECASE,
             )
             # Pattern D: Additional or concurrent conditions documented during course
             additional_match = re.search(
                 r"(?:with\s+additional|and\s+additional|additional|concurrent|superimposed)\s+([^.]+)",
-                sent,
+                masked_sent,
                 re.IGNORECASE,
             )
 
             matched_clauses: list[str] = []
             if comp_match:
-                matched_clauses.append(comp_match.group(1).strip())
+                matched_clauses.append(self._unprotect_organism_abbreviations(comp_match.group(1).strip(), rep))
             if treat_match:
-                matched_clauses.append(treat_match.group(1).strip())
+                matched_clauses.append(self._unprotect_organism_abbreviations(treat_match.group(1).strip(), rep))
             if eval_match:
-                matched_clauses.append(eval_match.group(1).strip())
+                matched_clauses.append(self._unprotect_organism_abbreviations(eval_match.group(1).strip(), rep))
             if additional_match:
-                matched_clauses.append(additional_match.group(1).strip())
+                matched_clauses.append(self._unprotect_organism_abbreviations(additional_match.group(1).strip(), rep))
 
             if not matched_clauses:
                 gen_match = re.search(
                     r"(?:patient\s+(?:had|experienced|manifested|presented\s+with|developed)|also\s+(?:had|noted|developed|experienced|found)|showed|revealed|demonstrated|confirmed|diagnosed\s+as)\s+([^.]+)",
-                    sent,
+                    masked_sent,
                     re.IGNORECASE,
                 )
                 if gen_match:
-                    matched_clauses.append(gen_match.group(1).strip())
+                    matched_clauses.append(self._unprotect_organism_abbreviations(gen_match.group(1).strip(), rep))
 
             for clause in matched_clauses:
                 # Strip trailing management phrases from clause
@@ -1172,7 +1210,7 @@ class EvidenceFirstFactExtractor:
 
         from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", cleaned) if s.strip()]
+        sentences = self._split_into_sentences(cleaned)
 
         for sent in sentences:
             if (
@@ -1185,24 +1223,39 @@ class EvidenceFirstFactExtractor:
                 continue
 
             findings_clauses: list[str] = []
+            masked_sent, rep = self._protect_organism_abbreviations(sent)
 
             # 1. Imaging findings: CT, CXR, Ultrasound, MRI, Biopsy, EGD
             img_match = re.search(
-                r"(?:ct(?:\s+scan)?|cxr|chest\s+x-?ray|ultrasound|usg|mri|egd|biopsy|echocardiogram|studies)\s*(?:of\s+[^\n:]+)?\s*(?::|--|-)?\s*(?:showed|revealed|demonstrated|confirmed|reported|noted)\s+([^.]+)",
-                sent,
+                r"(?:ct(?:\s+scan)?|cxr|chest\s+x-?ray|ultrasound|usg|mri|egd|biopsy|echocardiogram|studies)\s*(?:of\s+[^\n:]+)?\s*(?::|--|-)?\s*(?:showed|revealed|demonstrated|confirmed|reported|noted|positive\s+(?:for)?)\s+([^.]+)",
+                masked_sent,
                 re.IGNORECASE,
             )
             if img_match:
-                findings_clauses.append(img_match.group(1).strip())
+                findings_clauses.append(self._unprotect_organism_abbreviations(img_match.group(1).strip(), rep))
 
             # 2. Microbiology / culture findings: blood culture, urine culture, sputum culture
             micro_match = re.search(
-                r"(?:blood\s+cultures?|urine\s+cultures?|sputum\s+cultures?|cultures?|gram\s+stain|clo\s+test)\s*(?::|--|-)?\s*(?:grew|positive\s+for|showed|isolated|revealed)\s+([^.]+)",
-                sent,
+                r"(?:blood\s+cultures?|urine\s+cultures?|sputum\s+cultures?|stool\s+cultures?|cultures?|gram\s+stain|clo\s+test|microbiology)\s*(?::|--|-)?\s*(?:grew|positive\s+(?:for)?|showed|isolated|revealed|detected|identified)?\s*([^.]+)",
+                masked_sent,
                 re.IGNORECASE,
             )
             if micro_match:
-                findings_clauses.append(micro_match.group(1).strip())
+                findings_clauses.append(self._unprotect_organism_abbreviations(micro_match.group(1).strip(), rep))
+
+            # Direct extraction for prominent clinical microorganisms
+            for org_pat in [
+                r"\b(?:e\.?\s*coli|escherichia\s+coli)\b",
+                r"\b(?:h\.?\s*pylori|helicobacter\s+pylori)\b",
+                r"\b(?:c\.?\s*diff(?:icile)?|clostridioides\s+difficile)\b",
+                r"\b(?:s\.?\s*aureus|staphylococcus\s+aureus|mrsa)\b",
+                r"\b(?:s\.?\s*pneumoniae|streptococcus\s+pneumoniae)\b",
+                r"\b(?:p\.?\s*aeruginosa|pseudomonas\s+aeruginosa)\b",
+                r"\b(?:k\.?\s*pneumoniae|klebsiella\s+pneumoniae)\b",
+            ]:
+                org_m = re.search(org_pat, sent, re.IGNORECASE)
+                if org_m:
+                    findings_clauses.append(org_m.group(0).strip())
 
             for clause in findings_clauses:
                 # Strip trailing notes or measures e.g. "causing hydronephrosis", "measuring 9mm", ">100,000 CFU/mL"
@@ -1655,11 +1708,13 @@ class EvidenceFirstFactExtractor:
             if p2.lower() in generic_suffix_nouns:
                 continue
 
+            p2_clean = re.sub(r"^(?:with|due\s+to|secondary\s+to|caused\s+by|from)\s+", "", p2, flags=re.IGNORECASE).strip()
+
             v1, _ = HardClinicalCandidateGate.evaluate_candidate(p1)
-            v2, _ = HardClinicalCandidateGate.evaluate_candidate(p2)
+            v2, _ = HardClinicalCandidateGate.evaluate_candidate(p2_clean or p2)
 
             if v1 and v2:
-                return [p1] + EvidenceFirstFactExtractor._split_adjacent_clinical_conditions(p2)
+                return [p1] + EvidenceFirstFactExtractor._split_adjacent_clinical_conditions(p2_clean or p2)
 
         return [text.strip()]
 
@@ -1731,7 +1786,7 @@ class EvidenceFirstFactExtractor:
 
         # Temporary mask for genus abbreviations like E. coli, H. pylori, S. pneumoniae, C. difficile
         masked = cleaned
-        abbrev_matches = list(re.finditer(r"\b([A-Z])\.\s+([a-z]+)\b", masked))
+        abbrev_matches = list(re.finditer(r"\b([A-Za-z])\.\s*([A-Za-z]+(?:\s+[a-z]+)?)\b", masked))
         for i, m in enumerate(abbrev_matches):
             masked = masked.replace(m.group(0), f"__ORGANISM_{i}__")
 
@@ -1742,8 +1797,8 @@ class EvidenceFirstFactExtractor:
                 masked = masked.replace(pm.group(0), f"__PLUS_MARKER_{i}__")
 
         # 1. Connectors that unconditionally separate independent clinical entities
-        # Split on list delimiters: plus signs (+), semicolons (;), ampersands (&), and slashes (/) separating independent entities
-        list_delims_pattern = r"\s*(?:\+|;|\s+&\s+|\s+/\s+)\s*"
+        # Split on list delimiters: commas (,), plus signs (+), semicolons (;), ampersands (&), and slashes (/)
+        list_delims_pattern = r"\s*(?:,|;|\+|\s+&\s+|\s+/\s+)\s*"
         raw_splits = [p.strip() for p in re.split(list_delims_pattern, masked, flags=re.IGNORECASE) if p.strip()]
 
         chunks: list[str] = []
@@ -1788,9 +1843,12 @@ class EvidenceFirstFactExtractor:
                     pre_with = chunk[:generic_with_m.start()].strip()
                     post_with = generic_with_m.group(1).strip()
                     pre_with_clean = re.sub(r"\s+to\s+(?:the\s+)?(?:left|right|bilateral)$", "", pre_with, flags=re.IGNORECASE).strip()
+                    post_with_unmasked = post_with
+                    for i, m in enumerate(abbrev_matches):
+                        post_with_unmasked = post_with_unmasked.replace(f"__ORGANISM_{i}__", m.group(0))
                     from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
                     v_pre, _ = HardClinicalCandidateGate.evaluate_candidate(pre_with_clean or pre_with)
-                    v_post, _ = HardClinicalCandidateGate.evaluate_candidate(post_with)
+                    v_post, _ = HardClinicalCandidateGate.evaluate_candidate(post_with_unmasked)
                     if v_pre and v_post:
                         refined_chunks.append(pre_with_clean or pre_with)
                         refined_chunks.append(post_with)

@@ -63,7 +63,7 @@ def render_header(
 
 def render_kpi_metrics(result: CodingResult) -> None:
     """Render high-level KPIs for a single document coding run."""
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
 
     status_str = result.status.value if hasattr(result.status, "value") else str(result.status)
     status_class = (
@@ -131,19 +131,6 @@ def render_kpi_metrics(result: CodingResult) -> None:
             unsafe_allow_html=True,
         )
 
-    with c5:
-        st.markdown(
-            clean_html(
-                f"""
-                <div class="kpi-card">
-                    <div class="kpi-label">Processing Time</div>
-                    <div class="kpi-value">{result.processing_time_ms:.1f}<span style="font-size: 13px; font-weight: normal; color: #94a3b8;"> ms</span></div>
-                </div>
-                """
-            ),
-            unsafe_allow_html=True,
-        )
-
 
 def _clean_audit_from_evidence(ev: str) -> str:
     """Clean internal audit justifications and boilerplate from display evidence strings."""
@@ -171,6 +158,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
     )
     acuity_badge = f'<span class="pill-badge badge-info">{html.escape(primary.acuity.value if hasattr(primary.acuity, "value") else str(primary.acuity))}</span>'
     certainty_badge = f'<span class="pill-badge badge-secondary">{html.escape(primary.certainty.value if hasattr(primary.certainty, "value") else str(primary.certainty))}</span>'
+    nearest_badge = '<span class="pill-badge badge-warning">Nearest Relatable Match</span>' if getattr(primary, "matching_status", "") == "NEAREST_MATCH" else ""
 
     conf_pct = int(primary.confidence_score * 100)
 
@@ -217,6 +205,7 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
             <div style="display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap;">
                 {acuity_badge}
                 {certainty_badge}
+                {nearest_badge}
                 <span class="pill-badge badge-info">Chief Reason for Encounter</span>
                 {codes_html}
             </div>
@@ -252,6 +241,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
         )
         acuity_str = html.escape(diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity))
         certainty_str = html.escape(diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty))
+        nearest_badge = '<span class="pill-badge badge-warning">Nearest Relatable Match</span>' if getattr(diag, "matching_status", "") == "NEAREST_MATCH" else ""
 
         sec_codes_pills = []
         if diag.icd10cm:
@@ -286,6 +276,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                     </div>
                     <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                         {billable_badge}
+                        {nearest_badge}
                         <span class="pill-badge badge-secondary">{acuity_str}</span>
                         <span class="pill-badge badge-secondary">{certainty_str}</span>
                         {sec_codes_html}
@@ -597,68 +588,8 @@ NODE_TITLES: dict[str, str] = {
 
 
 def render_process_oversight_timeline(steps: list[dict[str, Any]], total_duration_ms: float = 0.0) -> None:
-    """Render a comprehensive process oversight timeline showing status and latency for each node."""
-    if not steps:
-        return
-
-    st.markdown("### ⏱️ Process Oversight & Node Latency Timeline")
-    st.caption("Real-time node-by-node execution auditing with microsecond time tracking and invariant verification:")
-
-    tot_ms = total_duration_ms or sum(s.get("duration_ms", 0.0) for s in steps) or 1.0
-
-    timeline_rows = []
-    for s in steps:
-        s_name = s.get("step_name", "unknown")
-        title = NODE_TITLES.get(s_name, s_name)
-        status = s.get("status", "SUCCESS")
-        dur = float(s.get("duration_ms", 0.0))
-        share = min(100.0, round((dur / tot_ms) * 100.0, 1)) if tot_ms > 0 else 0.0
-
-        if status == "SUCCESS":
-            status_badge = '<span class="pill-badge badge-success">✓ PASSED</span>'
-            row_class = "step-row"
-            status_icon = "🟢"
-        elif status == "FAILED":
-            status_badge = '<span class="pill-badge badge-danger">✗ FAILED</span>'
-            row_class = "step-row step-row-failed"
-            status_icon = "🔴"
-        else:
-            status_badge = '<span class="pill-badge badge-info">⏳ RUNNING</span>'
-            row_class = "step-row step-row-running"
-            status_icon = "🔵"
-
-        msg = s.get("log_message", "")
-
-        timeline_rows.append(
-            f"""
-            <div class="{row_class}">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span class="step-num">#{s.get('step_index', 0):02d}</span>
-                    <span style="font-size: 14px;">{status_icon}</span>
-                    <div>
-                        <span class="step-title">{title}</span>
-                        <span style="font-size: 11px; color: #94a3b8; margin-left: 8px;"><code>{s_name}</code></span>
-                        <div style="font-size: 12px; color: #cbd5e1; margin-top: 2px;">{msg}</div>
-                    </div>
-                </div>
-                <div style="text-align: right; min-width: 140px;">
-                    <span class="step-latency">{dur:.1f} ms</span>
-                    <span style="font-size: 11px; color: #64748b; margin-left: 6px;">({share}%)</span>
-                    <div style="margin-top: 4px;">{status_badge}</div>
-                </div>
-            </div>
-            """
-        )
-
-    content_html = "\n".join(timeline_rows)
-    st.markdown(
-        f"""
-        <div class="timeline-card">
-            {content_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """Render a comprehensive process oversight timeline (suppressed per user specification)."""
+    return
 
 
 def render_failure_alert(
@@ -689,7 +620,7 @@ def render_failure_alert(
                 <code style="color: #fee2e2; font-size: 13px;">{err_text}</code>
             </div>
             <div style="font-size: 11px; color: #94a3b8;">
-                Latency before failure: <strong>{duration_ms:.1f} ms</strong> • Prior completed stages preserved in audit database.
+                Prior completed stages preserved in audit database.
             </div>
         </div>
         """,

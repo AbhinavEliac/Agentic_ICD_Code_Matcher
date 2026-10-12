@@ -57,6 +57,8 @@ DISEASE_FAMILY_PATTERNS: list[tuple[str, list[str], str]] = [
     ("myocardial_infarction", ["myocardial infarction", "nstemi", "stemi", "acute coronary syndrome", "subendocardial myocardial infarction", "heart attack"], "heart"),
     ("cholecystitis", ["cholecystitis", "acute cholecystitis", "chronic cholecystitis"], "gallbladder"),
     ("cholelithiasis", ["cholelithiasis", "gallstone", "gallstones", "calculus of gallbladder", "biliary calculus"], "gallbladder"),
+    ("choledocholithiasis", ["choledocholithiasis", "calculus of bile duct", "bile duct calculus", "gallstone in bile duct"], "gallbladder"),
+    ("nasal_obstruction", ["nasal obstruction", "obstruction of nose", "nasal congestion", "nasal blockage", "deviated nasal septum"], "nose"),
     ("hyperlipidemia", ["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia"], "blood"),
     ("hypokalemia", ["hypokalemia", "hypopotassemia"], "blood"),
     ("hyperkalemia", ["hyperkalemia"], "blood"),

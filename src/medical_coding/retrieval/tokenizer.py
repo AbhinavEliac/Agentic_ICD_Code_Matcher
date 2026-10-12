@@ -52,6 +52,10 @@ CLINICAL_ABBREVIATIONS: dict[str, str] = {
     "dns": "deviated nasal septum",
     "fess": "functional endoscopic sinus surgery sinus endoscopy",
     "ith": "inferior turbinate hypertrophy",
+    "coli": "escherichia coli",
+    "pylori": "helicobacter pylori",
+    "choledocholithiasis": "calculus bile duct gallstone",
+    "mrsa": "methicillin resistant staphylococcus aureus",
 }
 
 # Non-informative general words (keeping critical medical distinctions: acute, chronic, type, 1, 2, without, etc.)
@@ -282,6 +286,14 @@ CLINICAL_MORPHOLOGY: dict[str, list[str]] = {
     "turbinates": ["turbinate", "nasal", "nose"],
     "nasal": ["nose", "turbinate", "turbinates", "septum"],
     "septum": ["nasal", "nose"],
+    "obstruction": ["blockage", "congestion", "disorder", "stricture", "stenosis"],
+    "choledocholithiasis": ["calculus", "bile", "duct", "gallstone", "gallstones", "cholelithiasis", "stone", "stones"],
+    "coli": ["escherichia", "infection", "bacteria", "bacteremia"],
+    "escherichia": ["coli", "infection", "bacteria", "bacteremia"],
+    "pylori": ["helicobacter", "gastritis", "infection", "bacteria"],
+    "helicobacter": ["pylori", "gastritis", "infection", "bacteria"],
+    "staphylococcus": ["staph", "aureus", "infection", "mrsa"],
+    "streptococcus": ["strep", "pneumoniae", "infection"],
     "pneumonia": ["pneumonitis", "pna"],
     "hypertension": ["htn", "high blood pressure"],
     "diabetes": ["dm", "diabetic"],
