@@ -212,9 +212,46 @@ class DeterministicValidator:
         )
 
         cand_sys = getattr(candidate, "coding_system", None) or "ICD-10-CM"
-        icd10cm_val = selection.selected_icd10cm or (code if cand_sys == "ICD-10-CM" else None)
-        icdo_val = selection.selected_icdo or (code if cand_sys == "ICD-O" else None)
-        cpt_val = selection.selected_cpt or (code if cand_sys == "CPT" else None)
+        icd10cm_val = code if cand_sys == "ICD-10-CM" else selection.selected_icd10cm
+        icdo_val = code if cand_sys == "ICD-O" else selection.selected_icdo
+        cpt_val = code if cand_sys == "CPT" else selection.selected_cpt
+
+        if icdo_val:
+            if not self.catalog.is_valid_code(icdo_val, system="ICD-O"):
+                icdo_val = None
+            else:
+                checks.append(
+                    ValidationCheck(
+                        rule_name="ICDO_CatalogMatch",
+                        passed=True,
+                        details=f"ICD-O morphology code '{icdo_val}' verified in authoritative catalog.",
+                    )
+                )
+
+        if cpt_val:
+            if not self.catalog.is_valid_code(cpt_val, system="CPT"):
+                cpt_val = None
+            else:
+                checks.append(
+                    ValidationCheck(
+                        rule_name="CPT_CatalogMatch",
+                        passed=True,
+                        details=f"CPT procedural code '{cpt_val}' verified in authoritative catalog.",
+                    )
+                )
+
+        # Preserve rich multi-span corroborated evidence from ranking & clinical extraction
+        final_ev = condition.context.evidence.model_copy() if hasattr(condition, "context") and hasattr(condition.context, "evidence") and condition.context.evidence else None
+        if selection.supporting_evidence and selection.supporting_evidence[0]:
+            merged_quote = " | ".join(s for s in selection.supporting_evidence if s).strip()
+            if final_ev:
+                final_ev.quote = merged_quote
+            else:
+                from medical_coding.schemas.clinical import EvidenceSnippet
+                final_ev = EvidenceSnippet(
+                    quote=merged_quote,
+                    source_section=getattr(selection, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                )
 
         validated = ValidatedDiagnosis(
             diagnosis_id=condition.diagnosis_id,
@@ -222,7 +259,7 @@ class DeterministicValidator:
             code=code,
             description=candidate.description,
             role=condition.role,
-            evidence=condition.context.evidence,
+            evidence=final_ev or condition.context.evidence,
             confidence_score=selection.ranking_score,
             checks=checks,
             icd10cm=icd10cm_val,
@@ -919,12 +956,29 @@ class CandidateRankingDeterministicValidator:
                 decision="REJECTED_LOW_CONFIDENCE",
             )
 
+        cand_system = getattr(matching_candidate, "coding_system", None) or "ICD-10-CM"
+        icd10cm_val = matching_candidate.code if cand_system == "ICD-10-CM" else selection.selected_icd10cm
+        icdo_val = matching_candidate.code if cand_system == "ICD-O" else selection.selected_icdo
+        cpt_val = matching_candidate.code if cand_system == "CPT" else selection.selected_cpt
+
+        for c in candidates:
+            c_sys = getattr(c, "coding_system", None)
+            if c_sys == "ICD-10-CM" and not icd10cm_val:
+                icd10cm_val = c.code
+            elif c_sys == "ICD-O" and not icdo_val:
+                icdo_val = c.code
+            elif c_sys == "CPT" and not cpt_val:
+                cpt_val = c.code
+
         # 9. Successfully accepted
         return RankedSelection(
             diagnosis_id=selection.diagnosis_id,
             raw_term=selection.raw_term or clean_diagnosis,
             selected_code=matching_candidate.code,
             selected_description=matching_candidate.description,
+            selected_icd10cm=icd10cm_val,
+            selected_icdo=icdo_val,
+            selected_cpt=cpt_val,
             selected_candidate=matching_candidate,
             ranking_reason=selection.ranking_reason
             or f"Selected candidate '{matching_candidate.code}' is best supported by documented clinical evidence.",

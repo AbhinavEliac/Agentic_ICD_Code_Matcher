@@ -179,6 +179,77 @@ class CodingResult(BaseModel):
                 raise ValueError("Secondary diagnoses cannot have role PRIMARY")
         return self
 
+    def format_output(self) -> str:
+        """Format strictly according to required clinical coding output:
+        primary diagnosis: <name>, code: <code>, evidence: <evidence quote>
+        secondary diagnosises:
+        diagnosis: <name>, code: <code>, evidence: <evidence quote>
+        """
+        def _clean_ev(text: str | None) -> str:
+            if not text:
+                return "None"
+            clean = str(text).strip()
+            if "Designated as " in clean:
+                clean = clean.split("Designated as ")[0].strip(" -|:\n")
+            return clean if clean else "None"
+
+        def _get_cand_ev(cand: Any) -> str:
+            quotes: list[str] = []
+            ev_list = getattr(cand, "evidence", []) or []
+            if isinstance(ev_list, list):
+                for item in ev_list:
+                    q = ""
+                    if isinstance(item, dict):
+                        q = _clean_ev(item.get("quote"))
+                    elif hasattr(item, "text"):
+                        q = _clean_ev(item.text)
+                    elif hasattr(item, "sentence"):
+                        q = _clean_ev(item.sentence)
+                    elif isinstance(item, str):
+                        q = _clean_ev(item)
+                    if q and q != "None" and q not in quotes:
+                        quotes.append(q)
+            if quotes:
+                return " | ".join(quotes)
+            return _clean_ev(getattr(cand, "evidence_quote", None))
+
+        def _get_formatted_code(cand: Any) -> str:
+            base_code = getattr(cand, "icd10cm", None) or cand.code or ""
+            extra_codes: list[str] = []
+            if getattr(cand, "icdo", None) and cand.icdo != base_code:
+                extra_codes.append(f"ICD-O: {cand.icdo}")
+            if getattr(cand, "cpt", None) and cand.cpt != base_code:
+                extra_codes.append(f"CPT: {cand.cpt}")
+            if base_code and extra_codes:
+                return f"{base_code} ({', '.join(extra_codes)})"
+            elif extra_codes:
+                return ", ".join(extra_codes)
+            elif base_code:
+                return base_code
+            return "None"
+
+        lines = []
+        if self.primary_diagnosis:
+            p = self.primary_diagnosis
+            p_name = p.normalized_diagnosis or p.raw_term or p.description
+            p_code = _get_formatted_code(p)
+            p_ev = _get_cand_ev(p)
+            lines.append(f"primary diagnosis: {p_name}, code: {p_code}, evidence: {p_ev}")
+        else:
+            lines.append("primary diagnosis: None, code: None, evidence: None")
+
+        if self.secondary_diagnoses:
+            lines.append("secondary diagnosises:")
+            for s in self.secondary_diagnoses:
+                s_name = s.normalized_diagnosis or s.raw_term or s.description
+                s_code = _get_formatted_code(s)
+                s_ev = _get_cand_ev(s)
+                lines.append(f"diagnosis: {s_name}, code: {s_code}, evidence: {s_ev}")
+        else:
+            lines.append("secondary diagnosises: None")
+
+        return "\n".join(lines)
+
 
 class TextCodingRequest(BaseModel):
     """Input payload for clinical text coding endpoint."""

@@ -164,3 +164,56 @@ class TestReverseAttributeValidation:
         )
         assert is_valid
         assert len(missing) == 0
+
+
+class TestNonClinicalNoiseFiltering:
+    """Validate strict exclusion of non-clinical daily activities, bodily functions, and generic procedures."""
+
+    @pytest.mark.parametrize(
+        "noise_phrase",
+        [
+            "Towel picked up",
+            "picked up towel",
+            "I pooped",
+            "pooped",
+            "urinated in bed",
+            "Procedure done",
+            "Surgery performed",
+            "brushing teeth",
+            "went to sleep",
+            "had breakfast",
+        ],
+    )
+    def test_gate_rejects_non_clinical_noise(self, noise_phrase):
+        is_valid, reason = HardClinicalCandidateGate.evaluate_candidate(noise_phrase, f"1. {noise_phrase}")
+        assert not is_valid, f"Noise '{noise_phrase}' should have been rejected but was accepted"
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_noise_filtering(self):
+        from medical_coding.graph.pipeline import process_clinical_document
+
+        doc = """
+        HOSPITAL DISCHARGE SUMMARY
+        PRINCIPAL DIAGNOSIS:
+        Acute appendicitis.
+        SECONDARY DIAGNOSES:
+        1. Procedure done.
+        2. Towel picked up.
+        3. I pooped.
+        4. Essential hypertension.
+        HOSPITAL COURSE: Patient presented with RLQ pain and fever. Diagnosed with acute appendicitis. History of hypertension managed with amlodipine. Appendectomy performed without complication.
+        """
+        res = await process_clinical_document(source=doc, document_id="noise-filter-test")
+        assert res.primary_diagnosis is not None
+        assert res.primary_diagnosis.code.startswith("K35")
+        sec_codes = {s.code for s in res.secondary_diagnoses}
+        assert "I10" in sec_codes
+        # Noise items must NOT be present anywhere in secondary diagnoses or primary
+        all_descriptions = [res.primary_diagnosis.description] + [s.description for s in res.secondary_diagnoses]
+        for desc in all_descriptions:
+            desc_lower = desc.lower()
+            assert "towel" not in desc_lower
+            assert "poop" not in desc_lower
+            assert "procedure done" not in desc_lower
+        # Total coded diagnoses should be exactly 2 (appendicitis + hypertension)
+        assert len(res.secondary_diagnoses) == 1

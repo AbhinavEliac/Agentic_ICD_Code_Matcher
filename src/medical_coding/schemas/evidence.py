@@ -247,6 +247,18 @@ class ClinicalDiagnosisCandidate(BaseModel):
                 return ev.text
         return self.evidence[0].text
 
+    @property
+    def composite_evidence_quote(self) -> str:
+        """Return all corroborated evidence quotes joined with clean separator."""
+        if not self.evidence:
+            return ""
+        quotes: list[str] = []
+        for ev in self.evidence:
+            q = (ev.text or ev.sentence or "").strip()
+            if q and q not in quotes:
+                quotes.append(q)
+        return " | ".join(quotes) if quotes else ""
+
 
 class ClinicalDiagnosisState(BaseModel):
     """Encounter clinical diagnosis state established strictly prior to ICD candidate retrieval."""

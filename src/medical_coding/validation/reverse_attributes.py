@@ -28,6 +28,9 @@ NON_SPECIFICITY_WORDS: set[str] = {
     "secondary", "neoplasm", "neoplasms", "tumor", "tumour", "intrahepatic", "bile", "duct",
     "coronary", "artery", "arteries", "vessel", "vessels", "wall", "vein", "veins",
     "essential", "uncomplicated",
+    "native", "atherosclerotic", "atherosclerosis", "arteriosclerotic", "gallbladder",
+    "collapse", "failure", "pneumonia",
+    "septicemia", "shock", "bacteremia", "systemic",
 }
 
 # Clinical attribute qualifiers mapped to documentary confirmation tokens/synonyms
@@ -377,13 +380,15 @@ class ReverseAttributeChecker:
         ):
             unsupported.append("type 2")
 
-        # Male vs Female breast/genitourinary specificity (Master Prompt Section 5)
-        if re.search(r"\bmale\b", desc_lower) and not re.search(
-            r"\b(?:male|man|men|boy|gentleman)\b", combined_evidence
-        ):
-            unsupported.append("male")
-
         # Universal Clinical Modifier Entailment (CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
+        without_matches = re.findall(r"\bwithout\s+([a-z0-9\-]+(?:\s+[a-z0-9\-]+)?)", desc_lower)
+        for w_phrase in without_matches:
+            w_phrase_clean = w_phrase.strip()
+            if w_phrase_clean in ("mention", "evidence", "complication", "complications"):
+                continue
+            if has_positive_mention(w_phrase_clean, combined_evidence):
+                unsupported.append(f"without {w_phrase_clean}")
+
         # Strips negative 'without' expressions so absences are not required
         desc_clean = re.sub(
             r"\bwithout\s+(?:mention\s+of\s+|evidence\s+of\s+|any\s+)?[a-z0-9\-]+(?:\s+[a-z0-9\-]+)?\b",
@@ -393,7 +398,6 @@ class ReverseAttributeChecker:
         # Strip parenthetical nonessential modifiers and bracketed synonyms (CMS Guidelines I.A.4 & I.A.7)
         desc_clean = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", desc_clean)
         # Strip parent taxonomy phrases for well-defined syndromic terms
-        # E.g. "Severe sepsis with septic shock" -> septic shock is the clinical manifestation
         if re.search(r"\bseptic\s+shock\b", combined_evidence):
             desc_clean = re.sub(r"\bsevere\s+sepsis\s+with\s+septic\s+shock\b", "septic shock", desc_clean)
         raw_code_tokens = re.findall(r"[a-z0-9]+", desc_clean)

@@ -586,7 +586,7 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         existing_codes: set[str] = set()
 
         # STAGE 1: Primary Hybrid Retrieval (Single fast dense+sparse search)
-        primary_hits = retriever.retrieve(clean_query, top_k=25)
+        primary_hits = retriever.retrieve(clean_query, top_k=25, system="ICD-10-CM")
         for h in primary_hits:
             if h.code not in existing_codes:
                 hits.append(h)
@@ -627,6 +627,8 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
             try:
                 lex_hits = retriever.lexical_retriever.retrieve(lt, top_k=15)
                 for h in lex_hits:
+                    if getattr(h, "coding_system", "ICD-10-CM") != "ICD-10-CM":
+                        continue
                     if h.code not in existing_codes:
                         hits.append(h)
                         existing_codes.add(h.code)
@@ -722,7 +724,8 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         # Handle ICD-O for neoplasms
         is_neoplasm = (
             concept.disease_family in ("breast_malignancy", "lymphoma", "pleural_metastasis", "kaposi_sarcoma", "liver_sarcoma", "neuroendocrine_tumor")
-            or any(w in raw_query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma"])
+            or any(w in raw_query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma", "melanoma", "malignancy", "dcis"])
+            or bool(getattr(concept, "histology", None))
         )
         if is_neoplasm:
             icdo_hits = retriever.retrieve(raw_query, top_k=5, system="ICD-O")
@@ -730,6 +733,29 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                 if o_hit.code not in existing_codes:
                     final_hits.append(o_hit)
                     existing_codes.add(o_hit.code)
+
+        # Handle CPT for associated procedures or interventional indications
+        proc_keywords = [
+            "appendectomy", "cholecystectomy", "stent", "stenting", "catheterization",
+            "dialysis", "biopsy", "resection", "excision", "laparoscopy", "laparotomy",
+            "drainage", "angioplasty", "bypass", "surgery", "operation", "intubation",
+            "thoracentesis", "paracentesis", "endoscopy", "colonoscopy", "arthroplasty", "mastectomy"
+        ]
+        has_proc = (
+            getattr(cond, "procedure_relevance", 0.0) > 0
+            or any(pw in raw_query.lower() or pw in ev_quote.lower() for pw in proc_keywords)
+        )
+        if has_proc:
+            proc_query = raw_query
+            for pw in proc_keywords:
+                if pw in ev_quote.lower() and pw not in raw_query.lower():
+                    proc_query = f"{raw_query} {pw}"
+                    break
+            cpt_hits = retriever.retrieve(proc_query, top_k=5, system="CPT")
+            for c_hit in cpt_hits:
+                if c_hit.code not in existing_codes:
+                    final_hits.append(c_hit)
+                    existing_codes.add(c_hit.code)
 
         return cond.diagnosis_id, concept, match_spec, final_hits
 
@@ -789,12 +815,11 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
 
     for cond in classified:
         candidates = candidate_pool.get(cond.diagnosis_id, [])
-        ev_quote = getattr(cond.context.evidence, "quote", "") if hasattr(cond, "context") and hasattr(cond.context, "evidence") else ""
-        if hasattr(cond, "classification_reason") and cond.classification_reason:
-            ev_quote = f"{ev_quote} {cond.classification_reason}"
+        ev_quote = getattr(cond.context.evidence, "quote", "") if hasattr(cond, "context") and hasattr(cond.context, "evidence") and cond.context.evidence else ""
 
         # Corroborate evidence across document narrative (Master Prompt Sections 4, 10, 11)
         # Merge evidence spans discussing this specific condition from hospital course, exam, etc.
+        ev_snippets: list[str] = [s.strip() for s in ev_quote.split(" | ") if s.strip()] if ev_quote else []
         cond_tokens = [
             w for w in re.findall(r"\b[a-z0-9]{3,}\b", cond.raw_term.lower())
             if w not in ("with", "without", "and", "the", "for", "left", "right", "acute", "chronic", "mild", "severe")
@@ -805,16 +830,17 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                 sent_lower = sent.lower()
                 matches = sum(1 for tok in cond_tokens if tok in sent_lower or any(v in sent_lower for v in CLINICAL_MORPHOLOGY.get(tok, [])))
                 if matches >= max(1, int(len(cond_tokens) * 0.5)):
-                    if sent_lower not in ev_quote.lower():
-                        ev_quote = f"{ev_quote} {sent}"
+                    if not any(sent_lower in existing.lower() or existing.lower() in sent_lower for existing in ev_snippets):
+                        ev_snippets.append(sent)
 
         # If condition is an orthopedic fracture and radiographic findings describe displacement/closed status:
         if "fracture" in cond.raw_term.lower() and raw_doc_text:
             for phrase in ["nondisplaced", "non-displaced", "no displacement", "closed fracture"]:
-                if phrase in raw_doc_text.lower() and phrase not in ev_quote.lower():
-                    ev_quote = f"{ev_quote} {phrase}"
+                if phrase in raw_doc_text.lower() and not any(phrase in existing.lower() for existing in ev_snippets):
+                    ev_snippets.append(phrase)
 
-        selection = agent.rank_candidates(cond, candidates, evidence_override=ev_quote.strip() or None)
+        clean_evidence_quote = " | ".join(ev_snippets).strip() if ev_snippets else ev_quote
+        selection = agent.rank_candidates(cond, candidates, evidence_override=clean_evidence_quote.strip() or None)
         ranked_selections.append(selection)
 
     return {
@@ -986,7 +1012,15 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             else Acuity.UNSPECIFIED,
             certainty=Certainty.CONFIRMED,
             evidence_quote=item.evidence.quote,
-            evidence=[{
+            evidence=[
+                {
+                    "quote": snippet.strip(),
+                    "section": getattr(item.evidence, "source_section", "") or "CLINICAL_DOCUMENTATION",
+                    "evidence_type": "CORROBORATING_EVIDENCE" if idx > 0 else "PRIMARY_EVIDENCE",
+                }
+                for idx, snippet in enumerate(item.evidence.quote.split(" | "))
+                if snippet.strip()
+            ] or [{
                 "quote": item.evidence.quote,
                 "section": getattr(item.evidence, "source_section", "") or "DISCHARGE_DIAGNOSES",
                 "evidence_type": "CLINICAL_EVIDENCE",
@@ -1082,8 +1116,22 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
     from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-    for c in classified:
-        if c.role == DiagnosisRole.SECONDARY and c.is_billable_candidate:
+    candidates_to_check: list[Any] = list(classified)
+    if diag_state:
+        for sd in getattr(diag_state, "secondary_diagnoses", []):
+            sd_term = getattr(sd, "normalized_diagnosis", None) or getattr(sd, "raw_term", "")
+            if not any(
+                (getattr(c, "normalized_diagnosis", None) or getattr(c, "raw_term", "") or getattr(c, "diagnosis", "")).lower() == sd_term.lower()
+                for c in candidates_to_check
+            ):
+                candidates_to_check.append(sd)
+
+    for c in candidates_to_check:
+        c_role = getattr(c, "role", None)
+        c_billable = getattr(c, "is_billable_candidate", True)
+        if getattr(c, "is_authorized", True) is False:
+            continue
+        if (c_role in (DiagnosisRole.SECONDARY, "SECONDARY")) and c_billable:
             c_term = (
                 getattr(c, "normalized_diagnosis", None)
                 or getattr(c, "raw_term", None)
@@ -1092,15 +1140,20 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             if not c_term:
                 continue
             c_norm = c_term.lower()
-            c_words = {w for w in re.findall(r"[a-z0-9]+", c_norm) if len(w) > 3}
+            generic_stop_words = {
+                "acute", "chronic", "disease", "disorder", "syndrome", "stage",
+                "type", "status", "unspecified", "secondary", "primary", "severe",
+                "mild", "moderate", "right", "left", "bilateral", "history", "with", "without"
+            }
+            c_words = {w for w in re.findall(r"[a-z0-9]+", c_norm) if len(w) > 3 and w not in generic_stop_words}
             is_already_covered = False
             for s_term in seen_sec_terms:
-                if (s_term in c_norm or c_norm in s_term) and len(s_term) > 4:
+                if c_norm == s_term:
                     is_already_covered = True
                     break
-                s_words = {w for w in re.findall(r"[a-z0-9]+", s_term) if len(w) > 3}
+                s_words = {w for w in re.findall(r"[a-z0-9]+", s_term) if len(w) > 3 and w not in generic_stop_words}
                 shared = c_words & s_words
-                if len(shared) >= 2 or any(k in shared for k in ("diabetes", "hypertension", "cholecystitis", "infarction", "failure", "calculus", "hypokalemia", "hyperlipidemia", "anemia", "pancreatitis", "gastritis")):
+                if len(shared) >= 2 or any(k in shared for k in ("diabetes", "hypertension", "cholecystitis", "infarction", "hypokalemia", "hyperlipidemia", "anemia", "pancreatitis", "gastritis")):
                     is_already_covered = True
                     break
             if is_already_covered:
@@ -1108,6 +1161,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
             c_quote = (
                 getattr(c, "evidence_quote", None)
+                or getattr(c, "primary_evidence_quote", None)
                 or (
                     c.context.evidence.quote
                     if hasattr(c, "context") and hasattr(c.context, "evidence") and c.context.evidence
@@ -1119,6 +1173,20 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             is_valid_cand, _ = HardClinicalCandidateGate.evaluate_candidate(c_term, c_quote)
             if not is_valid_cand:
                 continue
+
+            # Clinical condition had no matching code in authoritative database; explicitly abstain ICD code mapping
+            if not any(a.raw_term and a.raw_term.lower() == c_term.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(c, "diagnosis_id", "secondary"),
+                        raw_term=c_term,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Condition '{c_term}' lacked verified ICD database match; abstained.",
+                        stage=PipelineStage.RANKING,
+                    )
+                )
+
+            # Preserve clinically confirmed secondary diagnosis in secondary_responses
             sec_resp = CodedDiagnosisResponse(
                 raw_term=getattr(c, "raw_term", c_term),
                 normalized_diagnosis=c_term,
@@ -1126,30 +1194,25 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                 database_code=None,
                 database_description=None,
                 matching_status="NO_DATABASE_MATCH",
-                source_section=getattr(c, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                source_section=getattr(c, "source_section", "") or (c.context.evidence.source_section if hasattr(c, "context") and hasattr(c.context, "evidence") and c.context.evidence else "CLINICAL_DOCUMENTATION"),
                 source_span=getattr(c, "source_span", None),
                 role=DiagnosisRole.SECONDARY,
-                acuity=Acuity.ACUTE
-                if "acute" in c_term.lower()
-                else Acuity.CHRONIC
-                if "chronic" in c_term.lower()
-                else Acuity.UNSPECIFIED,
-                certainty=Certainty.CONFIRMED,
+                acuity=getattr(c, "acuity", Acuity.UNSPECIFIED),
+                certainty=getattr(c, "certainty", Certainty.CONFIRMED),
                 evidence_quote=c_quote,
                 evidence=[{
                     "quote": c_quote,
-                    "section": getattr(c, "source_section", "") or "DISCHARGE_DIAGNOSES",
+                    "section": getattr(c, "source_section", "") or "CLINICAL_DOCUMENTATION",
                     "evidence_type": "SECONDARY_DIAGNOSIS",
-                }],
-                confidence_score=0.70,
+                }] if c_quote else [],
+                confidence_score=getattr(c, "evidence_strength", 1.0),
                 is_terminal_billable=False,
                 icd10cm=None,
                 icdo=None,
                 cpt=None,
             )
             secondary_responses.append(sec_resp)
-            seen_sec_terms.add(c_term.lower())
-            seen_sec_terms.add(getattr(c, "raw_term", c_term).lower())
+            seen_sec_terms.add(c_norm)
 
     # Suppress Z71.1 ("feared health complaint in whom no diagnosis is made") when real clinical conditions exist
     if primary_response and primary_response.code == "Z71.1" and secondary_responses:
@@ -1157,20 +1220,16 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         primary_response.role = DiagnosisRole.PRIMARY
     secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
 
-    # Enforce clean role separation: secondary section must NEVER carry mentions of the primary diagnosis
+    # Enforce clean role separation: secondary section must NEVER duplicate the primary diagnosis
     if primary_response:
         pri_code = primary_response.code
-        pri_words = set(re.findall(r"[a-z0-9]+", f"{(primary_response.description or '').lower()} {(primary_response.raw_term or '').lower()} {(primary_response.normalized_diagnosis or '').lower()}")) - {
-            "acute", "chronic", "with", "without", "and", "the", "for", "type", "stage", "unspecified", "right", "left", "bilateral"
-        }
+        pri_norm = (primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or "").lower().strip()
         filtered_sec = []
         for s in secondary_responses:
             if pri_code and s.code and s.code == pri_code:
                 continue
-            s_words = set(re.findall(r"[a-z0-9]+", f"{(s.description or '').lower()} {(s.raw_term or '').lower()} {(s.normalized_diagnosis or '').lower()}")) - {
-                "acute", "chronic", "with", "without", "and", "the", "for", "type", "stage", "unspecified", "right", "left", "bilateral"
-            }
-            if s_words and pri_words and (s_words <= pri_words or (len(s_words & pri_words) >= 2 and len(s_words - pri_words) <= 1)):
+            s_norm = (s.normalized_diagnosis or s.raw_term or s.description or "").lower().strip()
+            if s_norm and pri_norm and s_norm == pri_norm:
                 continue
             filtered_sec.append(s)
         secondary_responses = filtered_sec
@@ -1205,13 +1264,33 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                     "reason": category,
                 })
 
+    # Verify CPT codes for encounter procedures
+    raw_procedures = state.get("extracted_procedures", []) or (getattr(diag_state, "procedures", []) if diag_state else [])
+    verified_procedures: list[str] = []
+    catalog, retriever = get_or_initialize_retrieval_system()
+    for proc in raw_procedures:
+        clean_p = proc.strip()
+        if not clean_p:
+            continue
+        if "[CPT:" in clean_p or "(CPT:" in clean_p:
+            verified_procedures.append(clean_p)
+            continue
+        try:
+            cpt_cand = retriever.retrieve(clean_p, top_k=1, system="CPT")
+            if cpt_cand and catalog.is_valid_code(cpt_cand[0].code, system="CPT") and cpt_cand[0].retrieval_score >= 0.50:
+                verified_procedures.append(f"{clean_p} [CPT: {cpt_cand[0].code}]")
+            else:
+                verified_procedures.append(clean_p)
+        except Exception:
+            verified_procedures.append(clean_p)
+
     result = CodingResult(
         document_id=doc_id,
         status=status,
         primary_diagnosis=primary_response,
         secondary_diagnoses=secondary_responses,
         abstentions=abstentions,
-        procedures=state.get("extracted_procedures", []) or (getattr(diag_state, "procedures", []) if diag_state else []),
+        procedures=verified_procedures,
         operative_findings=state.get("operative_findings", []) or (getattr(diag_state, "operative_findings", []) if diag_state else []),
         oncology_context=diag_state.oncology_context.model_dump() if diag_state and getattr(diag_state, "oncology_context", None) else None,
         excluded_candidates=excluded_candidates,
@@ -1230,7 +1309,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             "audit_trail": audit_trail,
             "validated_code_count": len(validated),
             "abstention_count": len(abstentions),
-            "extracted_procedures": state.get("extracted_procedures", []) or (getattr(diag_state, "procedures", []) if diag_state else []),
+            "extracted_procedures": verified_procedures,
             "operative_findings": state.get("operative_findings", []) or (getattr(diag_state, "operative_findings", []) if diag_state else []),
             "oncology_context": diag_state.oncology_context.model_dump() if diag_state and getattr(diag_state, "oncology_context", None) else None,
         },
@@ -1276,11 +1355,17 @@ def _extract_conditions_deterministically(
             and cand.temporality == Temporality.CURRENT
         )
 
+        composite_ev = getattr(cand, "composite_evidence_quote", "") or primary_ev or cand.raw_term
+        if treatment_ev and is_active and is_pmh:
+            ev_str = f"{cand.raw_term} — Inpatient management: {treatment_ev} | {composite_ev}".strip(" |")
+        else:
+            ev_str = composite_ev
+
         cond = ExtractedClinicalCondition(
             condition_id=cand.diagnosis_id,
             original_mention=cand.raw_term,
             normalized_description=cand.normalized_diagnosis,
-            evidence_text=f"{cand.raw_term} — Inpatient management: {treatment_ev}" if (treatment_ev and is_active and is_pmh) else (primary_ev or cand.raw_term),
+            evidence_text=ev_str,
             evidence_location=EvidenceLocation(
                 section=sec_name,
                 start_char=0,

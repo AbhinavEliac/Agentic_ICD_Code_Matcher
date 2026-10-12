@@ -83,10 +83,16 @@ class HybridICDRetriever(BaseICDRetriever):
         if hasattr(self, "_query_cache") and cache_key in self._query_cache:
             return [c.model_copy() for c in self._query_cache[cache_key]]
 
+        # Expand clinical abbreviations for dense semantic query embedding
+        from medical_coding.retrieval.tokenizer import expand_medical_abbreviations
+
+        expanded_query = expand_medical_abbreviations(clean_query)
+        dense_query = f"{clean_query} {expanded_query}".strip() if expanded_query.lower() != clean_query.lower() else clean_query
+
         # Retrieve candidates from both local engines with an expanded initial window
         search_window = max(k * 10, 350)
         lexical_hits = self.lexical_retriever.retrieve(clean_query, top_k=search_window)
-        vector_hits = self.vector_retriever.retrieve(clean_query, top_k=search_window)
+        vector_hits = self.vector_retriever.retrieve(dense_query, top_k=search_window)
 
         # Merge candidate pools by authoritative code
         merged: dict[str, dict[str, Any]] = {}

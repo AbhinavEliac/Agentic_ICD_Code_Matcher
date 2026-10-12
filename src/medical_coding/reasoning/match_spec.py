@@ -71,6 +71,18 @@ FAMILY_TO_CODE_PREFIXES: dict[str, list[str]] = {
     "osteoarthritis": ["M15", "M16", "M17", "M19"],
     "hypothyroidism": ["E03"],
     "acute_kidney_injury": ["N17"],
+    "copd": ["J44"],
+    "diverticulitis": ["K57"],
+    "diverticular_disease": ["K57"],
+    "syncope": ["R55"],
+    "delirium": ["F05", "G93.41"],
+    "cirrhosis": ["K74.6", "K74"],
+    "stroke": ["I63", "I67"],
+    "sepsis": ["A41", "R65.2"],
+    "gallstones": ["K80"],
+    "cad": ["I25"],
+    "pe": ["I26"],
+    "dvt": ["I82"],
 }
 
 

@@ -386,51 +386,73 @@ class ContextAndRelevanceAgent(BaseAgent):
                 enforced_list.append(asm)
                 continue
 
-            # Rule 3: Past Medical History alone must NOT automatically qualify as a coding candidate
-            is_pmh_only = "PAST" in sec or "PMH" in sec or asm.temporality == Temporality.HISTORICAL
+            # Rule 3: Historical or Past Medical History alone must NOT qualify as a coding candidate
+            is_historical_only = (
+                "PAST" in sec
+                or "PMH" in sec
+                or asm.temporality == Temporality.HISTORICAL
+                or asm.status == ConditionStatus.HISTORICAL
+                or (cond and cond.temporality == Temporality.HISTORICAL)
+                or (cond and cond.status == ConditionStatus.HISTORICAL)
+                or "historical" in full_context
+                or "childhood" in full_context
+                or "prior history" in full_context
+                or bool(re.search(r"\b\d+\s+years?\s+ago\b", full_context))
+            )
+            has_no_treatment = bool(
+                re.search(
+                    r"\b(?:no\s+(?:current\s+|active\s+)?(?:treatment|medication|rx|therapy|interventions?)|not\s+(?:currently\s+)?treated|without\s+(?:current\s+|active\s+)?(?:treatment|medication|rx|therapy))\b",
+                    full_context,
+                    re.IGNORECASE,
+                )
+            )
             has_inpatient_care = (
-                asm.treated_or_managed
-                or asm.monitored
-                or asm.affected_clinical_management
-                or asm.influenced_treatment
-                or (cond and cond.treatment_evidence is not None)
-                or any(
-                    term in full_context
-                    for term in [
-                        "treated",
-                        "adjusted",
-                        "insulin",
-                        "sliding scale",
-                        "glucose",
-                        "blood sugar",
-                        "continued",
-                        "withheld",
-                        "titrated",
-                        "protocol",
-                        "dose",
-                        "infusion",
-                        "therapy",
-                        "monitored",
-                        "echocardiogram",
-                        "culture",
-                        "stent",
-                        "started on",
-                        "received",
-                        "medication",
-                        "on medication",
-                        "treatment",
-                        "rx",
-                    ]
+                not has_no_treatment
+                and (
+                    asm.treated_or_managed
+                    or asm.monitored
+                    or asm.affected_clinical_management
+                    or asm.influenced_treatment
+                    or (cond and cond.treatment_evidence is not None)
+                    or any(
+                        term in full_context
+                        for term in [
+                            "treated",
+                            "adjusted",
+                            "insulin",
+                            "sliding scale",
+                            "glucose",
+                            "blood sugar",
+                            "continued",
+                            "withheld",
+                            "titrated",
+                            "protocol",
+                            "dose",
+                            "infusion",
+                            "therapy",
+                            "monitored",
+                            "echocardiogram",
+                            "culture",
+                            "stent",
+                            "started on",
+                            "received",
+                            "medication",
+                            "on medication",
+                            "treatment",
+                            "rx",
+                        ]
+                    )
                 )
             )
 
-            if is_pmh_only and not has_inpatient_care:
+            if is_historical_only and not has_inpatient_care:
                 asm.current_relevance = False
                 asm.coding_candidate = False
                 asm.temporality = Temporality.HISTORICAL
                 asm.status = ConditionStatus.HISTORICAL
+                asm.treated_or_managed = False
                 asm.reason = (
-                    "Documented solely in Past Medical History without active evaluation, "
+                    "Documented as historical/past condition without active evaluation, "
                     "monitoring, or treatment during admission."
                 )
                 enforced_list.append(asm)
@@ -483,33 +505,43 @@ class ContextAndRelevanceAgent(BaseAgent):
             )
 
             # Check 3: Inpatient management indicators
-            has_treatment = c.treatment_evidence is not None or any(
-                re.search(rf"\b{re.escape(term)}\b", combined_context)
-                for term in [
-                    "treated",
-                    "started on",
-                    "received",
-                    "adjusted",
-                    "insulin",
-                    "sliding scale",
-                    "glucose",
-                    "blood sugar",
-                    "continued",
-                    "withheld",
-                    "titrated",
-                    "protocol",
-                    "antibiotic",
-                    "dose",
-                    "infusion",
-                    "therapy",
-                    "surgery",
-                    "stent",
-                    "replacement",
-                    "medication",
-                    "on medication",
-                    "treatment",
-                    "rx",
-                ]
+            has_no_treatment = bool(
+                re.search(
+                    r"\b(?:no\s+(?:current\s+|active\s+)?(?:treatment|medication|rx|therapy|interventions?)|not\s+(?:currently\s+)?treated|without\s+(?:current\s+|active\s+)?(?:treatment|medication|rx|therapy))\b",
+                    combined_context,
+                    re.IGNORECASE,
+                )
+            )
+            has_treatment = not has_no_treatment and (
+                c.treatment_evidence is not None
+                or any(
+                    re.search(rf"\b{re.escape(term)}\b", combined_context)
+                    for term in [
+                        "treated",
+                        "started on",
+                        "received",
+                        "adjusted",
+                        "insulin",
+                        "sliding scale",
+                        "glucose",
+                        "blood sugar",
+                        "continued",
+                        "withheld",
+                        "titrated",
+                        "protocol",
+                        "antibiotic",
+                        "dose",
+                        "infusion",
+                        "therapy",
+                        "surgery",
+                        "stent",
+                        "replacement",
+                        "medication",
+                        "on medication",
+                        "treatment",
+                        "rx",
+                    ]
+                )
             )
             has_monitoring = any(
                 re.search(rf"\b{re.escape(term)}\b", combined_context)
@@ -526,9 +558,14 @@ class ContextAndRelevanceAgent(BaseAgent):
                 ]
             )
 
-            # Check 4: Past Medical History
+            # Check 4: Past Medical History & Historical conditions
             is_pmh = (
-                "PAST" in sec_upper or "PMH" in sec_upper or c.temporality == Temporality.HISTORICAL
+                "PAST" in sec_upper
+                or "PMH" in sec_upper
+                or c.temporality == Temporality.HISTORICAL
+                or "historical" in combined_context
+                or "childhood" in combined_context
+                or bool(re.search(r"\b\d+\s+years?\s+ago\b", combined_context))
             )
 
             # Check 5: Resolved
@@ -596,6 +633,8 @@ class ContextAndRelevanceAgent(BaseAgent):
                     affected_clinical_management=False,
                     influenced_treatment=False,
                     treatment_evidence=c.treatment_evidence,
+                    abstain_recommended=True,
+                    abstention_reason=AbstentionReason.EXCLUDED_BY_TEMPORALITY,
                 )
             elif is_pmh and (has_treatment or has_monitoring):
                 asm = ContextAssessment(
@@ -616,6 +655,27 @@ class ContextAndRelevanceAgent(BaseAgent):
                     influenced_treatment=has_treatment,
                     treatment_evidence=c.treatment_evidence,
                 )
+            elif is_resolved and has_no_treatment:
+                asm = ContextAssessment(
+                    diagnosis=c.normalized_description,
+                    condition_id=c.condition_id,
+                    section=c.section,
+                    current_relevance=False,
+                    coding_candidate=False,
+                    status=ConditionStatus.RESOLVED,
+                    certainty=c.certainty,
+                    temporality=Temporality.HISTORICAL,
+                    negation=c.negation,
+                    evidence=c.evidence_text,
+                    reason=f"[{c.section}] Historical resolved condition without documented inpatient evaluation, monitoring, or therapy.",
+                    treated_or_managed=False,
+                    monitored=False,
+                    affected_clinical_management=False,
+                    influenced_treatment=False,
+                    treatment_evidence=c.treatment_evidence,
+                    abstain_recommended=True,
+                    abstention_reason=AbstentionReason.EXCLUDED_BY_TEMPORALITY,
+                )
             elif is_resolved:
                 asm = ContextAssessment(
                     diagnosis=c.normalized_description,
@@ -629,11 +689,10 @@ class ContextAndRelevanceAgent(BaseAgent):
                     negation=c.negation,
                     evidence=c.evidence_text,
                     reason=f"[{c.section}] Condition occurred during admission and resolved following inpatient management.",
-                    treated_or_managed=has_treatment,
-                    monitored=has_monitoring,
+                    treated_or_managed=True,
+                    monitored=True,
                     affected_clinical_management=True,
-                    influenced_treatment=has_treatment,
-                    treatment_evidence=c.treatment_evidence,
+                    influenced_treatment=True,
                 )
             else:
                 # Active acute/chronic condition or suspected condition preserving uncertainty
@@ -1359,16 +1418,8 @@ class PrimarySecondaryClassifier(BaseAgent):
             # should not be assigned as separate secondary codes.
             for asm, score, r_list in remaining_candidates:
                 sec_lower = asm.diagnosis.lower()
-                is_integral = any(
-                    sym in sec_lower
-                    for sym in [
-                        "pain", "colic", "fever", "cough", "dyspnea", "shortness of breath",
-                        "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
-                        "discomfort", "wheezing", "fatigue", "malaise", "respiratory distress"
-                    ]
-                ) and not (
-                    any(sec_lower.endswith(sfx) or f"{sfx} " in sec_lower for sfx in ("itis", "oma", "osis"))
-                    or any(dx in sec_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer"])
+                is_integral = HardClinicalCandidateGate.is_symptom_integral_to_primary(
+                    asm.diagnosis, top_asm.diagnosis, asm.evidence or ""
                 )
 
                 if is_integral:

@@ -74,6 +74,12 @@ DISEASE_FAMILY_PATTERNS: list[tuple[str, list[str], str]] = [
     ("osteoarthritis", ["osteoarthritis", "degenerative joint disease", "oa"], "joint"),
     ("hypothyroidism", ["hypothyroidism", "underactive thyroid"], "thyroid"),
     ("acute_kidney_injury", ["acute kidney injury", "aki", "acute renal failure"], "kidney"),
+    ("copd", ["copd", "chronic obstructive pulmonary disease", "chronic bronchitis", "emphysema"], "lung"),
+    ("diverticulitis", ["diverticulitis", "diverticular disease", "diverticulosis with diverticulitis"], "colon"),
+    ("syncope", ["syncope", "vasovagal syncope", "collapse", "fainting"], "brain"),
+    ("delirium", ["delirium", "acute encephalopathy", "metabolic encephalopathy", "toxic encephalopathy"], "brain"),
+    ("cirrhosis", ["cirrhosis", "hepatic cirrhosis", "liver cirrhosis", "end stage liver disease"], "liver"),
+    ("sepsis", ["sepsis", "severe sepsis", "urosepsis"], "blood"),
 ]
 
 

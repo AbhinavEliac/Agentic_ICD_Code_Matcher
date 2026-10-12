@@ -37,27 +37,27 @@ logger = get_logger(__name__)
 # Standard section header regexes
 SECTION_PATTERNS: list[tuple[str, str]] = [
     ("DISCHARGE_SUMMARY", r"(?:HOSPITAL\s+DISCHARGE\s+SUMMARY|DISCHARGE\s+SUMMARY|CLINICAL\s+SUMMARY)"),
-    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|FINAL\s+CODING\s+SUMMARY|CODING\s+SUMMARY|FINAL\s+CODING|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOSIS)"),
+    ("DISCHARGE_DIAGNOSES", r"(?:DISCHARGE\s+DIAGNOS[EI]S|FINAL\s+DIAGNOS[EI]S|FINAL\s+CODING\s+SUMMARY|CODING\s+SUMMARY|FINAL\s+CODING|POSTOPERATIVE\s+DIAGNOS[EI]S|DIAGNOS[EI]S\s+ON\s+DISCHARGE|DIAGNOSIS|ACTIVE\s+PROBLEMS|PROBLEM\s+LIST|ACTIVE\s+ISSUES)"),
     ("PRINCIPAL_DIAGNOSIS", r"(?:PRINCIPAL\s+DIAGNOS[EI]S|PRIMARY\s+DIAGNOS[EI]S|ADMITTING\s+DIAGNOS[EI]S|ADMISSION\s+DIAGNOS[EI]S)"),
     ("SECONDARY_DIAGNOSES", r"(?:SECONDARY\s+DIAGNOS[EI]S|ADDITIONAL\s+DIAGNOS[EI]S|CO-?MORBIDITIES|OTHER\s+DIAGNOS[EI]S)"),
     ("CHIEF_COMPLAINT", r"(?:CHIEF\s+COMPLAINT|REASON\s+FOR\s+ADMISSION|PRESENTING\s+COMPLAINT|ADMITTED\s+FOR)"),
-    ("HISTORY_OF_PRESENT_ILLNESS", r"(?:HISTORY\s+OF\s+PRESENT\s+ILLNESS|HPI)"),
-    ("PHYSICAL_EXAMINATION", r"(?:CLINICAL\s+EXAMINATION|PHYSICAL\s+EXAMINATION|ON\s+EXAMINATION|GENERAL\s+EXAMINATION|SYSTEMIC\s+EXAMINATION)"),
+    ("HISTORY_OF_PRESENT_ILLNESS", r"(?:HISTORY\s+OF\s+PRESENT\s+ILLNESS|HPI|SUBJECTIVE)"),
+    ("PHYSICAL_EXAMINATION", r"(?:CLINICAL\s+EXAMINATION(?:\s+ON\s+ADMISSION)?|PHYSICAL\s+EXAMINATION(?:\s+ON\s+ADMISSION)?|ON\s+EXAMINATION|GENERAL\s+EXAMINATION|SYSTEMIC\s+EXAMINATION)"),
     ("HOSPITAL_COURSE", r"(?:HOSPITAL\s+COURSE|SUMMARY\s+OF\s+HOSPITAL\s+STAY|BRIEF\s+SUMMARY\s+OF\s+HOSPITAL\s+COURSE|COURSE\s+IN\s+(?:THE\s+)?HOSPITAL(?:\s+AND\s+DISCUSSION)?|CLINICAL\s+COURSE)"),
     ("COMPLICATIONS", r"(?:HOSPITAL\s+COMPLICATIONS|IN-?HOSPITAL\s+COMPLICATIONS|COMPLICATIONS|ADVERSE\s+EVENTS)"),
-    ("PROCEDURES", r"(?:PROCEDURES\s+PERFORMED|OPERATIVE\s+PROCEDURES|SURGICAL\s+PROCEDURES|MAJOR\s+PROCEDURES|PROCEDURES)"),
-    ("OPERATIVE_FINDINGS", r"(?:INTRAOPERATIVE\s+FINDINGS|OPERATIVE\s+FINDINGS|SURGICAL\s+FINDINGS|INTRA-?OPERATIVE\s+FINDINGS|OPERATIVE\s+NOTE\s+FINDINGS|FINDINGS)"),
+    ("PROCEDURES", r"(?:PROCEDURES?\s+DETAILS|PROCEDURE\s+PERFORMED|PROCEDURES?\s+PERFORMED|OPERATIVE\s+PROCEDURES?|SURGICAL\s+PROCEDURES?|MAJOR\s+PROCEDURES?|PROCEDURES|SURGICAL\s+INTERVENTIONS?|OPERATIONS?)"),
+    ("OPERATIVE_FINDINGS", r"(?:INTRAOPERATIVE\s+FINDINGS?|OPERATIVE\s+FINDINGS?|SURGICAL\s+FINDINGS?|INTRA-?OPERATIVE\s+FINDINGS?|OPERATIVE\s+NOTE\s+FINDINGS?|FINDINGS?)"),
     ("ONCOLOGY_BIOMARKERS", r"(?:BIOMARKERS\s*(?:&|AND)?\s*RECEPTOR\s+STATUS|PATHOLOGY(?:\s+REPORT)?|HISTOPATHOLOGY|RECEPTOR\s+STATUS|IMMUNOHISTOCHEMISTRY|TUMOR\s+CHARACTERISTICS)"),
     ("PAST_MEDICAL_HISTORY", r"(?:PAST\s+MEDICAL\s+HISTORY|PMH|MEDICAL\s+HISTORY|BACKGROUND\s+HISTORY|PAST\s+HISTORY|PERSONAL\s+HISTORY)"),
     ("PAST_SURGICAL_HISTORY", r"(?:PAST\s+SURGICAL\s+HISTORY|PSH|SURGICAL\s+HISTORY)"),
-    ("INVESTIGATIONS", r"(?:RELEVANT\s+INVESTIGATIONS|INVESTIGATIONS|LABORATORY\s+DATA|PERTINENT\s+LABS|DIAGNOSTIC\s+STUDIES|IMAGING|RADIOLOGY|ECHOCARDIOGRAM|CT\s+SCAN|ULTRASOUND|MRI)"),
+    ("INVESTIGATIONS", r"(?:RELEVANT\s+INVESTIGATIONS?|INVESTIGATIONS?|LABORATORY\s+DATA|LABORATORY\s+INVESTIGATIONS?|PERTINENT\s+LABS|DIAGNOSTIC\s+STUDIES|IMAGING|RADIOLOGY|ECHOCARDIOGRAM|CT\s+SCAN|CT\s+PNS|ULTRASOUND|MRI)"),
     ("MICROBIOLOGY", r"(?:MICROBIOLOGY|CULTURES?|BLOOD\s+CULTURES?|URINE\s+CULTURES?|SPUTUM\s+CULTURES?|CULTURE\s+AND\s+SENSITIVITY|MICROBIOLOGICAL\s+STUDIES)"),
-    ("ALLERGIES", r"(?:DRUG\s+ALLERGIES|ALLERGIES|ALLERGIC\s+HISTORY|ALLERGIC\s+REACTIONS?)"),
-    ("MEDICATIONS", r"(?:DISCHARGE\s+MEDICATIONS|MEDICATIONS\s+ON\s+DISCHARGE|ACTIVE\s+MEDICATIONS|MEDICATIONS|CURRENT\s+MEDICATIONS)"),
+    ("ALLERGIES", r"(?:DRUG\s+ALLERG(?:Y|IES)|ALLERG(?:Y|IES)|ALLERGIC\s+HISTORY|ALLERGIC\s+REACTIONS?)"),
+    ("MEDICATIONS", r"(?:DISCHARGE\s+MEDICATIONS?|MEDICATIONS?\s+ON\s+DISCHARGE|ACTIVE\s+MEDICATIONS?|MEDICATIONS?|CURRENT\s+MEDICATIONS?)"),
     ("PERTINENT_NEGATIVES", r"(?:PERTINENT\s+NEGATIVES|NEGATIONS(?:\s*/\s*AUDIT)?|DOCUMENTATION\s+AUDIT)"),
-    ("ASSESSMENT", r"(?:ASSESSMENT\s+AND\s+PLAN|ASSESSMENT|IMPRESSION)"),
+    ("ASSESSMENT", r"(?:ASSESSMENT\s*(?:&|AND)?\s*PLAN|ASSESSMENT|CLINICAL\s+IMPRESSION|IMPRESSION|A\s*/\s*P)"),
     ("PLAN", r"(?:DISCHARGE\s+PLAN|TREATMENT\s+PLAN|PLAN)"),
-    ("DISCHARGE_INSTRUCTIONS", r"(?:DISCHARGE\s+INSTRUCTIONS|DISPOSITION|DISCHARGE\s+CONDITION|FOLLOW-?UP)"),
+    ("DISCHARGE_INSTRUCTIONS", r"(?:STATUS\s+AT\s+DISCHARGE|CONDITION\s+AT\s+DISCHARGE|DISCHARGE\s+STATUS|DISCHARGE\s+INSTRUCTIONS|DISPOSITION|DISCHARGE\s+CONDITION|FOLLOW-?UP|SPECIAL\s+NEEDS|IN\s+CASE\s+OF\s+EMERGENCY)"),
 ]
 
 NEGATION_CUES = [
@@ -143,6 +143,12 @@ class SectionSegmenter:
         for sec_name, pat_str in SECTION_PATTERNS:
             regex = re.compile(rf"(?:^|\n|[.;]\s*|\b(?=[A-Z\s]{{4,}}:))\s*({pat_str})\s*(?::|--|\n)", re.IGNORECASE)
             for m in regex.finditer(text):
+                # Filter out document encounter metadata lines e.g. "Date of Admission", "Date of Procedure"
+                line_start = text.rfind("\n", 0, m.start(1))
+                line_start = 0 if line_start == -1 else line_start + 1
+                pre_text = text[line_start:m.start(1)].strip().lower()
+                if pre_text.startswith("date of") or pre_text.startswith("time of") or pre_text.startswith("type of"):
+                    continue
                 matches.append({
                     "section_name": sec_name,
                     "header_text": m.group(1).strip(),
@@ -272,7 +278,23 @@ class EvidenceFirstFactExtractor:
                 existing.role = DiagnosisRole.PRIMARY
                 if item.primary_justification:
                     existing.primary_justification = item.primary_justification
-            if item.temporality == Temporality.CURRENT:
+            if item.temporality == Temporality.HISTORICAL:
+                is_existing_active = (
+                    existing.temporality == Temporality.CURRENT
+                    or existing.role in (DiagnosisRole.PRIMARY, DiagnosisRole.SECONDARY)
+                    or any(ev.section in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "ASSESSMENT", "ASSESSMENT_PLAN") for ev in existing.evidence)
+                    or existing.treatment_relevance > 0
+                    or existing.procedure_relevance > 0
+                )
+                if not is_existing_active:
+                    existing.temporality = Temporality.HISTORICAL
+                    existing.role = DiagnosisRole.HISTORICAL
+                    existing.is_authorized = False
+                    existing.clinical_relevance = 0.0
+                    existing.encounter_relevance = 0.0
+                    existing.scores.encounter_relevance = 0.0
+                    existing.scores.admitting_score = -50.0
+            elif item.temporality == Temporality.CURRENT:
                 existing.temporality = Temporality.CURRENT
                 if existing.role == DiagnosisRole.HISTORICAL:
                     existing.role = DiagnosisRole.SECONDARY
@@ -336,8 +358,13 @@ class EvidenceFirstFactExtractor:
                 proc_lines = [l.strip() for l in sec.content.split("\n") if l.strip()]
                 for l in proc_lines:
                     l_clean = re.sub(r"^\d+[\.\)\-]\s*", "", l).strip()
+                    l_clean = re.sub(r"^(?:procedures?\s*(?:performed|done|details)?\s*[:\-–—]\s*)", "", l_clean, flags=re.IGNORECASE).strip()
                     if len(l_clean) >= 3:
-                        self._extracted_procedures.append(l_clean)
+                        sub_procs = re.split(r"\s*(?:\+|;)\s*|\s+and\s+", l_clean)
+                        for sp in sub_procs:
+                            sp_c = re.sub(r"\s*(?:side\s*:\s*[^\n]+|surgeon\s*:\s*[^\n]+|anaesthesiologist\s*:\s*[^\n]+).*$", "", sp, flags=re.IGNORECASE).strip()
+                            if len(sp_c) >= 3 and not re.match(r"^(?:side|surgeon|anaesthesiologist|type\s+of\s+anaesthesia|ga|general\s+anaesthesia)\b", sp_c, re.IGNORECASE):
+                                self._extracted_procedures.append(sp_c)
                 items = self._parse_procedure_indications(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
@@ -350,9 +377,19 @@ class EvidenceFirstFactExtractor:
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
 
-        # Phase 7: General Narrative Sections (General, discharge summary narrative, HPI)
+        # Phase 7: Narrative, Examination, Oncology, and unmapped clinical sections
+        handled_non_narrative = {
+            "DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES",
+            "ASSESSMENT", "ASSESSMENT_PLAN", "CHIEF_COMPLAINT", "PAST_MEDICAL_HISTORY",
+            "PAST_SURGICAL_HISTORY", "HOSPITAL_COURSE", "COMPLICATIONS", "INVESTIGATIONS",
+            "MICROBIOLOGY", "PROCEDURES", "OPERATIVE_FINDINGS", "ALLERGIES", "MEDICATIONS",
+            "DISCHARGE_MEDICATIONS", "PERTINENT_NEGATIVES", "PLAN", "DISCHARGE_INSTRUCTIONS"
+        }
         for sec in sections:
-            if sec.section_name in ("GENERAL", "DISCHARGE_SUMMARY", "HISTORY_OF_PRESENT_ILLNESS"):
+            if (
+                sec.section_name in ("GENERAL", "DISCHARGE_SUMMARY", "HISTORY_OF_PRESENT_ILLNESS", "PHYSICAL_EXAMINATION", "ONCOLOGY_BIOMARKERS")
+                or sec.section_name not in handled_non_narrative
+            ):
                 items = self._parse_narrative_items(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
@@ -482,32 +519,66 @@ class EvidenceFirstFactExtractor:
 
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-            # Skip absence statements, treatment instructions, and cross-reference boilerplate
+            # Skip absence statements, treatment instructions, non-clinical activities, generic procedures, and cross-reference boilerplate
             if (
                 HardClinicalCandidateGate.is_absence_statement(sent_clean)
                 or HardClinicalCandidateGate.is_treatment_instruction(sent_clean)
+                or HardClinicalCandidateGate.is_non_clinical_activity(sent_clean)
+                or HardClinicalCandidateGate.is_generic_procedure(sent_clean)
                 or re.search(r"\b(?:symptoms?|complaints?)\s+described\s+in\b|\bdescribed\s+in\s+(?:the\s+)?final\s+diagnosis\b|\babove\s+mentioned\s+complaints\b", sent_clean, re.IGNORECASE)
             ):
                 continue
 
-            # Pattern 2: Explicit admission / diagnosis / condition clauses
+            # Pattern 2: Clinical condition and admission clauses
             adm_match = re.search(
-                r"(?:patient\s+(?:was\s+)?(?:admitted\s+(?:with|for|in)|presented\s+with|diagnosed\s+with|treated\s+for|has|had)|admitted\s+(?:with|for|in)|impression\s*:\s*)\s+([^.]+)",
+                r"(?:patient\s+(?:was\s+)?(?:admitted\s+(?:under\s+[a-z\s]+\s+)?(?:with|for|in)|presented\s+with|diagnosed\s+with|treated\s+for|managed\s+for|evaluated\s+for|evaluation\s+of|found\s+to\s+have|noted\s+to\s+have|has|had)|admitted\s+(?:under\s+[a-z\s]+\s+)?(?:with|for|in)|presented\s+with|diagnosed\s+with|evaluation\s+of|evaluated\s+for|impression\s*:\s*|clinical\s+impression\s*:\s*|assessment\s*:\s*|active\s+problems?\s*:\s*|secondary\s+diagnos[ei]s\s*:\s*|diagnos[ei]s\s*:\s*|consistent\s+with\s+|confirmed\s+to\s+have\s+|known\s+case\s+of\s+|also\s+(?:found\s+to\s+have|noted\s+to\s+have|has|had|suffers?\s+from)|found\s+to\s+have|noted\s+to\s+have|suffers?\s+from|history\s+of\s+|hx\s+of\s+)\s+([^.]+)",
                 sent_clean,
                 re.IGNORECASE,
             )
+            is_adm_clause = False
             if adm_match:
                 clause = adm_match.group(1).strip()
+                is_adm_clause = True
+            else:
+                diag_prefix_m = re.search(
+                    r"^(?:also\s+(?:found\s+to\s+have|noted\s+to\s+have|has|had|suffers?\s+from)|found\s+to\s+have|noted\s+to\s+have|noted\s+to\s+suffer\s+from|suffers?\s+from|developed|complicated\s+by|secondary\s+to|underwent\s+.*?\s+for|history\s+of|hx\s+of|past\s+medical\s+history\s*:?|pmh\s*:?|(?:ct|mri|x[\s\-]?ray|cxr|ultrasound|usg|echo|ekg|ecg)\s+(?:showed|revealed|demonstrated|confirmed)|noted|demonstrated|confirmed|showed|revealed)\s+([^.]+)",
+                    sent_clean,
+                    re.IGNORECASE,
+                )
+                if diag_prefix_m:
+                    clause = diag_prefix_m.group(1).strip()
+                else:
+                    clause = sent_clean
+
+            if clause:
+                clause = re.sub(
+                    r"^(?:nose|chest|cvs|cns|rs|pa|abdomen|eye|ear|throat|skin|neck|general|local|systemic)\s*:\s*",
+                    "",
+                    clause,
+                    flags=re.IGNORECASE,
+                ).strip()
                 clause = re.sub(
                     r"^(?:(?:several|\d+)\s+(?:days?|weeks?|months?|hours?)\s+of\s+)",
                     "",
                     clause,
                     flags=re.IGNORECASE,
                 ).strip()
-                for tail_delim in [" on ", " treated with ", " managed with ", " requiring ", " with good response", " with symptom"]:
+                clause = re.sub(
+                    r"^(?:(?:for\s+)?evaluation\s+of|(?:for\s+)?eval\s+of|management\s+of|workup\s+of)\s+",
+                    "",
+                    clause,
+                    flags=re.IGNORECASE,
+                ).strip()
+                for tail_delim in [" treated with ", " managed with ", " requiring ", " with good response", " with symptom", " while ", " during "]:
                     if tail_delim in clause.lower():
                         idx = clause.lower().find(tail_delim)
                         clause = clause[:idx].strip()
+
+                on_med_m = re.search(r"\s+on\s+(?:medication|antibiotic|iv\b|steroid|infusion|dialysis|heparin|insulin|pressor|aspirin|metformin|lisinopril|lasix|statin|chemo)", clause, re.IGNORECASE)
+                if on_med_m:
+                    clause = clause[:on_med_m.start()].strip()
+
+                clause = re.sub(r"\s+(?:over|across)\s+(?:the\s+)?[a-z\s]+(?=,|\s+and\s+(?:acute|epigastric|ecg|[a-z]+\s+pain|[a-z]+\s+discomfort)|$)", "", clause, flags=re.IGNORECASE).strip()
 
                 # Causal admission: "initiation of chemotherapy for DLBCL" -> "DLBCL"
                 causal_m = re.search(
@@ -533,6 +604,21 @@ class EvidenceFirstFactExtractor:
                         continue
 
                     polarity, certainty = self._assess_polarity_and_certainty(sent_clean)
+                    is_narrative_historical = bool(
+                        re.search(
+                            r"\b(?:historical\s*/\s*resolved|historical\b|completely\s+resolved|resolved\b|prior\s+history|childhood\s+asthma|no\s+current\s+treatment|no\s+current\s+medications?|\d+\s+years?\s+ago)\b",
+                            sent_clean,
+                            re.IGNORECASE,
+                        )
+                    )
+                    cand_temp = Temporality.HISTORICAL if is_narrative_historical else Temporality.CURRENT
+                    cand_role = (
+                        DiagnosisRole.HISTORICAL
+                        if is_narrative_historical
+                        else (DiagnosisRole.PRIMARY if is_adm_clause else DiagnosisRole.SECONDARY)
+                    )
+                    cand_auth = (polarity != NegationStatus.NEGATED) and (not is_narrative_historical)
+                    cand_rel = 0.0 if is_narrative_historical else 1.0
                     acuity = self._detect_acuity(sc)
                     ev = StructuredEvidence(
                         text=sent_clean,
@@ -540,34 +626,39 @@ class EvidenceFirstFactExtractor:
                         sentence=sent_clean,
                         polarity=polarity,
                         certainty=certainty,
-                        temporality=Temporality.CURRENT,
+                        temporality=cand_temp,
                         evidence_type=EvidenceType.DISCHARGE_SUMMARY,
-                        clinical_relevance=1.0,
+                        clinical_relevance=cand_rel,
+                    )
+                    admit_score = (
+                        -50.0
+                        if is_narrative_historical
+                        else ((5.0 if is_adm_clause else 1.0) + (1.0 if acuity == Acuity.ACUTE else 0.0))
                     )
                     scores = MultiDimensionalScore(
                         evidence_score=1.0,
                         diagnostic_certainty=1.0 if certainty == Certainty.CONFIRMED else 0.8,
-                        encounter_relevance=1.0,
+                        encounter_relevance=cand_rel,
                         role_confidence=1.0,
                         semantic_match=1.0,
                         specificity_match=1.0,
                         contradiction_penalty=1.0 if polarity == NegationStatus.NEGATED else 0.0,
-                        admitting_score=5.0 + (1.0 if acuity == Acuity.ACUTE else 0.0),
+                        admitting_score=admit_score,
                     )
                     cand = ClinicalDiagnosisCandidate(
                         raw_term=sc,
                         normalized_diagnosis=sc,
-                        role=DiagnosisRole.PRIMARY,
+                        role=cand_role,
                         certainty=certainty,
-                        temporality=Temporality.CURRENT,
+                        temporality=cand_temp,
                         clinical_attributes=cand_attrs,
                         evidence=[ev],
                         evidence_strength=1.0,
-                        clinical_relevance=1.0,
-                        encounter_relevance=1.0,
+                        clinical_relevance=cand_rel,
+                        encounter_relevance=cand_rel,
                         scores=scores,
-                        is_authorized=polarity != NegationStatus.NEGATED,
-                        classification_reason="Identified as encounter diagnosis in clinical narrative",
+                        is_authorized=cand_auth,
+                        classification_reason="Historical or resolved condition documented in narrative" if is_narrative_historical else "Identified as encounter diagnosis in clinical narrative",
                     )
                     candidates.append(cand)
 
@@ -835,17 +926,19 @@ class EvidenceFirstFactExtractor:
 
             has_active_rx = bool(
                 re.search(
-                    r"\b(?:on\s+medication|on\s+treatment|on\s+rx|treated|managed)\b",
+                    r"\b(?:on\s+[a-z0-9]+|taking\s+[a-z0-9]+|receiving\s+[a-z0-9]+|treated|managed|controlled|under\s+treatment|active\s+rx|prescribed|daily|mg|tab|tablet|inj|injection|infusion|inhaler|dialysis)\b",
                     cleaned_preamble,
                     re.IGNORECASE,
                 )
             )
             cleaned_concept = re.sub(
-                r",?\s*\b(?:on\s+medication|on\s+treatment|on\s+rx)\b.*$",
+                r",?\s*\b(?:on\s+medication|on\s+treatment|on\s+rx|treated\s+with|managed\s+with)\b.*$",
                 "",
                 cleaned_preamble,
                 flags=re.IGNORECASE,
             ).strip()
+            if not cleaned_concept or len(cleaned_concept) < 3:
+                cleaned_concept = cleaned_preamble
 
             sub_items = re.split(r"\s+and\s+|\s*,\s*", cleaned_concept)
             for sub_item in sub_items:
@@ -924,7 +1017,13 @@ class EvidenceFirstFactExtractor:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", cleaned) if s.strip()]
 
         for sent in sentences:
-            if len(sent) < 5 or HardClinicalCandidateGate.is_absence_statement(sent) or HardClinicalCandidateGate.is_treatment_instruction(sent):
+            if (
+                len(sent) < 5
+                or HardClinicalCandidateGate.is_absence_statement(sent)
+                or HardClinicalCandidateGate.is_treatment_instruction(sent)
+                or HardClinicalCandidateGate.is_non_clinical_activity(sent)
+                or HardClinicalCandidateGate.is_generic_procedure(sent)
+            ):
                 continue
 
             # Pattern A: Complication cues: "course was complicated by [X]", "complicated by [X]", "developed [X]", "went into [X]", "manifested [X]"
@@ -939,76 +1038,124 @@ class EvidenceFirstFactExtractor:
                 sent,
                 re.IGNORECASE,
             )
+            # Pattern C: Specialist evaluations, consultations, and clinical conclusions
+            eval_match = re.search(
+                r"(?:(?:[a-z]+\s+)?(?:evaluation|consultation|consult|assessment|review)\s+(?:concluded|revealed|showed|noted|found|confirmed|diagnosed|suggested)\s+(?:that\s+)?|concluded\s+that\s+|noted\s+to\s+have\s+|found\s+to\s+have\s+|manifested\s+(?:with\s+)?)\s*([^.]+)",
+                sent,
+                re.IGNORECASE,
+            )
+            # Pattern D: Additional or concurrent conditions documented during course
+            additional_match = re.search(
+                r"(?:with\s+additional|and\s+additional|additional|concurrent|superimposed)\s+([^.]+)",
+                sent,
+                re.IGNORECASE,
+            )
 
             matched_clauses: list[str] = []
             if comp_match:
                 matched_clauses.append(comp_match.group(1).strip())
             if treat_match:
                 matched_clauses.append(treat_match.group(1).strip())
+            if eval_match:
+                matched_clauses.append(eval_match.group(1).strip())
+            if additional_match:
+                matched_clauses.append(additional_match.group(1).strip())
+
+            if not matched_clauses:
+                gen_match = re.search(
+                    r"(?:patient\s+(?:had|experienced|manifested|presented\s+with|developed)|also\s+(?:had|noted|developed|experienced|found)|showed|revealed|demonstrated|confirmed|diagnosed\s+as)\s+([^.]+)",
+                    sent,
+                    re.IGNORECASE,
+                )
+                if gen_match:
+                    matched_clauses.append(gen_match.group(1).strip())
 
             for clause in matched_clauses:
                 # Strip trailing management phrases from clause
-                for tail in [" requiring ", " managed with ", " treated with ", " on ", " with good response", " with symptom", " and was ", " and received "]:
+                for tail in [
+                    " and advised ", " advised ", " requiring ", " managed with ",
+                    " treated with ", " with good response", " with symptom",
+                    " and was ", " and received ", " prescribed "
+                ]:
                     if tail in clause.lower():
                         idx = clause.lower().find(tail)
                         clause = clause[:idx].strip()
 
-                # Split compound items e.g. "septic shock and diabetic ketoacidosis", "acute kidney injury secondary to dehydration"
-                sub_items = self._split_compound_clinical_phrase(clause)
-                for item_str in sub_items:
-                    item_str = item_str.strip()
-                    item_str = re.sub(r"^(?:a|an|the)\s+", "", item_str, flags=re.IGNORECASE).strip()
-                    item_str, attrs = self._extract_concept_and_attributes(item_str)
-                    if len(item_str) < 3:
-                        continue
+                on_med_m = re.search(r"\s+on\s+(?:medication|antibiotic|iv\b|steroid|infusion|dialysis|heparin|insulin|pressor|aspirin|metformin|lisinopril|lasix|statin|chemo)", clause, re.IGNORECASE)
+                if on_med_m:
+                    clause = clause[:on_med_m.start()].strip()
 
-                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(item_str, sent)
-                    if not is_valid:
-                        continue
+                # Decompose 'with additional [X]' or 'concurrent [X]' into multiple clauses
+                clause_chunks = re.split(
+                    r",?\s*(?:with\s+additional|and\s+additional|additional|concurrent|superimposed)\s+",
+                    clause,
+                    flags=re.IGNORECASE,
+                )
+                for chunk in clause_chunks:
+                    clean_chunk = chunk.strip()
+                    clean_chunk = re.sub(r"^(?:the\s+)?(?:rash\s+was\s+)?", "", clean_chunk, flags=re.IGNORECASE).strip()
+                    clean_chunk = re.sub(r"\s+in\s+nature$", "", clean_chunk, flags=re.IGNORECASE).strip()
+                    if clean_chunk.lower() == "urticarial":
+                        clean_chunk = "urticaria"
+                    # Strip anatomical location qualifiers e.g. "over the wrists", "on the chest"
+                    clean_chunk = re.sub(r"\s+(?:over|on)\s+(?:the\s+)?[a-z\s]+(?=\s+due\s+to|\s*$)", "", clean_chunk, flags=re.IGNORECASE).strip()
 
-                    polarity, certainty = self._assess_polarity_and_certainty(sent)
-                    acuity = self._detect_acuity(item_str)
-                    laterality = self._detect_laterality(item_str)
-                    if laterality and laterality != Laterality.UNSPECIFIED and "laterality" not in attrs:
-                        attrs["laterality"] = laterality.value
+                    # Split compound items e.g. "septic shock and diabetic ketoacidosis", "acute kidney injury secondary to dehydration"
+                    sub_items = self._split_compound_clinical_phrase(clean_chunk)
+                    for item_str in sub_items:
+                        item_str = item_str.strip()
+                        item_str = re.sub(r"^(?:a|an|the)\s+", "", item_str, flags=re.IGNORECASE).strip()
+                        item_str, attrs = self._extract_concept_and_attributes(item_str)
+                        if len(item_str) < 3:
+                            continue
 
-                    ev = StructuredEvidence(
-                        text=sent,
-                        section=sec.section_name,
-                        sentence=sent,
-                        polarity=polarity,
-                        certainty=certainty,
-                        temporality=Temporality.CURRENT,
-                        evidence_type=EvidenceType.HOSPITAL_COURSE,
-                        clinical_relevance=1.0,
-                    )
-                    scores = MultiDimensionalScore(
-                        evidence_score=1.0,
-                        diagnostic_certainty=1.0 if certainty == Certainty.CONFIRMED else 0.8,
-                        encounter_relevance=1.0,
-                        role_confidence=1.0,
-                        semantic_match=1.0,
-                        specificity_match=1.0,
-                        admitting_score=4.0 + (1.0 if acuity == Acuity.ACUTE else 0.0),
-                    )
-                    cand = ClinicalDiagnosisCandidate(
-                        raw_term=item_str,
-                        normalized_diagnosis=item_str,
-                        role=DiagnosisRole.SECONDARY,
-                        certainty=certainty,
-                        temporality=Temporality.CURRENT,
-                        assertion_status=AssertionStatus.CONFIRMED if certainty == Certainty.CONFIRMED else AssertionStatus.SUSPECTED,
-                        clinical_attributes=attrs,
-                        evidence=[ev],
-                        evidence_strength=1.0,
-                        clinical_relevance=1.0,
-                        encounter_relevance=1.0,
-                        treatment_relevance=1.0,
-                        scores=scores,
-                        is_authorized=polarity != NegationStatus.NEGATED,
-                        classification_reason=f"Active inpatient complication/event in {sec.section_name}",
-                    )
-                    candidates.append(cand)
+                        is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(item_str, sent)
+                        if not is_valid:
+                            continue
+
+                        polarity, certainty = self._assess_polarity_and_certainty(sent)
+                        acuity = self._detect_acuity(item_str)
+                        laterality = self._detect_laterality(item_str)
+                        if laterality and laterality != Laterality.UNSPECIFIED and "laterality" not in attrs:
+                            attrs["laterality"] = laterality.value
+
+                        ev = StructuredEvidence(
+                            text=sent,
+                            section=sec.section_name,
+                            sentence=sent,
+                            polarity=polarity,
+                            certainty=certainty,
+                            temporality=Temporality.CURRENT,
+                            evidence_type=EvidenceType.HOSPITAL_COURSE,
+                            clinical_relevance=1.0,
+                        )
+                        scores = MultiDimensionalScore(
+                            evidence_score=1.0,
+                            diagnostic_certainty=1.0 if certainty == Certainty.CONFIRMED else 0.8,
+                            encounter_relevance=1.0,
+                            role_confidence=1.0,
+                            semantic_match=1.0,
+                            specificity_match=1.0,
+                            admitting_score=4.0 + (1.0 if acuity == Acuity.ACUTE else 0.0),
+                        )
+                        cand = ClinicalDiagnosisCandidate(
+                            raw_term=item_str,
+                            normalized_diagnosis=item_str,
+                            role=DiagnosisRole.SECONDARY,
+                            certainty=certainty,
+                            temporality=Temporality.CURRENT,
+                            assertion_status=AssertionStatus.CONFIRMED if certainty == Certainty.CONFIRMED else AssertionStatus.SUSPECTED,
+                            clinical_attributes=attrs,
+                            evidence=[ev],
+                            evidence_strength=1.0,
+                            clinical_relevance=1.0,
+                            encounter_relevance=1.0,
+                            treatment_relevance=1.0,
+                            scores=scores,
+                            is_authorized=polarity != NegationStatus.NEGATED,
+                            classification_reason=f"Active inpatient complication/event in {sec.section_name}",
+                        )
+                        candidates.append(cand)
 
         return candidates
 
@@ -1028,7 +1175,13 @@ class EvidenceFirstFactExtractor:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", cleaned) if s.strip()]
 
         for sent in sentences:
-            if len(sent) < 5 or HardClinicalCandidateGate.is_absence_statement(sent) or HardClinicalCandidateGate.is_treatment_instruction(sent):
+            if (
+                len(sent) < 5
+                or HardClinicalCandidateGate.is_absence_statement(sent)
+                or HardClinicalCandidateGate.is_treatment_instruction(sent)
+                or HardClinicalCandidateGate.is_non_clinical_activity(sent)
+                or HardClinicalCandidateGate.is_generic_procedure(sent)
+            ):
                 continue
 
             findings_clauses: list[str] = []
@@ -1139,7 +1292,13 @@ class EvidenceFirstFactExtractor:
         lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
         for line in lines:
             line_clean = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
-            if len(line_clean) < 5 or HardClinicalCandidateGate.is_absence_statement(line_clean) or HardClinicalCandidateGate.is_treatment_instruction(line_clean):
+            if (
+                len(line_clean) < 5
+                or HardClinicalCandidateGate.is_absence_statement(line_clean)
+                or HardClinicalCandidateGate.is_treatment_instruction(line_clean)
+                or HardClinicalCandidateGate.is_non_clinical_activity(line_clean)
+                or HardClinicalCandidateGate.is_generic_procedure(line_clean)
+            ):
                 continue
 
             # Match: "[Procedure] for [Condition]" or "Indication: [Condition]"
@@ -1433,6 +1592,77 @@ class EvidenceFirstFactExtractor:
             evidence=text[:200],
         )
 
+    @staticmethod
+    def _split_adjacent_clinical_conditions(text: str) -> list[str]:
+        """Decompose phrases containing adjacent independent clinical conditions.
+
+        Clinical principles:
+        1. When multiple distinct diagnoses appear juxtaposed without commas or conjunctions
+           (e.g., 'Urticaria Gastritis', 'Hypertension Diabetes Mellitus', 'Asthma Bronchitis'),
+           each valid independent clinical entity must be separated.
+        2. A split is rejected if the preceding word is an adjectival modifier
+           (e.g., 'acute', 'chronic', 'hypertensive', 'allergic', 'ischemic', 'ulcerative', 'contact')
+           which qualifies the subsequent disease.
+        3. A split is rejected if the subsequent part is merely a generic nosological continuation
+           (e.g., 'disease', 'disorder', 'syndrome', 'failure', 'mellitus', 'type 2').
+        4. Both decomposed halves must independently satisfy HardClinicalCandidateGate validation.
+        """
+        words = text.strip().split()
+        if len(words) < 2:
+            return [text.strip()]
+
+        from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
+
+        adjective_modifiers = {
+            "acute", "chronic", "subacute", "severe", "mild", "moderate",
+            "primary", "secondary", "recurrent", "refractory", "hypertensive",
+            "ischemic", "diabetic", "allergic", "ulcerative", "obstructive",
+            "atherosclerotic", "rheumatoid", "infectious", "congestive",
+            "dilated", "hypertrophic", "interstitial", "systemic", "autoimmune",
+            "invasive", "infiltrating", "metastatic", "benign", "malignant",
+            "idiopathic", "acquired", "congenital", "hereditary", "familial",
+            "focal", "diffuse", "bilateral", "unilateral", "left", "right",
+            "anterior", "posterior", "upper", "lower", "type", "grade", "stage",
+            "contact", "external", "internal", "deviated", "ruptured", "perforated",
+            "obstructed", "calcified", "stenosed", "thrombosed", "infarcted",
+            "fractured", "displaced", "sprained", "infected", "inflamed", "congested",
+            "enlarged", "narrowed", "thickened", "elevated", "depressed", "collapsed",
+            "atrophic", "hypoplastic", "aplastic", "gangrenous", "necrotic",
+            "nasal", "renal", "cardiac", "pulmonary", "hepatic", "gastric", "splenic",
+            "cerebral", "spinal", "thoracic", "abdominal", "pelvic", "femoral", "tibial",
+            "coronary", "aortic", "mitral", "tricuspid", "carotid", "jugular", "ocular",
+            "retinal", "aural", "otic", "vertebral", "lumbar", "cervical", "cranial",
+            "facial", "oral", "anal", "rectal", "colonic", "duodenal", "jejunal", "ileal",
+            "esophageal", "bronchial", "alveolar", "pancreatic", "biliary", "vesical",
+            "urethral", "ureteral", "prostatic", "testicular", "ovarian", "uterine",
+            "vaginal", "vulvar", "peritoneal", "pleural", "pericardial",
+        }
+
+        generic_suffix_nouns = {
+            "disease", "diseases", "disorder", "disorders", "syndrome", "syndromes",
+            "failure", "insufficiency", "mellitus", "infarction", "dysfunction",
+            "type 1", "type 2", "type i", "type ii", "status",
+        }
+
+        for i in range(1, len(words)):
+            p1 = " ".join(words[:i]).strip()
+            p2 = " ".join(words[i:]).strip()
+
+            last_word_p1 = words[i - 1].lower()
+            if last_word_p1 in adjective_modifiers:
+                continue
+
+            if p2.lower() in generic_suffix_nouns:
+                continue
+
+            v1, _ = HardClinicalCandidateGate.evaluate_candidate(p1)
+            v2, _ = HardClinicalCandidateGate.evaluate_candidate(p2)
+
+            if v1 and v2:
+                return [p1] + EvidenceFirstFactExtractor._split_adjacent_clinical_conditions(p2)
+
+        return [text.strip()]
+
     def _split_compound_clinical_phrase(self, phrase: str) -> list[str]:
         """Split compound clinical phrases into independent clinical concepts.
 
@@ -1505,9 +1735,21 @@ class EvidenceFirstFactExtractor:
         for i, m in enumerate(abbrev_matches):
             masked = masked.replace(m.group(0), f"__ORGANISM_{i}__")
 
+        # Mask plus signs attached to receptor/immunology markers (e.g., CD4+, HER2+, ER+, PR+)
+        plus_matches = list(re.finditer(r"\b([A-Za-z0-9\-]+)\+", masked))
+        for i, pm in enumerate(plus_matches):
+            if pm.group(1).lower() in ("cd4", "cd8", "her2", "er", "pr", "egfr", "bcl2"):
+                masked = masked.replace(pm.group(0), f"__PLUS_MARKER_{i}__")
+
         # 1. Connectors that unconditionally separate independent clinical entities
+        # Split on list delimiters: plus signs (+), semicolons (;), ampersands (&), and slashes (/) separating independent entities
+        list_delims_pattern = r"\s*(?:\+|;|\s+&\s+|\s+/\s+)\s*"
+        raw_splits = [p.strip() for p in re.split(list_delims_pattern, masked, flags=re.IGNORECASE) if p.strip()]
+
+        chunks: list[str] = []
         causal_pattern = r",?\s*\b(?:complicated\s+by|secondary\s+to|due\s+to|resulting\s+in|manifested\s+by)\b\s*"
-        chunks = re.split(causal_pattern, masked, flags=re.IGNORECASE)
+        for seg in raw_splits:
+            chunks.extend([c.strip() for c in re.split(causal_pattern, seg, flags=re.IGNORECASE) if c.strip()])
 
         # Standard ICD combination manifestations where "with" should NEVER be split
         combo_manifestation_patterns = [
@@ -1541,7 +1783,21 @@ class EvidenceFirstFactExtractor:
                 if co_cond:
                     refined_chunks.append(co_cond)
             else:
-                refined_chunks.append(chunk)
+                generic_with_m = re.search(r",?\s*\bwith\s+([A-Za-z0-9\s\-]+)$", chunk, re.IGNORECASE)
+                if generic_with_m and not is_combo_manifestation:
+                    pre_with = chunk[:generic_with_m.start()].strip()
+                    post_with = generic_with_m.group(1).strip()
+                    pre_with_clean = re.sub(r"\s+to\s+(?:the\s+)?(?:left|right|bilateral)$", "", pre_with, flags=re.IGNORECASE).strip()
+                    from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
+                    v_pre, _ = HardClinicalCandidateGate.evaluate_candidate(pre_with_clean or pre_with)
+                    v_post, _ = HardClinicalCandidateGate.evaluate_candidate(post_with)
+                    if v_pre and v_post:
+                        refined_chunks.append(pre_with_clean or pre_with)
+                        refined_chunks.append(post_with)
+                    else:
+                        refined_chunks.append(chunk)
+                else:
+                    refined_chunks.append(chunk)
 
         # 2. Split chunks on " and " when connecting distinct clinical entities
         final_items: list[str] = []
@@ -1555,12 +1811,14 @@ class EvidenceFirstFactExtractor:
             else:
                 final_items.append(item.strip().strip(",; "))
 
-        # Restore masked organism abbreviations and clean timing/procedural context (Section 8 & 9)
+        # Restore masked organism abbreviations, clean timing/procedural context, and decompose adjacent conditions
         restored: list[str] = []
         for res_item in final_items:
             res = res_item
             for i, m in enumerate(abbrev_matches):
                 res = res.replace(f"__ORGANISM_{i}__", m.group(0))
+            for i, pm in enumerate(plus_matches):
+                res = res.replace(f"__PLUS_MARKER_{i}__", pm.group(0))
 
             # Strip trailing procedural or temporal timing context (e.g. "gastritis post frozen embryo transfer" -> "gastritis")
             timing_m = re.search(r"\b(?:status\s+post|post|s/p|after)\s+(?:frozen\s+embryo\s+transfer|fet|chemotherapy|surgery|procedure|infusion)\b.*$", res, re.IGNORECASE)
@@ -1569,14 +1827,19 @@ class EvidenceFirstFactExtractor:
                 if len(base_cand) >= 3:
                     res = base_cand
 
-            restored.append(res.strip())
+            decomposed = self._split_adjacent_clinical_conditions(res.strip())
+            for d in decomposed:
+                d_clean = d.strip()
+                if len(d_clean) >= 3:
+                    restored.append(d_clean)
 
         return [r for r in restored if len(r) >= 3]
 
     def _split_term_and_narrative(self, line: str) -> tuple[str, str]:
         """Split a clinical line into the diagnostic term and accompanying clinical explanation."""
-        # e.g., "Acute right emphysematous pyelonephritis - underwent DJ stenting" -> ("Acute right emphysematous pyelonephritis", "underwent DJ stenting")
-        for delim in [" - ", " – ", " — ", " : ", ": ", " / ", " (", "; "]:
+        # Narrative delimiters introduce management/course comments (e.g. " - underwent DJ stenting")
+        # Do not include ";" or "/" as they separate distinct clinical entities in diagnosis lists
+        for delim in [" - ", " – ", " — ", " : ", ": ", " ("]:
             if delim in line:
                 parts = line.split(delim, 1)
                 term = parts[0].strip()
@@ -1633,6 +1896,8 @@ class EvidenceFirstFactExtractor:
         # Section 21: Oncology metastatic manifestations
         if re.search(r"\bpleural\s+metastasis\b|\bmetastasis\s+to\s+pleura\b|\bmalignant\s+pleural\s+metastasis\b", clean, re.IGNORECASE):
             return "Secondary malignant neoplasm of pleura"
+        if clean.lower() in ("urticarial", "urticarial rash", "rash urticarial"):
+            return "Urticaria"
         return clean
 
     def _corroborate_with_hospital_course_and_procedures(
@@ -1646,6 +1911,8 @@ class EvidenceFirstFactExtractor:
         investigations_text = ""
         procedure_text = ""
         medications_text = ""
+        exam_text = ""
+        complaint_text = ""
 
         for sec in sections:
             if sec.section_name == "HOSPITAL_COURSE":
@@ -1656,22 +1923,36 @@ class EvidenceFirstFactExtractor:
                 procedure_text = f"{procedure_text} {sec.content}"
             elif sec.section_name in ("MEDICATIONS", "DISCHARGE_MEDICATIONS"):
                 medications_text = f"{medications_text} {sec.content}"
+            elif sec.section_name in ("PHYSICAL_EXAMINATION", "CLINICAL_EXAMINATION"):
+                exam_text = f"{exam_text} {sec.content}"
+            elif sec.section_name in ("CHIEF_COMPLAINT", "HISTORY_OF_PRESENT_ILLNESS"):
+                complaint_text = f"{complaint_text} {sec.content}"
 
         active_care_verbs = [
             "treated", "managed", "monitored", "administered", "started", "continued",
             "withheld", "titrated", "adjusted", "sliding scale", "infusion", "dose",
             "protocol", "regimen", "followed", "received", "underwent", "controlled",
             "stabilized", "responded", "prescribed", "switched", "transitioned",
+            "requiring", "vasopressor", "norepinephrine", "antibiotic", "fluids", "support",
         ]
 
         # Clinical domain indicators for chronic/PMH conditions requiring active inpatient management
         condition_care_markers: dict[str, list[str]] = {
             "diabetes": ["insulin", "sliding scale", "metformin", "glucose", "blood sugar", "glycemic", "dka", "hypoglycemia", "hyperglycemia", "hba1c"],
             "hypertension": ["amlodipine", "antihypertensive", "blood pressure", "bp", "lisinopril", "losartan", "metoprolol", "atenolol", "hydrochlorothiazide", "furosemide"],
-            "kidney": ["creatinine", "gfr", "nephrology", "dialysis", "renal function", "baseline creatinine"],
+            "kidney": ["creatinine", "gfr", "nephrology", "dialysis", "renal function", "baseline creatinine", "aki", "acute kidney injury"],
+            "renal": ["creatinine", "gfr", "nephrology", "dialysis", "renal function", "aki", "acute kidney injury"],
+            "aki": ["fluid", "fluids", "resuscitation", "creatinine", "iv fluids", "hydration"],
+            "dehydration": ["fluid", "fluids", "iv fluids", "hydration", "resuscitation"],
             "heart failure": ["furosemide", "lasix", "diuresis", "echo", "echocardiogram", "ejection fraction", "cardiac"],
             "asthma": ["inhaler", "nebulizer", "albuterol", "ipratropium", "bronchodilator", "steroid", "prednisone"],
             "copd": ["inhaler", "nebulizer", "albuterol", "ipratropium", "bronchodilator", "steroid", "prednisone", "oxygen"],
+            "sepsis": ["antibiotic", "ceftriaxone", "vancomycin", "vasopressor", "norepinephrine", "lactate", "blood culture", "cultures", "hypotension", "iv fluids", "resuscitation"],
+            "pneumonia": ["antibiotic", "ceftriaxone", "azithromycin", "sputum", "cxr", "infiltrate", "consolidation", "oxygen"],
+            "stemi": ["stent", "catheterization", "troponin", "pci", "aspirin", "heparin", "plavix", "ticagrelor"],
+            "infarction": ["stent", "catheterization", "troponin", "pci", "aspirin", "heparin", "plavix", "ticagrelor"],
+            "gallstones": ["cholecystectomy", "ultrasound", "biliary", "colic", "cbd"],
+            "cholecystitis": ["cholecystectomy", "ultrasound", "biliary", "antibiotic", "gallbladder"],
         }
 
         for cand in candidates:
@@ -1688,7 +1969,7 @@ class EvidenceFirstFactExtractor:
             combined_course_and_meds = f"{hospital_course_text} {medications_text}"
             course_sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", combined_course_and_meds) if s.strip()]
 
-            found_management_sentence = None
+            found_management_sentences: list[str] = []
             for sent in course_sentences:
                 sent_lower = sent.lower()
                 has_cand_mention = (
@@ -1700,10 +1981,12 @@ class EvidenceFirstFactExtractor:
                 has_active_verb = any(v in sent_lower for v in active_care_verbs)
 
                 if (has_cand_mention or has_marker_mention) and has_active_verb:
-                    found_management_sentence = sent
-                    break
+                    if sent not in found_management_sentences:
+                        found_management_sentences.append(sent)
+                        if len(found_management_sentences) >= 3:
+                            break
 
-            if found_management_sentence:
+            for found_management_sentence in found_management_sentences:
                 cand.treatment_relevance = 1.0
                 cand.encounter_relevance = 1.0
                 cand.scores.encounter_relevance = 1.0
@@ -1716,34 +1999,35 @@ class EvidenceFirstFactExtractor:
                     cand.role = DiagnosisRole.SECONDARY
                     cand.classification_reason = f"Pre-existing condition actively evaluated/managed during stay: {found_management_sentence}"
 
-                # Prepend supporting structured evidence if PMH; otherwise append so discharge diagnosis evidence remains at index 0
-                if any(ev.section in ("PAST_MEDICAL_HISTORY", "PAST_SURGICAL_HISTORY") for ev in cand.evidence):
-                    cand.evidence.insert(
-                        0,
-                        StructuredEvidence(
-                            text=found_management_sentence,
-                            section="HOSPITAL_COURSE",
-                            sentence=found_management_sentence,
-                            polarity=NegationStatus.AFFIRMATIVE,
-                            certainty=cand.certainty,
-                            temporality=Temporality.CURRENT,
-                            evidence_type=EvidenceType.HOSPITAL_COURSE,
-                            clinical_relevance=1.0,
+                if not any(ev.text == found_management_sentence for ev in cand.evidence):
+                    # Prepend supporting structured evidence if PMH; otherwise append
+                    if any(ev.section in ("PAST_MEDICAL_HISTORY", "PAST_SURGICAL_HISTORY") for ev in cand.evidence):
+                        cand.evidence.insert(
+                            0,
+                            StructuredEvidence(
+                                text=found_management_sentence,
+                                section="HOSPITAL_COURSE",
+                                sentence=found_management_sentence,
+                                polarity=NegationStatus.AFFIRMATIVE,
+                                certainty=cand.certainty,
+                                temporality=Temporality.CURRENT,
+                                evidence_type=EvidenceType.HOSPITAL_COURSE,
+                                clinical_relevance=1.0,
+                            )
                         )
-                    )
-                else:
-                    cand.evidence.append(
-                        StructuredEvidence(
-                            text=found_management_sentence,
-                            section="HOSPITAL_COURSE",
-                            sentence=found_management_sentence,
-                            polarity=NegationStatus.AFFIRMATIVE,
-                            certainty=cand.certainty,
-                            temporality=Temporality.CURRENT,
-                            evidence_type=EvidenceType.HOSPITAL_COURSE,
-                            clinical_relevance=1.0,
+                    else:
+                        cand.evidence.append(
+                            StructuredEvidence(
+                                text=found_management_sentence,
+                                section="HOSPITAL_COURSE",
+                                sentence=found_management_sentence,
+                                polarity=NegationStatus.AFFIRMATIVE,
+                                certainty=cand.certainty,
+                                temporality=Temporality.CURRENT,
+                                evidence_type=EvidenceType.HOSPITAL_COURSE,
+                                clinical_relevance=1.0,
+                            )
                         )
-                    )
 
             # Check procedure text
             if procedure_text:
@@ -1769,6 +2053,42 @@ class EvidenceFirstFactExtractor:
                                 certainty=Certainty.SUPPORTED,
                                 temporality=Temporality.CURRENT,
                                 evidence_type=EvidenceType.IMAGING,
+                                clinical_relevance=0.8,
+                            )
+                        )
+                        break
+
+            # Check physical examination for supporting objective signs
+            if exam_text and words and any(w in exam_text.lower() for w in words):
+                for sent in re.split(r"[\.\n]+", exam_text):
+                    if any(w in sent.lower() for w in words):
+                        cand.evidence.append(
+                            StructuredEvidence(
+                                text=sent.strip(),
+                                section="PHYSICAL_EXAMINATION",
+                                sentence=sent.strip(),
+                                polarity=NegationStatus.AFFIRMATIVE,
+                                certainty=Certainty.SUPPORTED,
+                                temporality=Temporality.CURRENT,
+                                evidence_type=EvidenceType.CLINICAL_NOTE,
+                                clinical_relevance=0.7,
+                            )
+                        )
+                        break
+
+            # Check chief complaint / HPI for documented presenting symptoms
+            if complaint_text and words and any(w in complaint_text.lower() for w in words):
+                for sent in re.split(r"[\.\n]+", complaint_text):
+                    if any(w in sent.lower() for w in words):
+                        cand.evidence.append(
+                            StructuredEvidence(
+                                text=sent.strip(),
+                                section="CHIEF_COMPLAINT",
+                                sentence=sent.strip(),
+                                polarity=NegationStatus.AFFIRMATIVE,
+                                certainty=Certainty.SUPPORTED,
+                                temporality=Temporality.CURRENT,
+                                evidence_type=EvidenceType.ADMISSION_REASON,
                                 clinical_relevance=0.8,
                             )
                         )
@@ -1837,6 +2157,16 @@ class EvidenceFirstFactExtractor:
                         chosen_idx = idx
                         break
 
+            if chosen_idx is None and active_candidates:
+                for idx, cand in enumerate(active_candidates):
+                    if cand.evidence:
+                        is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
+                            cand.normalized_diagnosis, cand.primary_evidence_quote
+                        )
+                        if is_valid:
+                            chosen_idx = idx
+                            break
+
             if chosen_idx is not None:
                 top = active_candidates[chosen_idx]
                 top.role = DiagnosisRole.PRIMARY
@@ -1857,8 +2187,13 @@ class EvidenceFirstFactExtractor:
                         "acute", "chronic", "right", "left", "bilateral", "unspecified", "severe", "mild", "stage", "with", "without"
                     }
 
-                    # Check 1: Duplicate / generalized mention of the primary diagnosis
-                    if sec_words and top_words and (sec_words <= top_words or (len(sec_words & top_words) >= 2 and len(sec_words - top_words) == 0)):
+                    # Check 1: Duplicate mention of the primary diagnosis
+                    # Only treat as duplicate if it is the EXACT same clinical condition
+                    is_exact_dup = (
+                        sec_norm == top_norm
+                        or self._canonicalize_term(sec_cand.normalized_diagnosis).lower() == self._canonicalize_term(top.normalized_diagnosis).lower()
+                    )
+                    if is_exact_dup:
                         sec_cand.role = DiagnosisRole.PRIMARY
                         sec_cand.is_authorized = False
                         sec_cand.classification_reason = f"Corroborating mention of primary diagnosis '{top.normalized_diagnosis}'"
@@ -1866,17 +2201,8 @@ class EvidenceFirstFactExtractor:
                         continue
 
                     # Check 2: Integral symptom / sign of primary diagnosis (CMS Guideline I.B.4)
-                    is_integral = any(
-                        sym in sec_norm
-                        for sym in [
-                            "pain", "colic", "fever", "cough", "dyspnea", "shortness of breath",
-                            "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
-                            "discomfort", "wheezing", "fatigue", "malaise", "respiratory distress",
-                            "peripheral edema", "edema", "chest pain", "flank pain", "hematuria"
-                        ]
-                    ) and not (
-                        any(sec_norm.endswith(sfx) or f"{sfx} " in sec_norm for sfx in ("itis", "oma", "osis"))
-                        or any(dx in sec_norm for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia"])
+                    is_integral = HardClinicalCandidateGate.is_symptom_integral_to_primary(
+                        sec_cand.normalized_diagnosis, top.normalized_diagnosis, sec_cand.primary_evidence_quote
                     )
 
                     if is_integral:

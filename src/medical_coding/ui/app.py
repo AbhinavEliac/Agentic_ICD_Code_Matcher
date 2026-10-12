@@ -147,6 +147,69 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 
+def format_coding_result(result: Any) -> str:
+    """Format strictly according to required clinical coding output:
+    primary diagnosis: <name>, code: <code>, evidence: <evidence quote>
+    secondary diagnosises:
+    diagnosis: <name>, code: <code>, evidence: <evidence quote>
+    """
+    def _clean_ev(text: str | None) -> str:
+        if not text:
+            return "None"
+        clean = str(text).strip()
+        if "Designated as " in clean:
+            clean = clean.split("Designated as ")[0].strip(" -|:\n")
+        return clean if clean else "None"
+
+    def _get_cand_ev(cand: Any) -> str:
+        quotes: list[str] = []
+        ev_list = getattr(cand, "evidence", []) or []
+        if isinstance(ev_list, list):
+            for item in ev_list:
+                q = ""
+                if isinstance(item, dict):
+                    q = _clean_ev(item.get("quote"))
+                elif hasattr(item, "text"):
+                    q = _clean_ev(item.text)
+                elif hasattr(item, "sentence"):
+                    q = _clean_ev(item.sentence)
+                elif isinstance(item, str):
+                    q = _clean_ev(item)
+                if q and q != "None" and q not in quotes:
+                    quotes.append(q)
+        if quotes:
+            return " | ".join(quotes)
+        return _clean_ev(getattr(cand, "evidence_quote", None))
+
+    lines = []
+    p = getattr(result, "primary_diagnosis", None)
+    if p:
+        p_name = getattr(p, "normalized_diagnosis", None) or getattr(p, "raw_term", None) or getattr(p, "description", None) or "None"
+        p_code = getattr(p, "code", None) or getattr(p, "icd10cm", None) or "None"
+        p_ev = _get_cand_ev(p)
+        lines.append(f"primary diagnosis: {p_name}, code: {p_code}, evidence: {p_ev}")
+    else:
+        lines.append("primary diagnosis: None, code: None, evidence: None")
+
+    secondaries = getattr(result, "secondary_diagnoses", []) or []
+    if secondaries:
+        lines.append("secondary diagnosises:")
+        for s in secondaries:
+            s_name = getattr(s, "normalized_diagnosis", None) or getattr(s, "raw_term", None) or getattr(s, "description", None) or "None"
+            s_code = getattr(s, "code", None) or getattr(s, "icd10cm", None) or "None"
+            s_ev = _get_cand_ev(s)
+            lines.append(f"diagnosis: {s_name}, code: {s_code}, evidence: {s_ev}")
+    else:
+        lines.append("secondary diagnosises: None")
+
+    return "\n".join(lines)
+
+
+# Ensure backward compatibility if an in-memory cached CodingResult class is loaded
+if not hasattr(CodingResult, "format_output"):
+    setattr(CodingResult, "format_output", lambda self: format_coding_result(self))
+
+
 def render_coding_session_results(
     coding_result: CodingResult,
     steps_data: list[dict[str, Any]],
@@ -189,6 +252,10 @@ def render_coding_session_results(
     # High-Level KPIs
     st.markdown("### 📊 Coding Decisions & Evidence Audit")
     render_kpi_metrics(coding_result)
+
+    # Clean Strict Output Format
+    st.markdown("#### 📋 Clinical Summary Format")
+    st.code(format_coding_result(coding_result), language="text")
 
     # Primary Diagnosis
     render_primary_diagnosis(coding_result.primary_diagnosis)

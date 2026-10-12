@@ -143,6 +143,17 @@ def render_kpi_metrics(result: CodingResult) -> None:
         )
 
 
+def _clean_audit_from_evidence(ev: str) -> str:
+    """Clean internal audit justifications and boilerplate from display evidence strings."""
+    if not ev:
+        return ""
+    if "Designated as " in ev:
+        ev = ev.split("Designated as ")[0].strip(" -|:\n")
+    if "Clinical criteria:" in ev:
+        ev = ev.split("Clinical criteria:")[0].strip(" -|:\n")
+    return ev.strip()
+
+
 def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
     """Render the primary diagnosis card with evidence and specificity confirmation."""
     st.markdown("### 🎯 Primary Diagnosis")
@@ -178,7 +189,13 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         documented_row = f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {html.escape(str(primary.raw_term))}</div>'
 
     safe_desc = html.escape(primary.description or "")
-    safe_evidence = html.escape(primary.evidence_quote or "")
+    raw_quote = _clean_audit_from_evidence(primary.evidence_quote or "")
+    if " | " in raw_quote:
+        spans = [_clean_audit_from_evidence(s) for s in raw_quote.split(" | ") if _clean_audit_from_evidence(s)]
+        spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
+        evidence_content_html = spans_html
+    else:
+        evidence_content_html = f'<span class="evidence-quote">"{html.escape(raw_quote)}"</span>'
 
     primary_html = clean_html(
         f"""
@@ -206,9 +223,9 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
             </div>
             <div class="evidence-box">
                 <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
-                    📄 Verbatim Clinical Evidence Quote:
+                    📄 Verbatim Clinical Evidence Across Record:
                 </span><br/>
-                <span class="evidence-quote">"{safe_evidence}"</span>
+                {evidence_content_html}
             </div>
         </div>
         """
@@ -250,7 +267,13 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
             documented_row = f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {html.escape(str(diag.raw_term))}</div>'
 
         safe_desc = html.escape(diag.description or "")
-        safe_evidence = html.escape(diag.evidence_quote or "")
+        raw_sec_quote = _clean_audit_from_evidence(diag.evidence_quote or "")
+        if " | " in raw_sec_quote:
+            spans = [_clean_audit_from_evidence(s) for s in raw_sec_quote.split(" | ") if _clean_audit_from_evidence(s)]
+            spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
+            sec_evidence_html = spans_html
+        else:
+            sec_evidence_html = f'<span class="evidence-quote">"{html.escape(raw_sec_quote)}"</span>'
 
         secondary_html = clean_html(
             f"""
@@ -272,7 +295,7 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
                     <span style="font-weight: 600; color: #6ee7b7; font-size: 11px; text-transform: uppercase;">
                         Clinical Evidence:
                     </span>
-                    <span class="evidence-quote">"{safe_evidence}"</span>
+                    {sec_evidence_html}
                 </div>
             </div>
             """
@@ -320,12 +343,21 @@ def render_procedures(procedures: list[str]) -> None:
 
     proc_items_html = []
     for idx, proc in enumerate(procedures, start=1):
+        cpt_badge = ""
+        display_proc = proc
+        cpt_m = re.search(r"\[CPT:\s*([A-Za-z0-9]+)\]", proc)
+        if cpt_m:
+            cpt_code = cpt_m.group(1)
+            display_proc = re.sub(r"\s*\[CPT:\s*[A-Za-z0-9]+\]", "", proc).strip()
+            cpt_badge = f'<span class="pill-badge badge-success" style="margin-left: 8px;">CPT: {html.escape(cpt_code)}</span>'
+
         proc_items_html.append(
             f"""
             <div class="procedure-item" style="background: rgba(147, 51, 234, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
                 <div>
                     <span style="font-weight: 700; color: #c084fc; margin-right: 8px;">#{idx}.</span>
-                    <strong style="color: #f3e8ff; font-size: 14px;">{html.escape(proc)}</strong>
+                    <strong style="color: #f3e8ff; font-size: 14px;">{html.escape(display_proc)}</strong>
+                    {cpt_badge}
                 </div>
                 <span class="pill-badge badge-info" style="border-color: rgba(168, 85, 247, 0.5); color: #d8b4fe;">Surgical / Interventional</span>
             </div>
