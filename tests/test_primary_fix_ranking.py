@@ -144,14 +144,51 @@ async def test_full_pipeline_multi_condition_formatting() -> None:
     assert final_result.primary_diagnosis.role == DiagnosisRole.PRIMARY
     assert "cholecystitis" in final_result.primary_diagnosis.description.lower()
 
-    # All other valid active conditions must be in secondary diagnoses
+    # All valid conditions with local code are in secondary diagnoses
     assert len(final_result.secondary_diagnoses) >= 2
     sec_names = [s.description.lower() for s in final_result.secondary_diagnoses]
-    assert any("choledocholithiasis" in n or "calculus" in n for n in sec_names)
     assert any("diabetes" in n for n in sec_names)
+    assert any("hypertension" in n for n in sec_names)
+
+    # Conditions without local code match are strictly put into abstentions
+    abst_terms = [(a.raw_term or "").lower() for a in final_result.abstentions]
+    assert any("choledocholithiasis" in t for t in abst_terms)
 
     output = final_result.format_output()
     assert "primary diagnosis: " in output
     assert "secondary diagnosises:" in output
     assert "code: " in output
     assert "evidence: " in output
+    assert "[NO LOCAL CODE]" not in output
+    assert "code: None" not in output
+
+
+@pytest.mark.asyncio
+async def test_no_local_code_abstention_guarantee() -> None:
+    """Verify that any clinical condition without a valid local database code is strictly abstained."""
+    note = """
+    DISCHARGE SUMMARY
+    PRIMARY DIAGNOSIS: Deviated nasal septum
+    SECONDARY DIAGNOSES: Nasal obstruction, Chronic sinusitis
+    HOSPITAL COURSE: Patient presented for septoplasty due to deviated nasal septum.
+    Also noted nasal obstruction and chronic sinusitis.
+    """
+    final_result = await process_clinical_document(
+        source=note,
+        document_id="doc-uncoded-abstain-test",
+    )
+    assert final_result is not None
+    # For every item in secondary diagnoses, code must not be empty or NO_DATABASE_MATCH
+    for s in final_result.secondary_diagnoses:
+        assert s.code and s.code != "None" and s.code != "[NO LOCAL CODE]"
+        assert s.matching_status != "NO_DATABASE_MATCH"
+
+    if final_result.primary_diagnosis:
+        assert final_result.primary_diagnosis.code
+        assert final_result.primary_diagnosis.code not in ("None", "[NO LOCAL CODE]")
+        assert final_result.primary_diagnosis.matching_status != "NO_DATABASE_MATCH"
+
+    output = final_result.format_output()
+    assert "[NO LOCAL CODE]" not in output
+    assert "code: None" not in output
+

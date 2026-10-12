@@ -1038,6 +1038,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
     # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING (Sections 4 & 11)
     # If primary diagnosis was clinically confirmed and established, but ICD mapping abstained or failed:
+    # If primary diagnosis was clinically confirmed and established, but ICD mapping abstained or failed:
     if primary_response is None:
         clin_primary = None
         for c in classified:
@@ -1049,57 +1050,22 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
         if clin_primary:
             term = getattr(clin_primary, "normalized_diagnosis", None) or getattr(clin_primary, "raw_term", "")
-            quote = (
-                getattr(clin_primary, "primary_evidence_quote", None)
-                or (
-                    clin_primary.context.evidence.quote
-                    if hasattr(clin_primary, "context") and hasattr(clin_primary.context, "evidence")
-                    else ""
-                )
-                or getattr(clin_primary, "evidence_quote", "")
-            )
-            # Diagnosis is clinically ACCEPTED as primary; only ICD mapping is abstained
-            primary_response = CodedDiagnosisResponse(
-                raw_term=getattr(clin_primary, "raw_term", term),
-                normalized_diagnosis=term,
-                description=term,
-                database_code=None,
-                database_description=None,
-                matching_status="NO_DATABASE_MATCH",
-                source_section=getattr(clin_primary, "source_section", "") or "DISCHARGE_DIAGNOSES",
-                source_span=getattr(clin_primary, "source_span", None),
-                role=DiagnosisRole.PRIMARY,
-                acuity=Acuity.ACUTE
-                if "acute" in term.lower()
-                else Acuity.CHRONIC
-                if "chronic" in term.lower()
-                else Acuity.UNSPECIFIED,
-                certainty=Certainty.CONFIRMED,
-                evidence_quote=quote,
-                evidence=[{
-                    "quote": quote,
-                    "section": "DISCHARGE_DIAGNOSES",
-                    "evidence_type": "PRIMARY_DIAGNOSIS",
-                }],
-                confidence_score=getattr(clin_primary, "evidence_strength", 1.0),
-                is_terminal_billable=False,
-                icd10cm=None,  # ICD code abstained
-                icdo=None,
-                cpt=None,
-            )
-            if not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE for a in abstentions):
+            if not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE and a.raw_term and a.raw_term.lower() == term.lower() for a in abstentions):
                 abstentions.append(
                     AbstentionRecord(
                         diagnosis_id=getattr(clin_primary, "diagnosis_id", "primary"),
                         raw_term=term,
                         reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                        detail=f"Clinical diagnosis '{term}' is accepted as primary, but ICD-10-CM mapping is abstained.",
-                        stage=PipelineStage.RANKING,
+                        detail=f"Clinical primary diagnosis '{term}' lacked verified local code match; strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
                     )
                 )
+        if secondary_responses:
+            # Promote top coded secondary to primary role
+            primary_response = secondary_responses.pop(0)
+            primary_response.role = DiagnosisRole.PRIMARY
 
     # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING FOR SECONDARIES
-    # Ensure every active secondary diagnosis clinically confirmed is retained in secondary_responses
     seen_sec_terms = set()
     if primary_response:
         if primary_response.normalized_diagnosis:
@@ -1174,44 +1140,17 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             if not is_valid_cand:
                 continue
 
-            # Clinical condition had no matching code in authoritative database; explicitly abstain ICD code mapping
+            # Clinical condition has no matching code in authoritative database; put strictly in abstain
             if not any(a.raw_term and a.raw_term.lower() == c_term.lower() for a in abstentions):
                 abstentions.append(
                     AbstentionRecord(
                         diagnosis_id=getattr(c, "diagnosis_id", "secondary"),
                         raw_term=c_term,
                         reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                        detail=f"Condition '{c_term}' lacked verified ICD database match; abstained.",
-                        stage=PipelineStage.RANKING,
+                        detail=f"Condition '{c_term}' lacked verified local code match; strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
                     )
                 )
-
-            # Preserve clinically confirmed secondary diagnosis in secondary_responses
-            sec_resp = CodedDiagnosisResponse(
-                raw_term=getattr(c, "raw_term", c_term),
-                normalized_diagnosis=c_term,
-                description=c_term,
-                database_code=None,
-                database_description=None,
-                matching_status="NO_DATABASE_MATCH",
-                source_section=getattr(c, "source_section", "") or (c.context.evidence.source_section if hasattr(c, "context") and hasattr(c.context, "evidence") and c.context.evidence else "CLINICAL_DOCUMENTATION"),
-                source_span=getattr(c, "source_span", None),
-                role=DiagnosisRole.SECONDARY,
-                acuity=getattr(c, "acuity", Acuity.UNSPECIFIED),
-                certainty=getattr(c, "certainty", Certainty.CONFIRMED),
-                evidence_quote=c_quote,
-                evidence=[{
-                    "quote": c_quote,
-                    "section": getattr(c, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                    "evidence_type": "SECONDARY_DIAGNOSIS",
-                }] if c_quote else [],
-                confidence_score=getattr(c, "evidence_strength", 1.0),
-                is_terminal_billable=False,
-                icd10cm=None,
-                icdo=None,
-                cpt=None,
-            )
-            secondary_responses.append(sec_resp)
             seen_sec_terms.add(c_norm)
 
     # Suppress Z71.1 ("feared health complaint in whom no diagnosis is made") when real clinical conditions exist
@@ -1219,6 +1158,47 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         primary_response = secondary_responses.pop(0)
         primary_response.role = DiagnosisRole.PRIMARY
     secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
+
+    # Filter secondary_responses so ONLY items with verified local codes are retained; uncoded items are strictly abstained
+    coded_secondaries: list[CodedDiagnosisResponse] = []
+    for s in secondary_responses:
+        s_code = s.code or getattr(s, "database_code", None)
+        if s_code and s_code != "None" and s.matching_status != "NO_DATABASE_MATCH":
+            coded_secondaries.append(s)
+        else:
+            s_name = s.normalized_diagnosis or s.raw_term or s.description or ""
+            if s_name and not any(a.raw_term and a.raw_term.lower() == s_name.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(s, "diagnosis_id", "secondary-abstained"),
+                        raw_term=s_name,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Condition '{s_name}' lacked verified local code match; strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                    )
+                )
+    secondary_responses = coded_secondaries
+
+    # Check primary_response for local code match: if missing, abstain and promote coded secondary if available
+    if primary_response:
+        p_code = primary_response.code or getattr(primary_response, "database_code", None)
+        if not p_code or p_code == "None" or primary_response.matching_status == "NO_DATABASE_MATCH":
+            p_name = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or ""
+            if p_name and not any(a.raw_term and a.raw_term.lower() == p_name.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(primary_response, "diagnosis_id", "primary-abstained"),
+                        raw_term=p_name,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Primary condition '{p_name}' lacked verified local code match; strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                    )
+                )
+            if secondary_responses:
+                primary_response = secondary_responses.pop(0)
+                primary_response.role = DiagnosisRole.PRIMARY
+            else:
+                primary_response = None
 
     # Enforce clean role separation: secondary section must NEVER duplicate the primary diagnosis
     if primary_response:

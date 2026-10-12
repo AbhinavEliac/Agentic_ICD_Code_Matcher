@@ -229,7 +229,7 @@ class CodingResult(BaseModel):
             return "None"
 
         lines = []
-        if self.primary_diagnosis:
+        if self.primary_diagnosis and self.primary_diagnosis.code and self.primary_diagnosis.code != "None" and self.primary_diagnosis.matching_status != "NO_DATABASE_MATCH":
             p = self.primary_diagnosis
             p_name = p.normalized_diagnosis or p.raw_term or p.description
             p_code = _get_formatted_code(p)
@@ -238,9 +238,13 @@ class CodingResult(BaseModel):
         else:
             lines.append("primary diagnosis: None, code: None, evidence: None")
 
-        if self.secondary_diagnoses:
+        coded_secondaries = [
+            s for s in (self.secondary_diagnoses or [])
+            if s.code and s.code != "None" and s.matching_status != "NO_DATABASE_MATCH"
+        ]
+        if coded_secondaries:
             lines.append("secondary diagnosises:")
-            for s in self.secondary_diagnoses:
+            for s in coded_secondaries:
                 s_name = s.normalized_diagnosis or s.raw_term or s.description
                 s_code = _get_formatted_code(s)
                 s_ev = _get_cand_ev(s)

@@ -158,19 +158,16 @@ def _clean_audit_from_evidence(ev: str) -> str:
 def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
     """Render the primary diagnosis card with evidence and specificity confirmation."""
     st.markdown("### 🎯 Primary Diagnosis")
-    if not primary:
+    if not primary or not primary.code or primary.code in ("None", "[NO LOCAL CODE]") or primary.matching_status == "NO_DATABASE_MATCH":
         st.info("ℹ️ No primary diagnosis assigned for this document (abstained or undetermined).")
         return
 
-    code_display = html.escape(primary.code or "[NO LOCAL CODE]")
-    if primary.matching_status == "NO_DATABASE_MATCH" or not primary.code:
-        billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
-    else:
-        billable_badge = (
-            '<span class="pill-badge badge-success">✓ HIPAA Billable Leaf</span>'
-            if primary.is_terminal_billable
-            else '<span class="pill-badge badge-danger">⚠ Non-Billable Header</span>'
-        )
+    code_display = html.escape(primary.code)
+    billable_badge = (
+        '<span class="pill-badge badge-success">✓ HIPAA Billable Leaf</span>'
+        if primary.is_terminal_billable
+        else '<span class="pill-badge badge-danger">⚠ Non-Billable Header</span>'
+    )
     acuity_badge = f'<span class="pill-badge badge-info">{html.escape(primary.acuity.value if hasattr(primary.acuity, "value") else str(primary.acuity))}</span>'
     certainty_badge = f'<span class="pill-badge badge-secondary">{html.escape(primary.certainty.value if hasattr(primary.certainty, "value") else str(primary.certainty))}</span>'
 
@@ -236,21 +233,22 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
 
 def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> None:
     """Render the list of validated secondary comorbid diagnoses."""
-    st.markdown(f"### 📋 Secondary Diagnoses ({len(secondaries)})")
-    if not secondaries:
+    valid_secondaries = [
+        s for s in (secondaries or [])
+        if s.code and s.code not in ("None", "[NO LOCAL CODE]") and s.matching_status != "NO_DATABASE_MATCH"
+    ]
+    st.markdown(f"### 📋 Secondary Diagnoses ({len(valid_secondaries)})")
+    if not valid_secondaries:
         st.write("No secondary comorbid diagnoses identified.")
         return
 
-    for idx, diag in enumerate(secondaries, start=1):
-        sec_code_display = html.escape(diag.code or "[NO LOCAL CODE]")
-        if diag.matching_status == "NO_DATABASE_MATCH" or not diag.code:
-            billable_badge = '<span class="pill-badge badge-warning">No Database Match</span>'
-        else:
-            billable_badge = (
-                '<span class="pill-badge badge-success">✓ Billable</span>'
-                if diag.is_terminal_billable
-                else '<span class="pill-badge badge-danger">⚠ Non-Billable</span>'
-            )
+    for idx, diag in enumerate(valid_secondaries, start=1):
+        sec_code_display = html.escape(diag.code)
+        billable_badge = (
+            '<span class="pill-badge badge-success">✓ Billable</span>'
+            if diag.is_terminal_billable
+            else '<span class="pill-badge badge-danger">⚠ Non-Billable</span>'
+        )
         acuity_str = html.escape(diag.acuity.value if hasattr(diag.acuity, "value") else str(diag.acuity))
         certainty_str = html.escape(diag.certainty.value if hasattr(diag.certainty, "value") else str(diag.certainty))
 
@@ -317,13 +315,23 @@ def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
             stage_str = abst.stage.value if hasattr(abst.stage, "value") else str(abst.stage)
             raw_term = abst.raw_term or "Unspecified Entity"
 
+            if (
+                abst.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE
+                or reason_str in ("NO_MATCHING_ICD_CANDIDATE", "NO_CANDIDATE_FOUND")
+                or "No local code" in (abst.detail or "")
+                or "lacked verified local code" in (abst.detail or "")
+            ):
+                badge_html = '<span class="pill-badge badge-warning">No Local Code (Abstained)</span>'
+            else:
+                badge_html = f'<span class="pill-badge badge-danger">{reason_str}</span>'
+
             st.markdown(
                 clean_html(
                     f"""
                     <div class="abstention-card">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                             <strong style="color: #f87171; font-size: 14px;">Condition: {raw_term}</strong>
-                            <span class="pill-badge badge-danger">{reason_str}</span>
+                            {badge_html}
                         </div>
                         <div style="font-size: 13px; color: #e2e8f0;">{abst.detail}</div>
                         <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Enforced at stage: <code>{stage_str}</code></div>
