@@ -2139,59 +2139,40 @@ class EvidenceFirstFactExtractor:
         if active_candidates:
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-            # Sort active candidates by admitting score descending
-            active_candidates.sort(key=lambda c: c.scores.admitting_score, reverse=True)
+            # 1. Filter active candidates: retain all strictly valid clinical diagnoses
+            valid_active: list[ClinicalDiagnosisCandidate] = []
+            for cand in active_candidates:
+                is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
+                    cand.normalized_diagnosis, cand.primary_evidence_quote
+                )
+                if is_valid:
+                    valid_active.append(cand)
+                else:
+                    cand.role = DiagnosisRole.EXCLUDED
+                    cand.is_authorized = False
 
-            # Find top candidate meeting Section 8 criteria
-            chosen_idx = None
-            for idx, cand in enumerate(active_candidates):
-                if (
-                    cand.certainty == Certainty.CONFIRMED
-                    and cand.temporality in (Temporality.CURRENT, "CURRENT")
-                    and cand.evidence
-                ):
-                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
-                        cand.normalized_diagnosis, cand.primary_evidence_quote
-                    )
-                    if is_valid:
-                        chosen_idx = idx
-                        break
+            # 2. Sort active candidates by admitting score descending
+            valid_active.sort(key=lambda c: c.scores.admitting_score, reverse=True)
 
-            if chosen_idx is None and active_candidates:
-                for idx, cand in enumerate(active_candidates):
-                    if cand.evidence:
-                        is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
-                            cand.normalized_diagnosis, cand.primary_evidence_quote
-                        )
-                        if is_valid:
-                            chosen_idx = idx
-                            break
-
-            if chosen_idx is not None:
-                top = active_candidates[chosen_idx]
+            if valid_active:
+                # Rank 1 is unconditionally PRIMARY
+                top = valid_active[0]
                 top.role = DiagnosisRole.PRIMARY
+                top.is_authorized = True
                 top.primary_justification = f"Documented chief condition occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
                 primary_diag = top
 
-                # Remaining become SECONDARY, unless integral symptom or duplicate of primary
                 top_norm = top.normalized_diagnosis.lower()
-                top_words = set(re.findall(r"[a-z0-9]+", top_norm)) - {
-                    "acute", "chronic", "right", "left", "bilateral", "unspecified", "severe", "mild", "stage", "with", "without"
-                }
 
-                for idx, sec_cand in enumerate(active_candidates):
-                    if idx == chosen_idx:
-                        continue
+                # Rank 2..N are unconditionally SECONDARY (dropping only exact duplicates of primary/secondaries)
+                for sec_cand in valid_active[1:]:
                     sec_norm = sec_cand.normalized_diagnosis.lower()
-                    sec_words = set(re.findall(r"[a-z0-9]+", sec_norm)) - {
-                        "acute", "chronic", "right", "left", "bilateral", "unspecified", "severe", "mild", "stage", "with", "without"
-                    }
 
-                    # Check 1: Duplicate mention of the primary diagnosis
-                    # Only treat as duplicate if it is the EXACT same clinical condition
+                    # Exact duplicate check against top or already accepted secondary conditions
                     is_exact_dup = (
                         sec_norm == top_norm
                         or self._canonicalize_term(sec_cand.normalized_diagnosis).lower() == self._canonicalize_term(top.normalized_diagnosis).lower()
+                        or any(sec_norm == s.normalized_diagnosis.lower() for s in secondary_diags)
                     )
                     if is_exact_dup:
                         sec_cand.role = DiagnosisRole.PRIMARY
@@ -2200,11 +2181,10 @@ class EvidenceFirstFactExtractor:
                         top.evidence.extend(sec_cand.evidence)
                         continue
 
-                    # Check 2: Integral symptom / sign of primary diagnosis (CMS Guideline I.B.4)
+                    # CMS Guideline I.B.4: Integral symptom / sign of primary diagnosis suppression
                     is_integral = HardClinicalCandidateGate.is_symptom_integral_to_primary(
                         sec_cand.normalized_diagnosis, top.normalized_diagnosis, sec_cand.primary_evidence_quote
                     )
-
                     if is_integral:
                         from medical_coding.schemas.enums import ClinicalEntityType
                         sec_cand.role = DiagnosisRole.SYMPTOM
@@ -2213,12 +2193,21 @@ class EvidenceFirstFactExtractor:
                         sec_cand.classification_reason = f"Symptom integral to the primary diagnosis '{top.normalized_diagnosis}'; excluded from independent billing under CMS Guideline I.B.4"
                         continue
 
-                    # Check 3: Intraoperative finding without dedicated surgical or therapeutic intervention
-                    if any(ev.section == "OPERATIVE_FINDINGS" for ev in sec_cand.evidence) or sec_cand.role == DiagnosisRole.EXCLUDED:
+                    # UHDDS Criteria: Incidental operative finding without dedicated surgical/therapeutic intervention
+                    is_incidental_finding = (
+                        any(ev.section == "OPERATIVE_FINDINGS" for ev in sec_cand.evidence)
+                        or "incidental" in sec_cand.primary_evidence_quote.lower()
+                    )
+                    if is_incidental_finding:
                         full_content_lower = " ".join(s.content for s in sections).lower()
+                        finding_words = [w for w in re.findall(r"\b[a-z]{4,}\b", sec_norm) if w not in ("incidental", "simple", "benign", "mild", "filmy", "finding")]
                         has_intervention = any(
+                            re.search(rf"\b(?:excision|resection|removal|repair|plasty|lysis|drainage)\b[^\n.,;]*?\b{re.escape(w)}\b", full_content_lower)
+                            or re.search(rf"\b{re.escape(w)}\b[^\n.,;]*?\b(?:excision|resection|removal|repair|plasty|lysis|drainage)\b", full_content_lower)
+                            for w in finding_words
+                        ) or any(
                             w in full_content_lower
-                            for w in ["cystectomy", "extensive adhesiolysis", "surgical excision of cyst", "pathology confirmed malignancy"]
+                            for w in ["cystectomy", "extensive adhesiolysis", "surgical excision of cyst", "pathology confirmed malignancy", "septoplasty", "turbinoplasty", "fess"]
                         )
                         if not has_intervention:
                             sec_cand.role = DiagnosisRole.EXCLUDED
@@ -2229,13 +2218,11 @@ class EvidenceFirstFactExtractor:
                             )
                             continue
 
-                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(
-                        sec_cand.normalized_diagnosis, sec_cand.primary_evidence_quote
-                    )
-                    if is_valid:
-                        sec_cand.role = DiagnosisRole.SECONDARY
-                        sec_cand.classification_reason = f"Active co-existing condition managed during admission: {sec_cand.primary_evidence_quote}"
-                        secondary_diags.append(sec_cand)
+                    # Distinct valid condition -> SECONDARY
+                    sec_cand.role = DiagnosisRole.SECONDARY
+                    sec_cand.is_authorized = True
+                    sec_cand.classification_reason = f"Active co-existing condition managed during admission: {sec_cand.primary_evidence_quote}"
+                    secondary_diags.append(sec_cand)
 
         # Extract structured oncology context across entire document narrative
         full_doc_text = " ".join(s.content for s in sections)
