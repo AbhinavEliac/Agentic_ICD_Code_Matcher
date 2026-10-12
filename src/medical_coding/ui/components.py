@@ -1,6 +1,7 @@
 """Modular presentation components for the medical coding Streamlit user interface."""
 
 import html
+import re
 from typing import Any
 
 import streamlit as st
