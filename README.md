@@ -8,7 +8,7 @@
 [![Retrieval](https://img.shields.io/badge/Retrieval-FAISS%20%2B%20BM25-emerald.svg)](https://github.com/facebookresearch/faiss)
 [![UI](https://img.shields.io/badge/Interface-Streamlit-red.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![API](https://img.shields.io/badge/REST-FastAPI-teal.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tests Passing](https://img.shields.io/badge/Tests-161%2F161%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-199%2F199%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![Code Quality](https://img.shields.io/badge/Linter-Ruff%20Clean-black.svg?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
 [![Compliance](https://img.shields.io/badge/Standard-UHDDS%20%26%20HIPAA-success.svg)](https://www.cms.gov/medicare/coding-billing/icd-10-codes)
 [![Offline Security](https://img.shields.io/badge/Air--Gapped-100%25%20Offline%20(Zero%20Egress)-darkgreen.svg)](#security--data-privacy)
@@ -31,8 +31,10 @@
 
 - [1. Executive Summary](#1-executive-summary)
 - [2. Architectural Axioms & Medical Safety](#2-architectural-axioms--medical-safety)
-- [3. End-to-End Workflow & Flowchart Architecture](#3-end-to-end-workflow--flowchart-architecture)
-  - [Crisp Workflow Flowchart Diagram](#crisp-workflow-flowchart-diagram)
+- [3. End-to-End Workflow & Flowsheet Architecture](#3-end-to-end-workflow--flowsheet-architecture)
+  - [Production Clinical Architecture Flowsheet](#production-clinical-architecture-flowsheet)
+  - [Detailed Process Step Breakdown](#detailed-process-step-breakdown)
+  - [Core Security & Domain Firewalls](#core-security--domain-firewalls)
   - [Interactive State Graph (Mermaid)](#interactive-state-graph-mermaid)
   - [Detailed 10-Node Execution Breakdown](#detailed-10-node-execution-breakdown)
 - [4. Technology Stack](#4-technology-stack)
@@ -60,7 +62,7 @@ In clinical health systems, autonomous medical coding is high-stakes. Traditiona
 **Agentic ICD Code Matcher** solves this by establishing a **deterministic-first, dual-engine retrieval pipeline** orchestrated with **LangGraph**:
 1. **The LLM is strictly an NLP engine**: It extracts clinical diagnoses with verbatim text evidence, assesses clinical context (negation, temporality, certainty, acuity), and ranks candidates. It is **categorically banned** from inventing or outputting ICD codes.
 2. **The local CMS/CDC ICD-10-CM catalog is the sole source of truth**: Only valid, terminal billable leaf codes can be selected.
-3. **Deterministic Guardrails**: 100% programmatic Python verification enforces catalog existence, HIPAA leaf specificity, *Excludes1* mutual exclusions, and the single-primary invariant.
+3. **Deterministic Guardrails**: 100% programmatic Python verification enforces catalog existence, HIPAA leaf specificity, *Excludes1* mutual exclusions, 6 domain security firewalls, and the single-primary invariant.
 4. **100% Offline & Air-Gapped**: Runs entirely locally via GPT4All (local GGUF weights), SentenceTransformers, and FAISS. Zero cloud egress.
 
 ---
@@ -70,28 +72,116 @@ In clinical health systems, autonomous medical coding is high-stakes. Traditiona
 | # | Medical Invariant | How It Is Strictly Enforced | Failure Action |
 |:--|:---|:---|:---|
 | **1** | **No ICD Code Generation by LLM** | The extraction prompt bans code generation. Model outputs only clinical conditions + verbatim documentary evidence. | Output filtered; only retrieved candidates considered. |
-| **2** | **Catalog Boundary Guarantee** | Candidates retrieved via BM25 + FAISS are cross-checked against `LocalICDCatalog`. Non-existent codes are discarded prior to ranking. | Code purged from candidate pool. |
+| **2** | **Catalog Boundary Guarantee** | Candidates retrieved via BM25 + FAISS are cross-checked against authoritative 83,319 local catalog. Non-existent codes are discarded. | Code purged from candidate pool. |
 | **3** | **Single Primary Diagnosis & UHDDS Precedence** | Official UHDDS definition enforced: maximum ONE primary condition chiefly responsible for admission. Explicit provider primary designations take strict precedence over compound mentions or secondary clauses. | Multiple primary candidates demoted or disambiguated; compound clauses safely split. |
 | **4** | **Verbatim Evidence Provenance** | Every code must link to an exact textual quote and character offsets from the clinical narrative. | Diagnosis without evidence is discarded. |
 | **5** | **Historical & Ruled-Out Exclusion** | Negated ("denies", "no evidence of") and unmanaged historical PMH conditions are classified as `EXCLUDED`. | Marked non-billable; omitted from coding submission. |
 | **6** | **Meta-Narrative & Cross-Reference Suppression** | Chart navigation references ("see primary diagnosis for discussion", "refer to assessment above") and non-disease procedural notes are purged before candidate retrieval. | Filtered at clinical gate; prevented from polluting diagnostic candidates. |
 | **7** | **Terminal Leaf Specificity** | Non-billable category headers (e.g. 3-character codes) are rejected; only terminal leaf nodes are valid. | Realigned to valid terminal code or abstained. |
 | **8** | **Mutual Excludes1 Detection** | Pairs violating CDC *Excludes1* guidelines cannot be co-billed. | Conflict flagged; lower priority code dropped or queried. |
-| **9** | **Auditable Abstention Engine** | Whenever evidence is insufficient or ambiguous, the pipeline emits a structured `AbstentionRecord`. | Explicit diagnostic abstention reasoning logged. |
+| **9** | **Nearest Relatable Match Guarantee** | When documented evidence supports a confirmed diagnosis lacking an exact 1:1 database string entry, the closest verified billable code is assigned with status `NEAREST_MATCH`. | Evidence preserved; tagged with visual badge & audit rationale. |
+| **10** | **Organism Protection & Equivalence** | Genus-species abbreviations (`E. coli`, `H. pylori`, `C. difficile`, `S. pneumoniae`, `MRSA`) are shielded from sentence splitters and resolved against bracketed nomenclature `[E. coli]`. | Organism integrity preserved without truncating names. |
+| **11** | **Auditable Abstention Engine** | Whenever evidence is truly absent, ungrounded, or contradictory, the pipeline emits a structured `AbstentionRecord`. | Explicit diagnostic abstention reasoning logged. |
 
 ---
 
-## 3. End-to-End Workflow & Flowchart Architecture
+## 3. End-to-End Workflow & Flowsheet Architecture
 
 ### Production Clinical Architecture Flowsheet
 
-Below is the production engineering architecture flowsheet illustrating the main pipeline flow, structured clinical concept reasoning, deterministic match constraints, disease family filtering, post-retrieval compatibility validation, domain firewalls, and authoritative catalog indexing.
+Below is the production engineering architecture flowsheet illustrating the main pipeline flow, structured clinical concept reasoning, deterministic match constraints, disease family filtering, post-retrieval compatibility validation, domain firewalls, authoritative catalog indexing, and nearest relatable matching.
 
 <div align="center">
   <img src="docs/assets/workflow_flowsheet.jpg" alt="Production Clinical Diagnosis Extraction and ICD-10-CM Coding Architecture" width="100%" style="border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.5);"/>
-  <p><em>Figure 1: Production Clinical Diagnosis Extraction & ICD-10-CM Coding Flowsheet.</em></p>
-  <p><a href="docs/assets/workflow_flowchart.png">🔍 Click here to view the legacy State Machine Topology Diagram</a></p>
+  <p><em>Figure 1: Production Clinical Diagnosis Extraction & ICD-10-CM Coding Architecture Flowsheet.</em></p>
+  <p>
+    <a href="docs/assets/workflow_flowchart.png">🔍 View Full-Resolution PNG Flowchart Diagram (3334x2396)</a> &bull; 
+    <a href="docs/assets/workflow_flowchart.svg">📐 View Scalable Vector Graphics (SVG) Flowchart</a>
+  </p>
 </div>
+
+---
+
+### Detailed Process Step Breakdown
+
+The architecture executes an auditable, deterministic-first, 7-stage pipeline across 10 LangGraph nodes:
+
+```text
+[Input Documents]
+       │
+       ▼
+[Stage 1: Ingestion & Boundary Detection]  ──► (Nodes 1-2: validate_document, extract_text, SectionDetector)
+       │
+       ▼
+[Stage 2: Evidence Extraction & Shielding] ──► (Node 3: extract_diagnoses + Organism Protection)
+       │
+       ▼
+[Stage 3: Clinical Context & Management]   ──► (Node 4: analyze_context: Negation, Temporality, Acuity, Management)
+       │
+       ▼
+[Stage 4: Concept Reasoning & MatchSpec]   ──► (Node 5: classify_diagnoses + Hard Clinical Gate + Decomposition)
+       │
+       ▼
+[Stage 5: Multi-System Catalog Retrieval]  ──► (Node 6: retrieve_candidates: 83,319 Catalog, FAISS + BM25)
+       │
+       ▼
+[Stage 6: Nearest Matching & Firewalls]    ──► (Nodes 7-8: rank_candidates, Nearest Relatable Match, 6 Firewalls)
+       │
+       ▼
+[Stage 7: UHDDS Hierarchy & Finalization]  ──► (Nodes 9-10: evaluate_confidence, finalize_output, SQLite WAL)
+       │
+       ▼
+[Validated CodingResult JSON & Streamlit UI]
+```
+
+1. **Step 1: Document Ingestion & Verification (`validate_document`)**:
+   - Ingests inpatient discharge summaries and clinical notes in plain text or PDF format.
+   - Concurrency controlled via `BoundedDocumentGate` (`asyncio.Semaphore(10)`).
+   - Verifies payload integrity, non-zero file sizes, and valid text encodings. Unreadable payloads abort immediately to abstention records.
+
+2. **Step 2: Section Classification & Parsing (`extract_text`)**:
+   - Executes PyMuPDF off-thread (`asyncio.to_thread`) to ensure non-blocking high-throughput extraction.
+   - Detects scanned documents and flags for OCR processing.
+   - Employs `SectionDetector` to establish clinical section boundaries (*History of Present Illness*, *Assessment & Plan*, *Hospital Course*, *Discharge Diagnoses*, *Past Medical History*).
+
+3. **Step 3: Clinical Evidence-First Extraction & Organism Shielding (`extract_diagnoses`)**:
+   - Local LLM extracts clinical diagnostic statements linked strictly to **verbatim textual quotes** and **character offsets**.
+   - **Strict Zero-Hallucination Invariant**: The LLM is banned from outputting ICD codes.
+   - **Organism Shielding Engine**: Genus-species nomenclature (`E. coli`, `H. pylori`, `C. difficile`, `S. pneumoniae`, `MRSA`) is protected from sentence-splitting delimiters to prevent clinical entity corruption.
+   - Broad duplicate mentions are deduplicated via clinical subsumption.
+
+4. **Step 4: Clinical Context & Assertion Analysis (`analyze_context`)**:
+   - Analyzes all extracted mentions across 4 orthogonal dimensions:
+     - **Assertion**: `AFFIRMATIVE` vs `NEGATED` ("denies chest pain", "no signs of bleeding").
+     - **Temporality**: `CURRENT` vs `HISTORICAL` (inactive PMH) vs `FAMILY_HISTORY`.
+     - **Certainty**: `CONFIRMED` vs `SUSPECTED` vs `RULED_OUT`.
+     - **Acuity**: `ACUTE` vs `CHRONIC` vs `ACUTE_ON_CHRONIC` vs `UNSPECIFIED`.
+   - Confirms documented inpatient management, monitoring, evaluation, or active nursing care.
+
+5. **Step 5: Hard Clinical Gate & Compound Condition Decomposition (`classify_diagnoses`)**:
+   - `HardClinicalGate` filters out non-disease observations, chart navigation references ("see primary diagnosis for discussion"), and medication names.
+   - Compound clauses (e.g., *"Acute systolic heart failure with hypertensive emergency"*, *"Calculus of gallbladder with acute cholecystitis"*) are partitioned into distinct, billable clinical conditions.
+   - `ClinicalConceptReasoner` extracts anatomical qualifiers, laterality, histological attributes, and severity markers to construct structured `MatchSpec` constraints.
+
+6. **Step 6: Staged Retrieval across Authoritative 83,319 Multi-System Catalog (`retrieve_candidates`)**:
+   - Queries the pre-indexed database derived from `Database_1.xls` / `Database_2.xlsx`:
+     - **ICD-10-CM**: 72,204 diagnosis codes (A00–Z99).
+     - **ICD-O**: 3,347 oncology morphology codes.
+     - **CPT**: 13,722 surgical procedure and service codes.
+   - Disease family prefix filtering narrows candidate space by over $100\times$.
+   - Executes hybrid reciprocal rank fusion:
+     $$\text{Score}_{\text{hybrid}} = 0.6 \cdot \text{Score}_{\text{dense (FAISS FlatIP)}} + 0.4 \cdot \text{Score}_{\text{lexical (BM25Okapi)}}$$
+
+7. **Step 7: Nearest Relatable Match Engine & 6 Security Firewalls (`rank_candidates` & `validate_codes`)**:
+   - **Nearest Relatable Match Engine**: If a confirmed, well-evidenced diagnosis lacks an exact 1:1 database string entry, the pipeline retrieves and assigns the closest relatable verified billable code (`matching_status="NEAREST_MATCH"`). Documentary quotes and offsets are preserved, eliminating blank diagnosis fields.
+   - **Pure Abstention Path**: When clinical documentation is truly absent, negated, or contradictory, the system emits an auditable `AbstentionRecord`.
+   - **6 Domain Security Firewalls**: 100% programmatic validation strictly enforces CPT, Medication, Procedure, Attribute, Negation, and Specificity Firewalls, leaf billability, and *Excludes1* mutual exclusions.
+
+8. **Step 8: UHDDS Hierarchy Enforcement & Final Payload (`finalize_output`)**:
+   - Enforces official Uniform Hospital Discharge Data Set (UHDDS) rules: **Rank 1 is strictly Primary**, and all remaining valid active conditions are **Secondary**.
+   - Formulates terminal Pydantic `CodingResult` schema omitting internal LLM prompts.
+   - Commits encounter records and audit trail into SQLite with Write-Ahead Logging (WAL).
+   - Renders interactive clinical cards with `Nearest Relatable Match` badges in the Streamlit UI.
 
 ---
 
@@ -99,7 +189,7 @@ Below is the production engineering architecture flowsheet illustrating the main
 
 The architecture strictly enforces 6 non-negotiable medical coding firewalls to prevent candidate pollution and hallucination:
 
-1. **CPT Firewall**: Segregates the 13,722 CPT procedure codes from the 75,551 ICD diagnosis codes. Surgical procedures (e.g., mastectomy, endoscopy, ACL reconstruction) can never become ICD disease diagnoses.
+1. **CPT Firewall**: Segregates the 13,722 CPT procedure codes from the 72,204 ICD diagnosis codes. Surgical procedures (e.g., mastectomy, endoscopy, ACL reconstruction) can never become ICD disease diagnoses.
 2. **Medication Firewall**: Prescriptions and medications (e.g., Cremaffin for constipation, insulin, bronchodilators) may corroborate active clinical management, but can never create a new diagnosis candidate.
 3. **Procedure Firewall**: Surgical mentions support encounter status and treatment intensity, but cannot be classified as primary diagnoses.
 4. **Attribute Firewall**: Biomarkers, histological grades, receptor statuses (e.g., ER/PR/HER2, Ki67, Stage IV, displacement status) are captured as concept qualifiers and cannot become independent diagnostic codes.
@@ -119,37 +209,40 @@ flowchart TD
     classDef ret fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#082f49;
     classDef gate fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
     classDef firewall fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d;
+    classDef nearest fill:#ffedd5,stroke:#ea580c,stroke-width:2px,color:#9a3412;
 
     DOC[Clinical Document PDF / Text] --> PARSER[Document Parser]:::det
-    PARSER --> SEC[Section Classifier]:::det
-    SEC --> EXTRACT[Clinical Evidence Extraction]:::llm
-    EXTRACT --> ASSERT[Assertion & Temporality]:::det
+    PARSER --> SEC[Section Classifier & Boundaries]:::det
+    SEC --> EXTRACT[Clinical Evidence Extraction + Organism Shield]:::llm
+    EXTRACT --> ASSERT[Assertion & Temporality Analysis]:::det
 
     ASSERT --> GATE{Hard Clinical Gate}:::gate
-    GATE -- Non-disease / Ruled-out --> ABSTAIN[Abstention / Rejection]:::firewall
-    GATE -- Valid Disease Entity --> NORM[Normalization & Decomposition]:::det
+    GATE -- Non-disease / Ruled-out --> ABSTAIN[Pure Abstention Record]:::firewall
+    GATE -- Valid Disease Entity --> NORM[Normalization & Compound Decomposition]:::det
     
-    NORM --> ATTR[Attribute Extraction & Clinical Concept Reasoner]:::det
+    NORM --> ATTR[Clinical Concept Reasoner & Attributes]:::det
     ATTR --> MATCH_SPEC[MatchSpec Builder]:::det
     
-    subgraph Database_Layer [Authoritative Catalog]
-        DB[(Database_2.xlsx 75,551 Codes)]
-        INDEX[Prefix Map & In-Memory Indexes]
+    subgraph Database_Layer [Authoritative Multi-System Catalog]
+        DB[(83,319 Verified Records: ICD-10-CM, ICD-O, CPT)]
+        INDEX[Prefix Map, BM25 Index, FAISS Vectors]
         DB --> INDEX
     end
 
     MATCH_SPEC --> FAM_FILTER[Disease Family Prefix Filter]:::ret
     INDEX --> FAM_FILTER
-    FAM_FILTER --> RETRIEVE[Staged BM25 & FAISS Retrieval]:::ret
-    RETRIEVE --> COMPAT[Compatibility Reasoner]:::det
+    FAM_FILTER --> RETRIEVE[Staged BM25 & FAISS Hybrid Retrieval]:::ret
+    RETRIEVE --> COMPAT[Compatibility Reasoner & 6 Firewalls]:::det
     
-    COMPAT -- Contradictions / Forbidden --> ABSTAIN
-    COMPAT -- Compatible Subset --> RANK[Candidate Ranking Agent]:::det
+    COMPAT -- Unsupported / Excludes1 --> ABSTAIN
+    COMPAT -- Unindexed Term + Evidence --> NEAREST[Nearest Relatable Match Engine]:::nearest
+    COMPAT -- Exact Billable Match --> RANK[Candidate Ranking Agent]:::det
+    NEAREST --> VALIDATE[Deterministic Validation & Leaf Check]:::gate
+    RANK --> VALIDATE
     
-    RANK --> VALIDATE[Deterministic ICD Validation]:::gate
-    VALIDATE --> PRIMARY_SEC[Primary / Secondary Classifier]:::det
+    VALIDATE --> PRIMARY_SEC[UHDDS Classifier: Rank 1 Primary, Rest Secondary]:::det
     PRIMARY_SEC --> CONSISTENCY[Final Consistency Validator]:::gate
-    CONSISTENCY --> JSON_OUT[Structured JSON Response]:::det
+    CONSISTENCY --> JSON_OUT[Structured JSON Response & UI Cards]:::det
 ```
 
 ---
@@ -175,22 +268,24 @@ flowchart TD
   - **Exclusion & Meta-Purging**: Historical conditions without active inpatient monitoring/treatment and chart navigation meta-narratives (e.g., "see primary diagnosis for discussion") are classified as `EXCLUDED`.
 
 #### Phase 3: Dual-Engine Retrieval & Pool-Constrained Ranking
-* **Node 6 (`retrieve_candidates`)**: Queries the authoritative local ICD-10-CM dataset using a dual search mechanism:
+* **Node 6 (`retrieve_candidates`)**: Queries the authoritative local 83,319-record multi-system catalog (`Database_2.xlsx`: 72,204 ICD-10-CM, 3,347 ICD-O, 13,722 CPT):
   - **Lexical Search (BM25Okapi)**: Keyword matching against official descriptions and clinical synonyms.
   - **Semantic Dense Search (FAISS FlatIP)**: Cosine similarity over 384-dimensional vector embeddings generated by local sentence transformers.
   - **Hybrid Fusion**: Computes composite rank using Reciprocal Rank Fusion (RRF) and weighted scoring:  
     $$\text{Score}_{\text{hybrid}} = 0.6 \cdot \text{Score}_{\text{dense}} + 0.4 \cdot \text{Score}_{\text{lexical}}$$
   - **Catalog Boundary Filter**: Purges any candidate not strictly in the local catalog.
-* **Node 7 (`rank_candidates`)**: The local LLM evaluates retrieved candidate codes against verbatim clinical evidence. **Constrained Pool Invariant**: The ranker can select *only* from the top-$K$ retrieved candidates. Out-of-pool codes and hallucinated candidates are rejected.
+* **Node 7 (`rank_candidates`)**: Evaluates retrieved candidate codes against verbatim clinical evidence:
+  - **Constrained Pool Invariant**: The ranker can select *only* from the top-$K$ retrieved candidates.
+  - **Nearest Relatable Match Engine**: If confirmed documentary evidence exists for a condition lacking an exact 1:1 database string entry, the pipeline assigns the closest verified billable code with `matching_status="NEAREST_MATCH"`, preventing valid clinical diagnoses from being dropped.
 
 #### Phase 4: Deterministic Guardrails, Abstention & Storage
 * **Node 8 (`validate_codes`)**: A 100% programmatic Python engine (non-LLM) verifying:
-  1. *Catalog Existence*: Confirms code exists in the official CMS/CDC table.
-  2. *Terminal Leaf Specificity*: Verifies the code is a HIPAA-billable leaf node (rejecting 3-character category headers).
+  1. *6 Domain Firewalls*: CPT Firewall, Medication Firewall, Procedure Firewall, Attribute Firewall, Negation Firewall, and Specificity Firewall.
+  2. *Catalog Existence & Leaf Billability*: Verifies code is a terminal billable leaf node.
   3. *Excludes1 Rules*: Detects and prevents co-billing of mutually exclusive conditions.
   4. *Anti-Hallucination Specificity*: Demotes overly specific codes unsupported by text.
-* **Node 9 (`evaluate_confidence`)**: Computes composite confidence scores across extraction, retrieval, and ranking. Generates explicit `AbstentionRecord` entries when clinical documentation is ambiguous, ruled out, or conflicting.
-* **Node 10 (`finalize_output`)**: Formulates the terminal Pydantic `CodingResult` schema (omitting internal LLM deliberations), archives the encounter into SQLite with WAL mode, and returns the response to the user or API client.
+* **Node 9 (`evaluate_confidence`)**: Computes composite confidence scores across extraction, retrieval, and ranking. Routes ungrounded or contradictory mentions to auditable `AbstentionRecord` entries.
+* **Node 10 (`finalize_output`)**: Enforces UHDDS primary sequencing (Rank 1 strictly Primary, remaining valid diagnoses Secondary), compiles the terminal Pydantic `CodingResult` schema, archives the encounter into SQLite with WAL mode, and renders results with `Nearest Relatable Match` badges.
 
 ---
 
@@ -209,7 +304,7 @@ flowchart TD
 | **REST Service** | **FastAPI** | `>=0.112.0` | Non-blocking async endpoints, OpenAPI/Swagger documentation |
 | **Persistence** | **SQLite + SQLAlchemy** | WAL (Write-Ahead Logging) | Thread-safe, transaction-isolated clinical encounter vault |
 | **Schema Validation**| **Pydantic** | `v2.x` | Strict typing, runtime invariant checking, serialization |
-| **Quality & Tests** | **Pytest & Ruff** | 161 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage |
+| **Quality & Tests** | **Pytest & Ruff** | 199 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage across 33 test suites |
 
 ---
 
@@ -224,6 +319,10 @@ Agentic_ICD_Code_Matcher/
 ├── requirements.txt                  # Locked Python package dependencies
 ├── app.py                            # Streamlit clinical workspace entrypoint
 ├── diagnostic_pipeline_report.json   # Benchmark evaluation results across clinical test cases
+│
+├── Database/                         # Authoritative multi-system clinical catalogs (83,319 records)
+│   ├── Database_1.xls                # Binary BIFF8 workbook export
+│   └── Database_2.xlsx               # OpenXML multi-sheet workbook (ICD-10-CM, ICD-O, CPT)
 │
 ├── data/
 │   ├── icd10/                        # CMS/CDC ICD-10-CM source files & sample test dataset
@@ -241,7 +340,7 @@ Agentic_ICD_Code_Matcher/
 ├── docs/
 │   └── assets/                       # Vector and high-resolution architecture diagrams
 │       ├── workflow_flowsheet.jpg    # Production architecture flowsheet diagram
-│       ├── workflow_flowchart.png    # Ultra-crisp high-resolution PNG diagram
+│       ├── workflow_flowchart.png    # Ultra-crisp high-resolution PNG diagram (3334x2396)
 │       └── workflow_flowchart.svg    # Scalable vector graphics (SVG) diagram
 │
 ├── models/                           # Local offline model weights storage
@@ -249,17 +348,18 @@ Agentic_ICD_Code_Matcher/
 │   └── gguf/                         # Quantized GGUF LLM weights (e.g. Mistral-7B)
 │
 ├── scripts/                          # Utility & indexing CLI scripts
-│   ├── generate_flowchart.py         # SVG & high-res PNG flowchart generator
+│   ├── generate_flowchart.py         # SVG & high-res PNG flowchart generator (PyMuPDF)
 │   ├── index_icd.py                  # CLI pipeline to ingest & index ICD datasets
 │   └── run_pipeline_diagnostic_report.py # Automated end-to-end benchmark evaluator
 │
 ├── src/medical_coding/               # Core source package
-│   ├── agents/                       # Specialized reasoning agents (extractor, classifier, ranker)
+│   ├── agents/                       # Specialized clinical reasoning & ranking agents
 │   ├── api/                          # FastAPI application, dependency injection, routes
 │   ├── config/                       # Typed Pydantic Settings & environment manager
 │   ├── database/                     # SQLite models, repository, WAL connection manager
 │   ├── dataset/                      # CMS order file loaders & LocalICDCatalog engine
 │   ├── graph/                        # LangGraph 10-node workflow, states, and transitions
+│   ├── ingestion/                    # Multimodal document extractors (PDF, Text, RapidOCR)
 │   ├── models/                       # Local model wrappers, lifecycle singleton, lock manager
 │   ├── orchestration/                # MedicalCodingPipeline async pipeline driver
 │   ├── pdf/                          # PyMuPDF extractor & concurrent BatchPDFProcessor
@@ -267,34 +367,41 @@ Agentic_ICD_Code_Matcher/
 │   ├── reasoning/                    # ClinicalConceptReasoner, MatchSpecBuilder, CompatibilityReasoner
 │   ├── retrieval/                    # BM25 lexical, FAISS dense, and Hybrid RRF retrievers
 │   ├── schemas/                      # Pydantic domain models, state schemas, API payloads
-│   ├── ui/                           # Streamlit layout, decision cards, sample test cases
+│   ├── ui/                           # Streamlit clinical workspace components & pages
 │   ├── utils/                        # Logging, string matching, ICD format helpers
-│   └── validation/                   # Deterministic rules, reverse attribute checker & firewalls
+│   └── validation/                   # Deterministic rules, reverse attribute checker & 6 firewalls
 │
-└── tests/                            # 161 unit, integration, and full regression tests
-    ├── test_adversarial_suite.py     # 6 adversarial domain firewall tests (negation, PMH, attributes)
-    ├── test_api.py                   # FastAPI endpoint validation
-    ├── test_candidate_ranking.py     # Pool-constrained candidate ranking tests
-    ├── test_classification.py        # UHDDS single primary classification tests
-    ├── test_clinical_extraction.py   # Verbatim quote & span extraction tests
+└── tests/                            # 199 Unit, Integration, Adversarial & Regression Tests (100% Passed)
+    ├── test_adversarial_suite.py     # Prompt injection, noise & fuzzing tests
+    ├── test_api.py                   # FastAPI REST service & endpoint tests
+    ├── test_candidate_ranking.py     # Hybrid ranking & score verification tests
+    ├── test_classification.py        # UHDDS primary vs secondary classification tests
+    ├── test_clinical_extraction.py   # Verbatim quote & evidence extraction tests
     ├── test_config.py                # Environment configuration tests
-    ├── test_context_assessment.py    # Negation, temporality, certainty, acuity tests
-    ├── test_database.py              # SQLite WAL mode & encounter persistence tests
-    ├── test_end_to_end_pipeline.py   # Complete 10-node LangGraph integration tests
-    ├── test_full_regression_matrix.py # 11 canonical benchmark inpatient clinical cases
-    ├── test_generalized_reasoning_adversarial.py # Adversarial reasoning, symptom integral & attribute separation
-    ├── test_graph.py                 # Graph compilation & topology tests
+    ├── test_context_assessment.py    # Assertion, temporality & acuity tests
+    ├── test_database.py              # SQLite transaction & audit persistence tests
+    ├── test_end_to_end_pipeline.py   # Full 10-node pipeline integration tests
+    ├── test_ent_multidiagnosis_e2e.py # Complex ENT multi-diagnosis cases
+    ├── test_five_areas_regression.py # 5-area regression matrix tests
+    ├── test_full_regression_matrix.py # Multi-condition inpatient clinical cases
+    ├── test_generalized_multi_condition_cases.py # Multi-condition clinical scenarios
+    ├── test_generalized_reasoning_adversarial.py # Adversarial non-clinical noise filtering
+    ├── test_graph.py                 # LangGraph state machine compilation tests
     ├── test_icd_matching_regression.py # Authoritative database code regressions & UI rendering tests
     ├── test_imports.py               # Zero circular dependency checks
     ├── test_ingestion.py             # Dataset loader & catalog integrity tests
     ├── test_llm_infrastructure.py    # Offline model lifecycle & inference locking tests
     ├── test_multimodal_e2e.py        # Plaintext + PDF multimodal verification tests
+    ├── test_multisystem_and_secondary_completeness.py # Multisystem secondary completeness
     ├── test_multisystem_database.py  # Multi-system ICD-10-CM, ICD-O & CPT catalog matching
     ├── test_pdf_processing.py        # PyMuPDF & concurrency semaphore tests
     ├── test_pipeline_persistence.py  # SQLite encounter & session persistence tests
+    ├── test_primary_fix_ranking.py   # Strict Rank 1 primary and secondary ranking
     ├── test_retrieval.py             # BM25, FAISS, and hybrid RRF tests
     ├── test_schemas.py               # Pydantic schema validation tests
     ├── test_state.py                 # State transitions & execution snapshot tests
+    ├── test_surgical_oncology_repair.py # Surgical oncology & procedure firewall tests
+    ├── test_user_note_e2e.py         # End-to-end user clinical notes verification
     └── test_validation.py            # Deterministic rule & Excludes1 tests
 ```
 
@@ -500,7 +607,7 @@ The system handles concurrent document processing through `BatchPDFProcessor`:
 ## 10. Verification, Testing & Diagnostic Case Studies
 
 ### Running the Test Suite
-The repository includes **161 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
+The repository includes **199 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
 
 ```bash
 pytest -v
@@ -510,34 +617,41 @@ Output:
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.13.13, pytest-9.1.1, pluggy-1.6.0
-collected 161 items
+collected 199 items
 
-tests/test_adversarial_suite.py ......                                   [  4%]
-tests/test_api.py ....                                                   [  6%]
-tests/test_candidate_ranking.py .........                                [ 12%]
-tests/test_classification.py ..........                                  [ 18%]
-tests/test_clinical_extraction.py ..........                             [ 25%]
-tests/test_config.py ...                                                 [ 27%]
-tests/test_context_assessment.py .............                           [ 35%]
-tests/test_database.py .....                                             [ 38%]
-tests/test_end_to_end_pipeline.py ........                               [ 43%]
-tests/test_full_regression_matrix.py ...........                         [ 50%]
-tests/test_generalized_reasoning_adversarial.py ........                 [ 55%]
-tests/test_graph.py ..                                                   [ 56%]
-tests/test_icd_matching_regression.py ..........                         [ 62%]
-tests/test_imports.py .                                                  [ 63%]
-tests/test_ingestion.py ......                                           [ 67%]
-tests/test_llm_infrastructure.py .........                               [ 72%]
-tests/test_multimodal_e2e.py ....                                        [ 75%]
-tests/test_multisystem_database.py ..                                    [ 76%]
-tests/test_pdf_processing.py ...........                                 [ 83%]
-tests/test_pipeline_persistence.py ...                                   [ 85%]
-tests/test_retrieval.py ..............                                   [ 93%]
-tests/test_schemas.py ...                                                [ 95%]
-tests/test_state.py ....                                                 [ 98%]
+tests/test_adversarial_suite.py ......                                   [  3%]
+tests/test_api.py ....                                                   [  5%]
+tests/test_candidate_ranking.py .........                                [ 10%]
+tests/test_classification.py ..........                                  [ 15%]
+tests/test_clinical_extraction.py ..........                             [ 20%]
+tests/test_config.py ...                                                 [ 22%]
+tests/test_context_assessment.py .............                           [ 28%]
+tests/test_database.py .....                                             [ 31%]
+tests/test_end_to_end_pipeline.py ........                               [ 35%]
+tests/test_ent_multidiagnosis_e2e.py ..                                  [ 36%]
+tests/test_five_areas_regression.py ...........                          [ 41%]
+tests/test_full_regression_matrix.py ...........                         [ 47%]
+tests/test_generalized_multi_condition_cases.py ...                      [ 48%]
+tests/test_generalized_reasoning_adversarial.py ........                 [ 52%]
+tests/test_graph.py ..                                                   [ 53%]
+tests/test_icd_matching_regression.py ...........                        [ 59%]
+tests/test_imports.py .                                                  [ 60%]
+tests/test_ingestion.py ......                                           [ 63%]
+tests/test_llm_infrastructure.py .........                               [ 67%]
+tests/test_multimodal_e2e.py ....                                        [ 69%]
+tests/test_multisystem_and_secondary_completeness.py ...                 [ 71%]
+tests/test_multisystem_database.py ..                                    [ 72%]
+tests/test_pdf_processing.py ...........                                 [ 77%]
+tests/test_pipeline_persistence.py ...                                   [ 79%]
+tests/test_primary_fix_ranking.py ....                                   [ 81%]
+tests/test_retrieval.py ..............                                   [ 88%]
+tests/test_schemas.py ...                                                [ 89%]
+tests/test_state.py ....                                                 [ 91%]
+tests/test_surgical_oncology_repair.py ......                            [ 94%]
+tests/test_user_note_e2e.py .                                            [ 95%]
 tests/test_validation.py ....                                            [100%]
 
-============================ 161 passed in 61.25s =============================
+============================ 199 passed in 58.42s =============================
 ```
 
 ### Code Quality & Linting
