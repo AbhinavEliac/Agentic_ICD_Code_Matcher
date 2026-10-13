@@ -8,7 +8,7 @@
 [![Retrieval](https://img.shields.io/badge/Retrieval-FAISS%20%2B%20BM25-emerald.svg)](https://github.com/facebookresearch/faiss)
 [![UI](https://img.shields.io/badge/Interface-Streamlit-red.svg?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![API](https://img.shields.io/badge/REST-FastAPI-teal.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tests Passing](https://img.shields.io/badge/Tests-199%2F199%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests Passing](https://img.shields.io/badge/Tests-202%2F202%20Passed%20(100%25)-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![Code Quality](https://img.shields.io/badge/Linter-Ruff%20Clean-black.svg?logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
 [![Compliance](https://img.shields.io/badge/Standard-UHDDS%20%26%20HIPAA-success.svg)](https://www.cms.gov/medicare/coding-billing/icd-10-codes)
 [![Offline Security](https://img.shields.io/badge/Air--Gapped-100%25%20Offline%20(Zero%20Egress)-darkgreen.svg)](#security--data-privacy)
@@ -17,11 +17,10 @@
 
 ---
 
-### 👨‍💻 Author & Contact
-**Abhinav Gupta**  
-📧 **Email**: [abhinavgupta15.ag@gmail.com](mailto:abhinavgupta15.ag@gmail.com)  
-🐙 **GitHub**: [@AbhinavEliac](https://github.com/AbhinavEliac)  
-📦 **Repository**: [https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
+### 🏥 Production System Overview
+**Autonomous Clinical Medical Coding Architecture**  
+🛡️ **Strict UHDDS & HIPAA Validation Engine**  
+📦 **Repository**: [Agentic ICD Code Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
 
 </div>
 
@@ -74,12 +73,12 @@ In clinical health systems, autonomous medical coding is high-stakes. Traditiona
 | **1** | **No ICD Code Generation by LLM** | The extraction prompt bans code generation. Model outputs only clinical conditions + verbatim documentary evidence. | Output filtered; only retrieved candidates considered. |
 | **2** | **Catalog Boundary Guarantee** | Candidates retrieved via BM25 + FAISS are cross-checked against authoritative 83,319 local catalog. Non-existent codes are discarded. | Code purged from candidate pool. |
 | **3** | **Single Primary Diagnosis & UHDDS Precedence** | Official UHDDS definition enforced: maximum ONE primary condition chiefly responsible for admission. Explicit provider primary designations take strict precedence over compound mentions or secondary clauses. | Multiple primary candidates demoted or disambiguated; compound clauses safely split. |
-| **4** | **Verbatim Evidence Provenance** | Every code must link to an exact textual quote and character offsets from the clinical narrative. | Diagnosis without evidence is discarded. |
+| **4** | **Verbatim Evidence Provenance & Deduplication** | Every code must link to an exact textual quote and character offsets from the clinical narrative. All duplicate evidence points and repetitive text spans are automatically dropped. | Redundant points pruned; diagnosis without evidence is discarded. |
 | **5** | **Historical & Ruled-Out Exclusion** | Negated ("denies", "no evidence of") and unmanaged historical PMH conditions are classified as `EXCLUDED`. | Marked non-billable; omitted from coding submission. |
 | **6** | **Meta-Narrative & Cross-Reference Suppression** | Chart navigation references ("see primary diagnosis for discussion", "refer to assessment above") and non-disease procedural notes are purged before candidate retrieval. | Filtered at clinical gate; prevented from polluting diagnostic candidates. |
 | **7** | **Terminal Leaf Specificity** | Non-billable category headers (e.g. 3-character codes) are rejected; only terminal leaf nodes are valid. | Realigned to valid terminal code or abstained. |
 | **8** | **Mutual Excludes1 Detection** | Pairs violating CDC *Excludes1* guidelines cannot be co-billed. | Conflict flagged; lower priority code dropped or queried. |
-| **9** | **Nearest Relatable Match Guarantee** | When documented evidence supports a confirmed diagnosis lacking an exact 1:1 database string entry, the closest verified billable code is assigned with status `NEAREST_MATCH`. | Evidence preserved; tagged with visual badge & audit rationale. |
+| **9** | **Nearest Match Abstention Invariant** | When documented evidence supports a confirmed diagnosis lacking an exact 1:1 local catalog entry, the nearest database candidate is audited into the **Abstain Section** (`abstentions`) with `nearest_code` and `nearest_description`. Unverified codes are barred from billable Primary/Secondary diagnoses. | Unverified code abstained; audited rationale and nearest match code badge displayed. |
 | **10** | **Organism Protection & Equivalence** | Genus-species abbreviations (`E. coli`, `H. pylori`, `C. difficile`, `S. pneumoniae`, `MRSA`) are shielded from sentence splitters and resolved against bracketed nomenclature `[E. coli]`. | Organism integrity preserved without truncating names. |
 | **11** | **Auditable Abstention Engine** | Whenever evidence is truly absent, ungrounded, or contradictory, the pipeline emits a structured `AbstentionRecord`. | Explicit diagnostic abstention reasoning logged. |
 
@@ -172,16 +171,17 @@ The architecture executes an auditable, deterministic-first, 7-stage pipeline ac
    - Executes hybrid reciprocal rank fusion:
      $$\text{Score}_{\text{hybrid}} = 0.6 \cdot \text{Score}_{\text{dense (FAISS FlatIP)}} + 0.4 \cdot \text{Score}_{\text{lexical (BM25Okapi)}}$$
 
-7. **Step 7: Nearest Relatable Match Engine & 6 Security Firewalls (`rank_candidates` & `validate_codes`)**:
-   - **Nearest Relatable Match Engine**: If a confirmed, well-evidenced diagnosis lacks an exact 1:1 database string entry, the pipeline retrieves and assigns the closest relatable verified billable code (`matching_status="NEAREST_MATCH"`). Documentary quotes and offsets are preserved, eliminating blank diagnosis fields.
+7. **Step 7: Nearest Relatable Match & Abstention Policy (`rank_candidates` & `validate_codes`)**:
+   - **Nearest Match Abstention Invariant**: If a confirmed, well-evidenced diagnosis lacks an exact 1:1 database string entry, the closest verified billable code is audited and placed in the **Abstain Section** (`abstentions`) with `nearest_code` and `nearest_description`. This ensures no unverified or approximate code pollutes billable Primary or Secondary diagnosis lists.
    - **Pure Abstention Path**: When clinical documentation is truly absent, negated, or contradictory, the system emits an auditable `AbstentionRecord`.
    - **6 Domain Security Firewalls**: 100% programmatic validation strictly enforces CPT, Medication, Procedure, Attribute, Negation, and Specificity Firewalls, leaf billability, and *Excludes1* mutual exclusions.
 
-8. **Step 8: UHDDS Hierarchy Enforcement & Final Payload (`finalize_output`)**:
-   - Enforces official Uniform Hospital Discharge Data Set (UHDDS) rules: **Rank 1 is strictly Primary**, and all remaining valid active conditions are **Secondary**.
+8. **Step 8: UHDDS Hierarchy Enforcement & Evidence Deduplication (`finalize_output`)**:
+   - Enforces official Uniform Hospital Discharge Data Set (UHDDS) rules: **Rank 1 is strictly Primary**, and all remaining valid active conditions are **Secondary**. If a provisional primary is abstained for lacking an exact local code, the top verified secondary is promoted to Primary.
+   - **Duplicate Evidence Dropping**: Prunes duplicate and overlapping evidence quotes across clinical narrative boundaries.
    - Formulates terminal Pydantic `CodingResult` schema omitting internal LLM prompts.
    - Commits encounter records and audit trail into SQLite with Write-Ahead Logging (WAL).
-   - Renders interactive clinical cards with `Nearest Relatable Match` badges in the Streamlit UI.
+   - Renders interactive clinical cards with audited abstention badges in the Streamlit UI.
 
 ---
 
@@ -276,7 +276,8 @@ flowchart TD
   - **Catalog Boundary Filter**: Purges any candidate not strictly in the local catalog.
 * **Node 7 (`rank_candidates`)**: Evaluates retrieved candidate codes against verbatim clinical evidence:
   - **Constrained Pool Invariant**: The ranker can select *only* from the top-$K$ retrieved candidates.
-  - **Nearest Relatable Match Engine**: If confirmed documentary evidence exists for a condition lacking an exact 1:1 database string entry, the pipeline assigns the closest verified billable code with `matching_status="NEAREST_MATCH"`, preventing valid clinical diagnoses from being dropped.
+  - **Evidence Provenance & Deduplication**: Corroborating narrative spans are synthesized while strictly pruning duplicate evidence points.
+  - **Nearest Match Routing**: Conditions lacking verified local code matches are tagged for audited abstention rather than false positive assignment.
 
 #### Phase 4: Deterministic Guardrails, Abstention & Storage
 * **Node 8 (`validate_codes`)**: A 100% programmatic Python engine (non-LLM) verifying:
@@ -285,7 +286,7 @@ flowchart TD
   3. *Excludes1 Rules*: Detects and prevents co-billing of mutually exclusive conditions.
   4. *Anti-Hallucination Specificity*: Demotes overly specific codes unsupported by text.
 * **Node 9 (`evaluate_confidence`)**: Computes composite confidence scores across extraction, retrieval, and ranking. Routes ungrounded or contradictory mentions to auditable `AbstentionRecord` entries.
-* **Node 10 (`finalize_output`)**: Enforces UHDDS primary sequencing (Rank 1 strictly Primary, remaining valid diagnoses Secondary), compiles the terminal Pydantic `CodingResult` schema, archives the encounter into SQLite with WAL mode, and renders results with `Nearest Relatable Match` badges.
+* **Node 10 (`finalize_output`)**: Enforces UHDDS primary sequencing (Rank 1 strictly Primary, remaining valid diagnoses Secondary), places all nearest match unverified candidates into the abstain section with explicit candidate codes, deduplicates all evidence strings, compiles the terminal Pydantic `CodingResult` schema, archives the encounter into SQLite with WAL mode, and renders results with audited abstention badges.
 
 ---
 
@@ -304,7 +305,7 @@ flowchart TD
 | **REST Service** | **FastAPI** | `>=0.112.0` | Non-blocking async endpoints, OpenAPI/Swagger documentation |
 | **Persistence** | **SQLite + SQLAlchemy** | WAL (Write-Ahead Logging) | Thread-safe, transaction-isolated clinical encounter vault |
 | **Schema Validation**| **Pydantic** | `v2.x` | Strict typing, runtime invariant checking, serialization |
-| **Quality & Tests** | **Pytest & Ruff** | 199 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage across 33 test suites |
+| **Quality & Tests** | **Pytest & Ruff** | 202 Tests (100% Passed) | Comprehensive regression, adversarial, unit & e2e coverage across 34 test suites |
 
 ---
 
@@ -607,7 +608,7 @@ The system handles concurrent document processing through `BatchPDFProcessor`:
 ## 10. Verification, Testing & Diagnostic Case Studies
 
 ### Running the Test Suite
-The repository includes **199 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
+The repository includes **202 unit, integration, adversarial, and full clinical regression tests** covering all modules with a **100% pass rate**:
 
 ```bash
 pytest -v
@@ -617,30 +618,31 @@ Output:
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.13.13, pytest-9.1.1, pluggy-1.6.0
-collected 199 items
+collected 202 items
 
 tests/test_adversarial_suite.py ......                                   [  3%]
 tests/test_api.py ....                                                   [  5%]
-tests/test_candidate_ranking.py .........                                [ 10%]
-tests/test_classification.py ..........                                  [ 15%]
-tests/test_clinical_extraction.py ..........                             [ 20%]
-tests/test_config.py ...                                                 [ 22%]
-tests/test_context_assessment.py .............                           [ 28%]
-tests/test_database.py .....                                             [ 31%]
-tests/test_end_to_end_pipeline.py ........                               [ 35%]
-tests/test_ent_multidiagnosis_e2e.py ..                                  [ 36%]
-tests/test_five_areas_regression.py ...........                          [ 41%]
-tests/test_full_regression_matrix.py ...........                         [ 47%]
-tests/test_generalized_multi_condition_cases.py ...                      [ 48%]
-tests/test_generalized_reasoning_adversarial.py ........                 [ 52%]
-tests/test_graph.py ..                                                   [ 53%]
-tests/test_icd_matching_regression.py ...........                        [ 59%]
-tests/test_imports.py .                                                  [ 60%]
-tests/test_ingestion.py ......                                           [ 63%]
-tests/test_llm_infrastructure.py .........                               [ 67%]
-tests/test_multimodal_e2e.py ....                                        [ 69%]
-tests/test_multisystem_and_secondary_completeness.py ...                 [ 71%]
-tests/test_multisystem_database.py ..                                    [ 72%]
+tests/test_candidate_ranking.py .........                                [  9%]
+tests/test_classification.py ..........                                  [ 14%]
+tests/test_clinical_extraction.py ..........                             [ 19%]
+tests/test_config.py ...                                                 [ 21%]
+tests/test_context_assessment.py .............                           [ 27%]
+tests/test_database.py .....                                             [ 30%]
+tests/test_end_to_end_pipeline.py ........                               [ 34%]
+tests/test_ent_multidiagnosis_e2e.py ..                                  [ 35%]
+tests/test_five_areas_regression.py ...........                          [ 40%]
+tests/test_full_regression_matrix.py ...........                         [ 46%]
+tests/test_generalized_multi_condition_cases.py ...                      [ 47%]
+tests/test_generalized_reasoning_adversarial.py ........                 [ 51%]
+tests/test_graph.py ..                                                   [ 52%]
+tests/test_icd_matching_regression.py ...........                        [ 58%]
+tests/test_imports.py .                                                  [ 58%]
+tests/test_ingestion.py ......                                           [ 61%]
+tests/test_llm_infrastructure.py .........                               [ 66%]
+tests/test_multimodal_e2e.py ....                                        [ 68%]
+tests/test_multisystem_and_secondary_completeness.py ...                 [ 69%]
+tests/test_multisystem_database.py ..                                    [ 70%]
+tests/test_nearest_fix_abstain_dedup.py ...                              [ 72%]
 tests/test_pdf_processing.py ...........                                 [ 77%]
 tests/test_pipeline_persistence.py ...                                   [ 79%]
 tests/test_primary_fix_ranking.py ....                                   [ 81%]
@@ -651,7 +653,7 @@ tests/test_surgical_oncology_repair.py ......                            [ 94%]
 tests/test_user_note_e2e.py .                                            [ 95%]
 tests/test_validation.py ....                                            [100%]
 
-============================ 199 passed in 58.42s =============================
+============================ 202 passed in 59.12s =============================
 ```
 
 ### Code Quality & Linting
@@ -693,8 +695,7 @@ Distributed under the **MIT License**. See `LICENSE` for details.
 
 <div align="center">
 
-**Developed with ❤️ by Abhinav Gupta**  
-*Lead Architect & AI Systems Engineer*  
-📧 [abhinavgupta15.ag@gmail.com](mailto:abhinavgupta15.ag@gmail.com) &bull; [GitHub Profile](https://github.com/AbhinavEliac)
+**Autonomous Clinical ICD-10-CM Medical Coding Engine**  
+*Deterministic-First, Dual-Engine Retrieval & LangGraph Orchestration*
 
 </div>

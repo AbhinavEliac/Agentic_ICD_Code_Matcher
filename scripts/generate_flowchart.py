@@ -411,7 +411,7 @@ svg_content = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1150"
   <!-- ==================== FOOTER ==================== -->
   <g transform="translate(60, 1100)">
     <line x1="0" y1="0" x2="1480" y2="0" stroke="#1e293b" stroke-width="1"/>
-    <text x="0" y="24" font-family="'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="500" fill="#64748b">Author: Abhinav Gupta &bull; Email: abhinavgupta15.ag@gmail.com &bull; GitHub: https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher</text>
+    <text x="0" y="24" font-family="'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="500" fill="#64748b">Autonomous Medical Coding Architecture &bull; Production Workflow Flowchart</text>
     <text x="1480" y="24" font-family="'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="500" fill="#64748b" text-anchor="end">Engineered with Python 3.13 &bull; LangGraph &bull; GPT4All &bull; FAISS &bull; PyMuPDF &bull; Streamlit</text>
   </g>
 </svg>
