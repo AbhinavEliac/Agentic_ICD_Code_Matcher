@@ -178,7 +178,16 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
     safe_desc = html.escape(primary.description or "")
     raw_quote = _clean_audit_from_evidence(primary.evidence_quote or "")
     if " | " in raw_quote:
-        spans = [_clean_audit_from_evidence(s) for s in raw_quote.split(" | ") if _clean_audit_from_evidence(s)]
+        seen_spans = set()
+        spans = []
+        for s in raw_quote.split(" | "):
+            cleaned = _clean_audit_from_evidence(s)
+            if not cleaned:
+                continue
+            norm = re.sub(r"\s+", " ", cleaned.lower().strip(" .;,:-"))
+            if norm and norm not in seen_spans:
+                seen_spans.add(norm)
+                spans.append(cleaned)
         spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
         evidence_content_html = spans_html
     else:
@@ -259,7 +268,16 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
         safe_desc = html.escape(diag.description or "")
         raw_sec_quote = _clean_audit_from_evidence(diag.evidence_quote or "")
         if " | " in raw_sec_quote:
-            spans = [_clean_audit_from_evidence(s) for s in raw_sec_quote.split(" | ") if _clean_audit_from_evidence(s)]
+            seen_spans = set()
+            spans = []
+            for s in raw_sec_quote.split(" | "):
+                cleaned = _clean_audit_from_evidence(s)
+                if not cleaned:
+                    continue
+                norm = re.sub(r"\s+", " ", cleaned.lower().strip(" .;,:-"))
+                if norm and norm not in seen_spans:
+                    seen_spans.add(norm)
+                    spans.append(cleaned)
             spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
             sec_evidence_html = spans_html
         else:
@@ -307,7 +325,15 @@ def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
             stage_str = abst.stage.value if hasattr(abst.stage, "value") else str(abst.stage)
             raw_term = abst.raw_term or "Unspecified Entity"
 
-            if (
+            nearest_c = getattr(abst, "nearest_code", None)
+            if not nearest_c and abst.detail:
+                m = re.search(r"Nearest (?:database|relatable)?\s*match:\s*([A-Za-z0-9.]+)", abst.detail)
+                if m:
+                    nearest_c = m.group(1)
+
+            if nearest_c:
+                badge_html = f'<span class="pill-badge badge-warning">Nearest Match: {html.escape(str(nearest_c))} (Abstained)</span>'
+            elif (
                 abst.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE
                 or reason_str in ("NO_MATCHING_ICD_CANDIDATE", "NO_CANDIDATE_FOUND")
                 or "No local code" in (abst.detail or "")

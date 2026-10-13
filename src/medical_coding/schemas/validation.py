@@ -89,3 +89,11 @@ class AbstentionRecord(BaseModel):
     stage: PipelineStage = Field(
         description="Pipeline stage at which the abstention decision was triggered.",
     )
+    nearest_code: str | None = Field(
+        default=None,
+        description="Nearest matched ICD candidate code if condition lacked verified local code match.",
+    )
+    nearest_description: str | None = Field(
+        default=None,
+        description="Nearest matched ICD candidate description if condition lacked verified local code match.",
+    )

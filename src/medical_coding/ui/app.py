@@ -163,6 +163,7 @@ def format_coding_result(result: Any) -> str:
 
     def _get_cand_ev(cand: Any) -> str:
         quotes: list[str] = []
+        seen_norms: set[str] = set()
         ev_list = getattr(cand, "evidence", []) or []
         if isinstance(ev_list, list):
             for item in ev_list:
@@ -175,11 +176,27 @@ def format_coding_result(result: Any) -> str:
                     q = _clean_ev(item.sentence)
                 elif isinstance(item, str):
                     q = _clean_ev(item)
-                if q and q != "None" and q not in quotes:
-                    quotes.append(q)
+                if q and q != "None":
+                    import re
+                    norm = re.sub(r"\s+", " ", q.lower().strip(" .;,:-"))
+                    if norm and norm not in seen_norms:
+                        seen_norms.add(norm)
+                        quotes.append(q)
         if quotes:
             return " | ".join(quotes)
-        return _clean_ev(getattr(cand, "evidence_quote", None))
+        raw_q = _clean_ev(getattr(cand, "evidence_quote", None))
+        if raw_q and raw_q != "None":
+            import re
+            spans = []
+            for s in raw_q.split(" | "):
+                clean_s = _clean_ev(s)
+                if clean_s and clean_s != "None":
+                    norm = re.sub(r"\s+", " ", clean_s.lower().strip(" .;,:-"))
+                    if norm and norm not in seen_norms:
+                        seen_norms.add(norm)
+                        spans.append(clean_s)
+            return " | ".join(spans) if spans else "None"
+        return "None"
 
     lines = []
     p = getattr(result, "primary_diagnosis", None)

@@ -52,12 +52,30 @@ class DeterministicValidator:
             (None, AbstentionRecord) if any rule check fails.
         """
         if selection.selected_candidate is None:
+            nearest_cand = None
+            if selection.candidate_pool:
+                for cand in selection.candidate_pool:
+                    if self.catalog.is_valid_code(cand.code) and self.catalog.is_billable_code(cand.code):
+                        nearest_cand = cand
+                        break
+                if not nearest_cand:
+                    nearest_cand = selection.candidate_pool[0]
+            n_code = nearest_cand.code if nearest_cand else None
+            n_desc = nearest_cand.description if nearest_cand else None
+            justification = selection.selection_justification or "No candidate selected."
+            if nearest_cand:
+                detail = f"Condition '{condition.raw_term}' lacked verified local code match. Nearest database match: {n_code} ({n_desc}). Reason: {justification}"
+            else:
+                detail = justification
+
             return None, AbstentionRecord(
                 diagnosis_id=condition.diagnosis_id,
                 raw_term=condition.raw_term,
                 reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                detail=selection.selection_justification or "No candidate selected.",
+                detail=detail,
                 stage=PipelineStage.RANKING,
+                nearest_code=n_code,
+                nearest_description=n_desc,
             )
 
         candidate = selection.selected_candidate
@@ -150,13 +168,15 @@ class DeterministicValidator:
                 code = better_candidate.code
                 anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs = _evaluate_candidate_clinical_meaning(candidate)
             elif getattr(selection, "matching_status", "") == "NEAREST_MATCH":
-                # User requirement: for [no_local_code] type diagnosis, nearest relatable code should get displayed, because they also have evidence
-                checks.append(
-                    ValidationCheck(
-                        rule_name="NearestRelatableMatch",
-                        passed=True,
-                        details=f"Nearest relatable code '{code}' ({candidate.description}) accepted for documented clinical condition.",
-                    )
+                # Requirement: put all nearest match code of diagnosis in the abstain section
+                return None, AbstentionRecord(
+                    diagnosis_id=condition.diagnosis_id,
+                    raw_term=condition.raw_term,
+                    reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                    detail=f"Condition '{condition.raw_term}' lacked verified local code match. Nearest database match: {code} ({candidate.description}). Strictly abstained under coding rules.",
+                    stage=PipelineStage.VALIDATION,
+                    nearest_code=code,
+                    nearest_description=candidate.description,
                 )
             else:
                 failure_reasons = []

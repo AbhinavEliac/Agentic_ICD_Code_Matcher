@@ -286,6 +286,7 @@ CLINICAL_MORPHOLOGY: dict[str, list[str]] = {
     "turbinates": ["turbinate", "nasal", "nose"],
     "nasal": ["nose", "turbinate", "turbinates", "septum"],
     "septum": ["nasal", "nose"],
+    "unilateral": ["unilateral", "right", "left", "rt", "lt"],
     "obstruction": ["blockage", "congestion", "disorder", "stricture", "stenosis"],
     "choledocholithiasis": ["calculus", "bile", "duct", "gallstone", "gallstones", "cholelithiasis", "stone", "stones"],
     "coli": ["escherichia", "infection", "bacteria", "bacteremia"],

@@ -103,6 +103,44 @@ class CodedDiagnosisResponse(BaseModel):
             else:
                 data.setdefault("matching_status", "MATCHED")
 
+            # Drop all duplicate evidence points from both evidence list and evidence_quote
+            import re
+            raw_quote = data.get("evidence_quote")
+            if isinstance(raw_quote, str) and " | " in raw_quote:
+                seen_quotes = set()
+                unique_spans = []
+                for span in raw_quote.split(" | "):
+                    clean_span = span.strip()
+                    if not clean_span:
+                        continue
+                    norm = re.sub(r"\s+", " ", clean_span.lower().strip(" .;,:-"))
+                    if norm and norm not in seen_quotes:
+                        seen_quotes.add(norm)
+                        unique_spans.append(clean_span)
+                data["evidence_quote"] = " | ".join(unique_spans)
+
+            ev_list = data.get("evidence")
+            if isinstance(ev_list, list) and ev_list:
+                seen_items = set()
+                unique_ev = []
+                for item in ev_list:
+                    if isinstance(item, dict):
+                        q_text = str(item.get("quote", "")).strip()
+                    elif hasattr(item, "text"):
+                        q_text = str(item.text).strip()
+                    elif isinstance(item, str):
+                        q_text = item.strip()
+                    else:
+                        q_text = str(item).strip()
+
+                    if not q_text:
+                        continue
+                    norm = re.sub(r"\s+", " ", q_text.lower().strip(" .;,:-"))
+                    if norm and norm not in seen_items:
+                        seen_items.add(norm)
+                        unique_ev.append(item)
+                data["evidence"] = unique_ev
+
         return data
 
     @property
@@ -195,6 +233,7 @@ class CodingResult(BaseModel):
 
         def _get_cand_ev(cand: Any) -> str:
             quotes: list[str] = []
+            seen_norms: set[str] = set()
             ev_list = getattr(cand, "evidence", []) or []
             if isinstance(ev_list, list):
                 for item in ev_list:
@@ -207,11 +246,27 @@ class CodingResult(BaseModel):
                         q = _clean_ev(item.sentence)
                     elif isinstance(item, str):
                         q = _clean_ev(item)
-                    if q and q != "None" and q not in quotes:
-                        quotes.append(q)
+                    if q and q != "None":
+                        import re
+                        norm = re.sub(r"\s+", " ", q.lower().strip(" .;,:-"))
+                        if norm and norm not in seen_norms:
+                            seen_norms.add(norm)
+                            quotes.append(q)
             if quotes:
                 return " | ".join(quotes)
-            return _clean_ev(getattr(cand, "evidence_quote", None))
+            raw_q = _clean_ev(getattr(cand, "evidence_quote", None))
+            if raw_q and raw_q != "None":
+                import re
+                spans = []
+                for s in raw_q.split(" | "):
+                    clean_s = _clean_ev(s)
+                    if clean_s and clean_s != "None":
+                        norm = re.sub(r"\s+", " ", clean_s.lower().strip(" .;,:-"))
+                        if norm and norm not in seen_norms:
+                            seen_norms.add(norm)
+                            spans.append(clean_s)
+                return " | ".join(spans) if spans else "None"
+            return "None"
 
         def _get_formatted_code(cand: Any) -> str:
             base_code = getattr(cand, "icd10cm", None) or cand.code or ""

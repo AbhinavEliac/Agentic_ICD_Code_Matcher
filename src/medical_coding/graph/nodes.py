@@ -839,7 +839,19 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                 if phrase in raw_doc_text.lower() and not any(phrase in existing.lower() for existing in ev_snippets):
                     ev_snippets.append(phrase)
 
-        clean_evidence_quote = " | ".join(ev_snippets).strip() if ev_snippets else ev_quote
+        # Drop all duplicate evidence points
+        seen_ev = set()
+        unique_snippets: list[str] = []
+        for snip in ev_snippets:
+            clean_s = snip.strip()
+            if not clean_s:
+                continue
+            norm = re.sub(r"\s+", " ", clean_s.lower().strip(" .;,:-"))
+            if norm and norm not in seen_ev:
+                seen_ev.add(norm)
+                unique_snippets.append(clean_s)
+
+        clean_evidence_quote = " | ".join(unique_snippets).strip() if unique_snippets else ev_quote
         selection = agent.rank_candidates(cond, candidates, evidence_override=clean_evidence_quote.strip() or None)
         ranked_selections.append(selection)
 
@@ -989,11 +1001,40 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     secondary_responses: list[CodedDiagnosisResponse] = []
 
     for item in validated:
+        # Route any nearest-match diagnosis directly to abstentions
+        if getattr(item, "matching_status", "MATCHED") == "NEAREST_MATCH":
+            if not any(a.raw_term and a.raw_term.lower() == item.raw_term.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=item.diagnosis_id,
+                        raw_term=item.raw_term,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Condition '{item.raw_term}' lacked verified local code match. Nearest database match: {item.code} ({item.description}). Strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                        nearest_code=item.code,
+                        nearest_description=item.description,
+                    )
+                )
+            continue
+
         is_icdo = bool(item.icdo or item.code.startswith("M"))
         is_cpt = bool(item.cpt or (item.code.isdigit() and len(item.code) in (4, 5)))
         icd10_val = item.icd10cm if item.icd10cm else (item.code if not is_icdo and not is_cpt else None)
         icdo_val = item.icdo if item.icdo else (item.code if is_icdo else None)
         cpt_val = item.cpt if item.cpt else (item.code if is_cpt else None)
+
+        raw_ev = getattr(item.evidence, "quote", "") or ""
+        seen_snips = set()
+        deduped_snips = []
+        for snip in raw_ev.split(" | "):
+            s_clean = snip.strip()
+            if not s_clean:
+                continue
+            norm = re.sub(r"\s+", " ", s_clean.lower().strip(" .;,:-"))
+            if norm and norm not in seen_snips:
+                seen_snips.add(norm)
+                deduped_snips.append(s_clean)
+        final_ev_quote = " | ".join(deduped_snips) if deduped_snips else (raw_ev or item.raw_term)
 
         resp = CodedDiagnosisResponse(
             raw_term=item.raw_term,
@@ -1001,7 +1042,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             description=item.description,
             database_code=item.code,
             database_description=item.description,
-            matching_status=getattr(item, "matching_status", "MATCHED") or "MATCHED",
+            matching_status="MATCHED",
             source_section=getattr(item, "source_section", "") or getattr(item.evidence, "source_section", "") or "DISCHARGE_DIAGNOSES",
             source_span=getattr(item, "source_span", None) or getattr(item.evidence, "source_span", None),
             role=item.role,
@@ -1011,17 +1052,16 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             if "chronic" in item.description.lower()
             else Acuity.UNSPECIFIED,
             certainty=Certainty.CONFIRMED,
-            evidence_quote=item.evidence.quote,
+            evidence_quote=final_ev_quote,
             evidence=[
                 {
-                    "quote": snippet.strip(),
+                    "quote": s_snippet,
                     "section": getattr(item.evidence, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                    "evidence_type": "CORROBORATING_EVIDENCE" if idx > 0 else "PRIMARY_EVIDENCE",
+                    "evidence_type": "PRIMARY_EVIDENCE" if idx == 0 else "CORROBORATING_EVIDENCE",
                 }
-                for idx, snippet in enumerate(item.evidence.quote.split(" | "))
-                if snippet.strip()
+                for idx, s_snippet in enumerate(deduped_snips)
             ] or [{
-                "quote": item.evidence.quote,
+                "quote": final_ev_quote,
                 "section": getattr(item.evidence, "source_section", "") or "DISCHARGE_DIAGNOSES",
                 "evidence_type": "CLINICAL_EVIDENCE",
             }],
@@ -1070,36 +1110,19 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             if not nearest_cand and retrieved:
                 nearest_cand = retrieved[0]
 
-            if nearest_cand and c_ev:
-                is_icdo = bool(getattr(nearest_cand, "coding_system", None) == "ICD-O" or nearest_cand.code.startswith("M"))
-                is_cpt = bool(getattr(nearest_cand, "coding_system", None) == "CPT" or (nearest_cand.code.isdigit() and len(nearest_cand.code) in (4, 5)))
-                icd10_val = nearest_cand.code if not is_icdo and not is_cpt else None
-                icdo_val = nearest_cand.code if is_icdo else None
-                cpt_val = nearest_cand.code if is_cpt else None
-
-                primary_response = CodedDiagnosisResponse(
-                    raw_term=term,
-                    normalized_diagnosis=term,
-                    description=nearest_cand.description,
-                    database_code=nearest_cand.code,
-                    database_description=nearest_cand.description,
-                    matching_status="NEAREST_MATCH",
-                    source_section=getattr(clin_primary, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                    role=DiagnosisRole.PRIMARY,
-                    acuity=Acuity.ACUTE if "acute" in term.lower() else (Acuity.CHRONIC if "chronic" in term.lower() else Acuity.UNSPECIFIED),
-                    certainty=Certainty.CONFIRMED,
-                    evidence_quote=c_ev or term,
-                    evidence=[{
-                        "quote": c_ev or term,
-                        "section": getattr(clin_primary, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                        "evidence_type": "CLINICAL_EVIDENCE",
-                    }],
-                    confidence_score=max(0.40, getattr(nearest_cand, "retrieval_score", 0.50)),
-                    is_terminal_billable=True,
-                    icd10cm=icd10_val,
-                    icdo=icdo_val,
-                    cpt=cpt_val,
-                )
+            if nearest_cand:
+                if not any(a.raw_term and a.raw_term.lower() == term.lower() for a in abstentions):
+                    abstentions.append(
+                        AbstentionRecord(
+                            diagnosis_id=getattr(clin_primary, "diagnosis_id", "primary"),
+                            raw_term=term,
+                            reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                            detail=f"Clinical primary diagnosis '{term}' lacked verified local code match. Nearest database match: {nearest_cand.code} ({nearest_cand.description}). Strictly abstained under coding rules.",
+                            stage=PipelineStage.VALIDATION,
+                            nearest_code=nearest_cand.code,
+                            nearest_description=nearest_cand.description,
+                        )
+                    )
             elif not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE and a.raw_term and a.raw_term.lower() == term.lower() for a in abstentions):
                 abstentions.append(
                     AbstentionRecord(
@@ -1112,8 +1135,11 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                 )
         if not primary_response and secondary_responses:
             # Promote top coded secondary to primary role
-            primary_response = secondary_responses.pop(0)
-            primary_response.role = DiagnosisRole.PRIMARY
+            exact_secondaries = [s for s in secondary_responses if getattr(s, "matching_status", "MATCHED") == "MATCHED"]
+            if exact_secondaries:
+                primary_response = exact_secondaries[0]
+                secondary_responses.remove(primary_response)
+                primary_response.role = DiagnosisRole.PRIMARY
 
     # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING FOR SECONDARIES
     seen_sec_terms = set()
@@ -1209,37 +1235,19 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                 if not nearest_cand and retrieved:
                     nearest_cand = retrieved[0]
 
-            if nearest_cand and c_quote:
-                is_icdo = bool(getattr(nearest_cand, "coding_system", None) == "ICD-O" or nearest_cand.code.startswith("M"))
-                is_cpt = bool(getattr(nearest_cand, "coding_system", None) == "CPT" or (nearest_cand.code.isdigit() and len(nearest_cand.code) in (4, 5)))
-                icd10_val = nearest_cand.code if not is_icdo and not is_cpt else None
-                icdo_val = nearest_cand.code if is_icdo else None
-                cpt_val = nearest_cand.code if is_cpt else None
-
-                sec_resp = CodedDiagnosisResponse(
-                    raw_term=c_term,
-                    normalized_diagnosis=c_term,
-                    description=nearest_cand.description,
-                    database_code=nearest_cand.code,
-                    database_description=nearest_cand.description,
-                    matching_status="NEAREST_MATCH",
-                    source_section=getattr(c, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                    role=DiagnosisRole.SECONDARY,
-                    acuity=Acuity.ACUTE if "acute" in c_norm else (Acuity.CHRONIC if "chronic" in c_norm else Acuity.UNSPECIFIED),
-                    certainty=Certainty.CONFIRMED,
-                    evidence_quote=c_quote or c_term,
-                    evidence=[{
-                        "quote": c_quote or c_term,
-                        "section": getattr(c, "source_section", "") or "CLINICAL_DOCUMENTATION",
-                        "evidence_type": "CLINICAL_EVIDENCE",
-                    }],
-                    confidence_score=max(0.40, getattr(nearest_cand, "retrieval_score", 0.50)),
-                    is_terminal_billable=True,
-                    icd10cm=icd10_val,
-                    icdo=icdo_val,
-                    cpt=cpt_val,
-                )
-                secondary_responses.append(sec_resp)
+            if nearest_cand:
+                if not any(a.raw_term and a.raw_term.lower() == c_term.lower() for a in abstentions):
+                    abstentions.append(
+                        AbstentionRecord(
+                            diagnosis_id=getattr(c, "diagnosis_id", "secondary"),
+                            raw_term=c_term,
+                            reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                            detail=f"Condition '{c_term}' lacked verified local code match. Nearest database match: {nearest_cand.code} ({nearest_cand.description}). Strictly abstained under coding rules.",
+                            stage=PipelineStage.VALIDATION,
+                            nearest_code=nearest_cand.code,
+                            nearest_description=nearest_cand.description,
+                        )
+                    )
                 seen_sec_terms.add(c_norm)
             else:
                 # Clinical condition has no matching code in authoritative database; put strictly in abstain
@@ -1261,77 +1269,102 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         primary_response.role = DiagnosisRole.PRIMARY
     secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
 
-    # Filter secondary_responses so ONLY items with verified local codes or nearest relatable matches are retained; uncoded items without matches are strictly abstained
+    # Filter secondary_responses so ONLY items with verified local codes are retained; uncoded items or nearest matches are strictly abstained
     coded_secondaries: list[CodedDiagnosisResponse] = []
     for s in secondary_responses:
         s_code = s.code or getattr(s, "database_code", None)
-        if s_code and s_code != "None" and s.matching_status != "NO_DATABASE_MATCH":
-            coded_secondaries.append(s)
-        elif s.evidence_quote:
-            s_name = s.normalized_diagnosis or s.raw_term or s.description or ""
-            retrieved = retriever.retrieve(s_name, top_k=5) if s_name else []
-            if retrieved:
-                top_r = retrieved[0]
-                s.icd10cm = top_r.code
-                s.database_code = top_r.code
-                s.database_description = top_r.description
-                s.matching_status = "NEAREST_MATCH"
-                coded_secondaries.append(s)
-            else:
-                if s_name and not any(a.raw_term and a.raw_term.lower() == s_name.lower() for a in abstentions):
-                    abstentions.append(
-                        AbstentionRecord(
-                            diagnosis_id=getattr(s, "diagnosis_id", "secondary-abstained"),
-                            raw_term=s_name,
-                            reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                            detail=f"Condition '{s_name}' lacked verified local code match; strictly abstained under coding rules.",
-                            stage=PipelineStage.VALIDATION,
-                        )
-                    )
-        else:
-            s_name = s.normalized_diagnosis or s.raw_term or s.description or ""
+        s_name = s.normalized_diagnosis or s.raw_term or s.description or ""
+        if s.matching_status == "NEAREST_MATCH":
             if s_name and not any(a.raw_term and a.raw_term.lower() == s_name.lower() for a in abstentions):
                 abstentions.append(
                     AbstentionRecord(
                         diagnosis_id=getattr(s, "diagnosis_id", "secondary-abstained"),
                         raw_term=s_name,
                         reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                        detail=f"Condition '{s_name}' lacked verified local code match; strictly abstained under coding rules.",
+                        detail=f"Condition '{s_name}' lacked verified local code match. Nearest database match: {s_code} ({s.description}). Strictly abstained under coding rules.",
                         stage=PipelineStage.VALIDATION,
+                        nearest_code=s_code,
+                        nearest_description=s.description,
+                    )
+                )
+        elif s_code and s_code != "None" and s.matching_status == "MATCHED":
+            coded_secondaries.append(s)
+        else:
+            retrieved = retriever.retrieve(s_name, top_k=5) if s_name else []
+            nearest_cand = retrieved[0] if retrieved else None
+            nearest_info = f" Nearest database match: {nearest_cand.code} ({nearest_cand.description})." if nearest_cand else ""
+            n_code = nearest_cand.code if nearest_cand else None
+            n_desc = nearest_cand.description if nearest_cand else None
+            if s_name and not any(a.raw_term and a.raw_term.lower() == s_name.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(s, "diagnosis_id", "secondary-abstained"),
+                        raw_term=s_name,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Condition '{s_name}' lacked verified local code match.{nearest_info} Strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                        nearest_code=n_code,
+                        nearest_description=n_desc,
                     )
                 )
     secondary_responses = coded_secondaries
 
-    # Check primary_response for local code match: if missing, attempt nearest relatable match if evidence exists, else abstain and promote coded secondary if available
+    # Check primary_response for local code match: if nearest match or missing, abstain and promote coded secondary if available
     if primary_response:
         p_code = primary_response.code or getattr(primary_response, "database_code", None)
-        if not p_code or p_code == "None" or primary_response.matching_status == "NO_DATABASE_MATCH":
-            p_name = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or ""
-            if primary_response.evidence_quote and p_name:
-                retrieved = retriever.retrieve(p_name, top_k=5)
-                if retrieved:
-                    top_r = retrieved[0]
-                    primary_response.icd10cm = top_r.code
-                    primary_response.database_code = top_r.code
-                    primary_response.database_description = top_r.description
-                    primary_response.matching_status = "NEAREST_MATCH"
-                    p_code = top_r.code
-            if not p_code or p_code == "None" or primary_response.matching_status == "NO_DATABASE_MATCH":
-                if p_name and not any(a.raw_term and a.raw_term.lower() == p_name.lower() for a in abstentions):
-                    abstentions.append(
-                        AbstentionRecord(
-                            diagnosis_id=getattr(primary_response, "diagnosis_id", "primary-abstained"),
-                            raw_term=p_name,
-                            reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                            detail=f"Primary condition '{p_name}' lacked verified local code match; strictly abstained under coding rules.",
-                            stage=PipelineStage.VALIDATION,
-                        )
+        p_name = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or ""
+        if primary_response.matching_status == "NEAREST_MATCH":
+            if p_name and not any(a.raw_term and a.raw_term.lower() == p_name.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(primary_response, "diagnosis_id", "primary-abstained"),
+                        raw_term=p_name,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Primary condition '{p_name}' lacked verified local code match. Nearest database match: {p_code} ({primary_response.description}). Strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                        nearest_code=p_code,
+                        nearest_description=primary_response.description,
                     )
-                if secondary_responses:
-                    primary_response = secondary_responses.pop(0)
-                    primary_response.role = DiagnosisRole.PRIMARY
-                else:
-                    primary_response = None
+                )
+            if secondary_responses:
+                primary_response = secondary_responses.pop(0)
+                primary_response.role = DiagnosisRole.PRIMARY
+            else:
+                primary_response = None
+        elif not p_code or p_code == "None" or primary_response.matching_status == "NO_DATABASE_MATCH":
+            retrieved = retriever.retrieve(p_name, top_k=5) if p_name else []
+            nearest_cand = retrieved[0] if retrieved else None
+            nearest_info = f" Nearest database match: {nearest_cand.code} ({nearest_cand.description})." if nearest_cand else ""
+            n_code = nearest_cand.code if nearest_cand else None
+            n_desc = nearest_cand.description if nearest_cand else None
+            if p_name and not any(a.raw_term and a.raw_term.lower() == p_name.lower() for a in abstentions):
+                abstentions.append(
+                    AbstentionRecord(
+                        diagnosis_id=getattr(primary_response, "diagnosis_id", "primary-abstained"),
+                        raw_term=p_name,
+                        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                        detail=f"Primary condition '{p_name}' lacked verified local code match.{nearest_info} Strictly abstained under coding rules.",
+                        stage=PipelineStage.VALIDATION,
+                        nearest_code=n_code,
+                        nearest_description=n_desc,
+                    )
+                )
+            if secondary_responses:
+                primary_response = secondary_responses.pop(0)
+                primary_response.role = DiagnosisRole.PRIMARY
+            else:
+                primary_response = None
+
+    # Ensure all abstentions for uncoded conditions record the nearest database match code
+    for abst in abstentions:
+        if not getattr(abst, "nearest_code", None) and abst.raw_term:
+            retrieved = retriever.retrieve(abst.raw_term, top_k=5)
+            if retrieved:
+                top_cand = retrieved[0]
+                abst.nearest_code = top_cand.code
+                abst.nearest_description = top_cand.description
+                if "Nearest database match:" not in (abst.detail or ""):
+                    abst.detail = f"{abst.detail} Nearest database match: {top_cand.code} ({top_cand.description})."
 
     # Enforce clean role separation: secondary section must NEVER duplicate the primary diagnosis
     if primary_response:

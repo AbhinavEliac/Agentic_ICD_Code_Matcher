@@ -164,7 +164,7 @@ class ReverseAttributeChecker:
 
         for attr, _ in CLINICAL_QUALIFIERS.items():
             if re.search(rf"\b{re.escape(attr)}\b", desc_lower):
-                without_pattern = rf"\bwithout\s+(?:mention\s+of\s+|evidence\s+of\s+|any\s+)?{re.escape(attr)}\b"
+                without_pattern = rf"\bwithout\s+[^,;.:\n]*?\b{re.escape(attr)}\b"
                 if re.search(without_pattern, desc_lower):
                     attributes[attr] = False
                 else:
@@ -391,9 +391,15 @@ class ReverseAttributeChecker:
 
         # Strips negative 'without' expressions so absences are not required
         desc_clean = re.sub(
-            r"\bwithout\s+(?:mention\s+of\s+|evidence\s+of\s+|any\s+)?[a-z0-9\-]+(?:\s+[a-z0-9\-]+)?\b",
+            r"\bwithout\s+[^,;.:\n]+",
             "",
             desc_lower,
+        )
+        # Strips 'not specified as ...' expressions so unrequired modifiers are not demanded
+        desc_clean = re.sub(
+            r"\bnot\s+specified\s+as\s+[^,;.:\n]+",
+            "",
+            desc_clean,
         )
         # Strip parenthetical nonessential modifiers and bracketed synonyms (CMS Guidelines I.A.4 & I.A.7)
         desc_clean = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", desc_clean)
