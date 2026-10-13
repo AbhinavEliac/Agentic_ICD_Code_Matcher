@@ -17,11 +17,10 @@
 
 ---
 
-### 👨‍💻 Author & Contact
-**Abhinav Gupta**  
-📧 **Email**: [abhinavgupta15.ag@gmail.com](mailto:abhinavgupta15.ag@gmail.com)  
-🐙 **GitHub**: [@AbhinavEliac](https://github.com/AbhinavEliac)  
-📦 **Repository**: [https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
+### 🏥 Production System Overview
+**Autonomous Clinical Medical Coding Architecture**  
+🛡️ **Strict UHDDS & HIPAA Validation Engine**  
+📦 **Repository**: [Agentic ICD Code Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
 
 </div>
 
@@ -693,8 +692,7 @@ Distributed under the **MIT License**. See `LICENSE` for details.
 
 <div align="center">
 
-**Developed with ❤️ by Abhinav Gupta**  
-*Lead Architect & AI Systems Engineer*  
-📧 [abhinavgupta15.ag@gmail.com](mailto:abhinavgupta15.ag@gmail.com) &bull; [GitHub Profile](https://github.com/AbhinavEliac)
+**Autonomous Clinical ICD-10-CM Medical Coding Engine**  
+*Deterministic-First, Dual-Engine Retrieval & LangGraph Orchestration*
 
 </div>
