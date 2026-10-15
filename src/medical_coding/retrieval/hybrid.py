@@ -223,3 +223,64 @@ class HybridICDRetriever(BaseICDRetriever):
             "ICD-O": self.retrieve(query, top_k=top_k, min_score=min_score, system="ICD-O"),
             "CPT": self.retrieve(query, top_k=top_k, min_score=min_score, system="CPT"),
         }
+
+    def retrieve_with_retry(
+        self,
+        query: str,
+        evidence: str = "",
+        top_k: int | None = None,
+        min_score: float | None = None,
+        system: str | None = None,
+        max_rounds: int = 3,
+    ) -> list[ICDCandidate]:
+        """Multi-round iterative BM25 lexical and dense vector search across query variations.
+
+        Re-checks candidates for conditions with positive evidence that were not identified
+        on the first pass.
+
+        Round 1: Standard query retrieval.
+        Round 2: Normalized query variations (core clinical entities, synonyms, expanded acronyms).
+        Round 3: Evidence-anchored keywords and relaxed threshold matching.
+        """
+        k = top_k if top_k is not None else self.default_top_k
+        threshold = min_score if min_score is not None else self.min_score_threshold
+
+        # Round 1: Standard retrieval with original query
+        round1_hits = self.retrieve(query, top_k=k, min_score=threshold, system=system)
+        if round1_hits and round1_hits[0].retrieval_score >= threshold:
+            return round1_hits
+
+        from medical_coding.utils.text import extract_search_query_variations
+
+        variations = extract_search_query_variations(query, evidence=evidence)
+        merged_candidates: dict[str, ICDCandidate] = {c.code: c for c in round1_hits}
+
+        # Round 2: Query variations with slightly relaxed threshold
+        if max_rounds >= 2 and variations:
+            relaxed_threshold_r2 = max(0.20, threshold - 0.10)
+            for var in variations:
+                if var.lower().strip() == query.lower().strip():
+                    continue
+                var_hits = self.retrieve(var, top_k=k, min_score=relaxed_threshold_r2, system=system)
+                for h in var_hits:
+                    if h.code not in merged_candidates or h.retrieval_score > merged_candidates[h.code].retrieval_score:
+                        merged_candidates[h.code] = h
+
+            if merged_candidates:
+                ranked = sorted(merged_candidates.values(), key=lambda c: c.retrieval_score, reverse=True)
+                if ranked[0].retrieval_score >= threshold:
+                    return ranked[:k]
+
+        # Round 3: Evidence-anchored search and relaxed threshold
+        if max_rounds >= 3:
+            relaxed_threshold_r3 = max(0.15, threshold - 0.15)
+            # Try evidence text directly if available
+            if evidence:
+                ev_hits = self.retrieve(evidence[:120], top_k=k, min_score=relaxed_threshold_r3, system=system)
+                for h in ev_hits:
+                    if h.code not in merged_candidates or h.retrieval_score > merged_candidates[h.code].retrieval_score:
+                        merged_candidates[h.code] = h
+
+        ranked = sorted(merged_candidates.values(), key=lambda c: c.retrieval_score, reverse=True)
+        return ranked[:k] if ranked else []
+

@@ -150,9 +150,9 @@ async def test_full_pipeline_multi_condition_formatting() -> None:
     assert any("diabetes" in n for n in sec_names)
     assert any("hypertension" in n for n in sec_names)
 
-    # Conditions without local code match are strictly put into abstentions
+    # Conditions without local code match are strictly put into abstentions; if recovered via retry, in secondaries
     abst_terms = [(a.raw_term or "").lower() for a in final_result.abstentions]
-    assert any("choledocholithiasis" in t for t in abst_terms)
+    assert any("choledocholithiasis" in n or "calculus" in n for n in sec_names) or any("choledocholithiasis" in t for t in abst_terms)
 
     output = final_result.format_output()
     assert "primary diagnosis: " in output

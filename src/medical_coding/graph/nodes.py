@@ -566,9 +566,9 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
             else ""
         )
 
-        # 1. Clean query for core clinical entity (strip trailing medications, status, or parentheticals)
-        clean_query = re.sub(r"\s*\([^)]*\)", "", raw_query).strip()
-        clean_query = re.split(r"\s*[-–—]\s*|\s*;\s*|\s*:\s*", clean_query)[0].strip()
+        # 1. Clean query using strengthened clinical normalization
+        from medical_coding.utils.text import extract_search_query_variations, normalize_diagnosis_name
+        clean_query = normalize_diagnosis_name(raw_query)
         if not clean_query:
             clean_query = raw_query
 
@@ -585,8 +585,8 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         hits: list[ICDCandidate] = []
         existing_codes: set[str] = set()
 
-        # STAGE 1: Primary Hybrid Retrieval (Single fast dense+sparse search)
-        primary_hits = retriever.retrieve(clean_query, top_k=25, system="ICD-10-CM")
+        # STAGE 1: Primary Hybrid Retrieval with Multi-Round Retry Checking
+        primary_hits = retriever.retrieve_with_retry(clean_query, evidence=ev_quote, top_k=25, system="ICD-10-CM")
         for h in primary_hits:
             if h.code not in existing_codes:
                 hits.append(h)
@@ -841,10 +841,33 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
 
         clean_evidence_quote = " | ".join(ev_snippets).strip() if ev_snippets else ev_quote
         selection = agent.rank_candidates(cond, candidates, evidence_override=clean_evidence_quote.strip() or None)
+
+        # Multi-round re-checking for conditions with positive evidence that were not identified on initial pass
+        if (
+            selection.selected_code is None
+            and bool(clean_evidence_quote.strip())
+            and cond.role in (DiagnosisRole.PRIMARY, DiagnosisRole.SECONDARY)
+            and getattr(cond, "is_billable_candidate", True)
+        ):
+            logger.info("Condition '%s' with positive evidence lacked code; re-checking with multi-round BM25 and vector search...", cond.raw_term)
+            _, retry_retriever = get_or_initialize_retrieval_system()
+            retry_candidates = retry_retriever.retrieve_with_retry(
+                cond.raw_term,
+                evidence=clean_evidence_quote,
+                top_k=20,
+                min_score=0.20,
+            )
+            if retry_candidates:
+                re_selection = agent.rank_candidates(cond, retry_candidates, evidence_override=clean_evidence_quote.strip() or None)
+                if re_selection.selected_code is not None:
+                    selection = re_selection
+                    candidate_pool[cond.diagnosis_id] = retry_candidates
+
         ranked_selections.append(selection)
 
     return {
         "ranked_selections": ranked_selections,
+        "candidate_pool": candidate_pool,
         "current_stage": PipelineStage.RANKING,
     }
 
@@ -1269,7 +1292,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             coded_secondaries.append(s)
         elif s.evidence_quote:
             s_name = s.normalized_diagnosis or s.raw_term or s.description or ""
-            retrieved = retriever.retrieve(s_name, top_k=5) if s_name else []
+            retrieved = retriever.retrieve_with_retry(s_name, evidence=s.evidence_quote, top_k=5, min_score=0.20) if s_name else []
             if retrieved:
                 top_r = retrieved[0]
                 s.icd10cm = top_r.code
@@ -1308,7 +1331,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         if not p_code or p_code == "None" or primary_response.matching_status == "NO_DATABASE_MATCH":
             p_name = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or ""
             if primary_response.evidence_quote and p_name:
-                retrieved = retriever.retrieve(p_name, top_k=5)
+                retrieved = retriever.retrieve_with_retry(p_name, evidence=primary_response.evidence_quote, top_k=5, min_score=0.20)
                 if retrieved:
                     top_r = retrieved[0]
                     primary_response.icd10cm = top_r.code
@@ -1332,6 +1355,125 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                     primary_response.role = DiagnosisRole.PRIMARY
                 else:
                     primary_response = None
+
+    # Multi-round checking for abstentions with positive evidence
+    from medical_coding.utils.text import normalize_diagnosis_name
+    rechecked_abstentions: list[AbstentionRecord] = []
+    for abst in abstentions:
+        a_term = abst.raw_term or ""
+        a_detail = abst.detail or ""
+        is_negated_or_ruled_out = (
+            abst.reason in (
+                AbstentionReason.EXCLUDED_BY_NEGATION,
+                AbstentionReason.EXCLUDED_BY_TEMPORALITY,
+                AbstentionReason.CONTRADICTORY_DOCUMENTATION,
+            )
+            or "ruled out" in a_detail.lower()
+            or "ruled-out" in a_detail.lower()
+            or "negat" in a_detail.lower()
+            or "past medical history alone without" in a_detail.lower()
+        )
+        if is_negated_or_ruled_out or not a_term:
+            rechecked_abstentions.append(abst)
+            continue
+
+        ev_quote = ""
+        matching_cond = next((
+            c for c in classified
+            if (getattr(c, "diagnosis", None) or getattr(c, "raw_term", "")).lower() == a_term.lower()
+        ), None)
+        if matching_cond:
+            ev_quote = getattr(matching_cond, "evidence_quote", "") or (
+                matching_cond.context.evidence.quote
+                if hasattr(matching_cond, "context") and hasattr(matching_cond.context, "evidence") and matching_cond.context.evidence
+                else ""
+            )
+        if not ev_quote and diag_state:
+            matching_diag = next((
+                d for d in diag_state.all_candidates
+                if d.raw_term.lower() == a_term.lower() or (d.normalized_diagnosis and d.normalized_diagnosis.lower() == a_term.lower())
+            ), None)
+            if matching_diag:
+                ev_quote = matching_diag.primary_evidence_quote or ""
+        if not ev_quote:
+            raw_doc = state.get("raw_text", "")
+            if a_term.lower() in raw_doc.lower():
+                ev_quote = a_term
+
+        if not ev_quote:
+            rechecked_abstentions.append(abst)
+            continue
+
+        is_valid_cand, _ = HardClinicalCandidateGate.evaluate_candidate(a_term, ev_quote)
+        if not is_valid_cand:
+            rechecked_abstentions.append(abst)
+            continue
+
+        norm_a = normalize_diagnosis_name(a_term)
+        retry_hits = retriever.retrieve_with_retry(
+            norm_a or a_term,
+            evidence=ev_quote,
+            top_k=5,
+            min_score=0.20,
+        )
+
+        valid_hit = None
+        for h in retry_hits:
+            if catalog.is_valid_code(h.code) and catalog.is_billable_code(h.code):
+                valid_hit = h
+                break
+        if not valid_hit and retry_hits:
+            valid_hit = retry_hits[0]
+
+        if valid_hit:
+            hit_code = valid_hit.code
+            is_dup = (
+                (primary_response and primary_response.code == hit_code)
+                or any(s.code == hit_code for s in secondary_responses)
+            )
+            if not is_dup:
+                is_icdo = bool(getattr(valid_hit, "coding_system", None) == "ICD-O" or valid_hit.code.startswith("M"))
+                is_cpt = bool(getattr(valid_hit, "coding_system", None) == "CPT" or (valid_hit.code.isdigit() and len(valid_hit.code) in (4, 5)))
+                icd10_val = valid_hit.code if not is_icdo and not is_cpt else None
+                icdo_val = valid_hit.code if is_icdo else None
+                cpt_val = valid_hit.code if is_cpt else None
+
+                promoted = CodedDiagnosisResponse(
+                    raw_term=a_term,
+                    normalized_diagnosis=norm_a or a_term,
+                    description=valid_hit.description,
+                    database_code=valid_hit.code,
+                    database_description=valid_hit.description,
+                    matching_status="MATCHED" if valid_hit.retrieval_score >= 0.40 else "NEAREST_MATCH",
+                    source_section=getattr(matching_cond, "source_section", "") or "CLINICAL_DOCUMENTATION",
+                    role=DiagnosisRole.SECONDARY if primary_response else DiagnosisRole.PRIMARY,
+                    acuity=Acuity.ACUTE if "acute" in norm_a.lower() else (Acuity.CHRONIC if "chronic" in norm_a.lower() else Acuity.UNSPECIFIED),
+                    certainty=Certainty.CONFIRMED,
+                    evidence_quote=ev_quote,
+                    evidence=[{
+                        "quote": ev_quote,
+                        "section": getattr(matching_cond, "source_section", "") or "CLINICAL_DOCUMENTATION",
+                        "evidence_type": "CLINICAL_EVIDENCE",
+                    }],
+                    confidence_score=max(0.40, valid_hit.retrieval_score),
+                    is_terminal_billable=True,
+                    icd10cm=icd10_val,
+                    icdo=icdo_val,
+                    cpt=cpt_val,
+                )
+                if not primary_response:
+                    primary_response = promoted
+                else:
+                    secondary_responses.append(promoted)
+                logger.info(
+                    "Re-check success: Promoted abstained condition '%s' with positive evidence to %s (code '%s')",
+                    a_term, promoted.role.value, valid_hit.code
+                )
+                continue
+
+        rechecked_abstentions.append(abst)
+
+    abstentions = rechecked_abstentions
 
     # Enforce clean role separation: secondary section must NEVER duplicate the primary diagnosis
     if primary_response:

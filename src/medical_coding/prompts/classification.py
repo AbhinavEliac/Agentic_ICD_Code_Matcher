@@ -19,20 +19,38 @@ CRITICAL CODING RULES:
    - If two or more conditions equally meet the criteria for primary diagnosis and the documentation does not distinguish which one occasioned the admission, do NOT arbitrarily choose one. Flag as an ambiguous primary requiring abstention.
    - If no defensible primary condition exists, do NOT force one.
 
-2. ZERO OR MORE SECONDARY DIAGNOSES:
+2. CRITICAL REASONING ON "PRIMARY" IN DISEASE ENTITY NAMES:
+   - Many clinical diseases contain the word "Primary" as an etiological designation (meaning idiopathic, non-secondary, or essential), including:
+     * "Primary hypertension" (essential hypertension)
+     * "Primary osteoarthritis" (degenerative joint disease)
+     * "Primary biliary cholangitis" / "Primary biliary cirrhosis"
+     * "Primary open-angle glaucoma"
+     * "Primary progressive multiple sclerosis"
+     * "Primary pulmonary hypertension"
+     * "Primary aldosteronism"
+     * "Primary hyperparathyroidism"
+     * "Primary spontaneous pneumothorax"
+     * "Primary sclerosing cholangitis"
+   - Having "Primary" in the disease entity name DOES NOT MAKE IT the encounter's Primary Diagnosis!
+   - Under UHDDS guidelines, the Primary Diagnosis is strictly the condition that occasioned the inpatient admission and was the chief driver of acute inpatient care or surgery.
+   - Chronic baseline conditions like "Primary hypertension" or "Primary osteoarthritis" are almost always SECONDARY (comorbid) diagnoses, UNLESS the encounter documentation explicitly proves the patient was admitted specifically for an acute emergency thereof (such as an acute hypertensive emergency/crisis).
+   - If an acute occasioning condition is present (e.g. Acute myocardial infarction, Acute appendicitis, Cholecystitis, Stroke, Fracture, Sepsis, Pneumonia), that acute condition is the PRIMARY diagnosis, while any chronic disease with "Primary" in its name must be assigned role SECONDARY.
+   - You must provide clinical reasoning in "classification_reason" demonstrating how you determined the condition occasioning admission and why any condition with "Primary" in its name was properly classified.
+
+3. ZERO OR MORE SECONDARY DIAGNOSES:
    - A co-existing condition qualifies as a secondary diagnosis when documented evidence shows that it was:
      * clinically relevant
      * actively managed or treated
      * monitored (serial labs, diagnostic workup, vitals)
      * influencing clinical care or increasing nursing care during the stay.
 
-3. EXCLUDED CONDITIONS (DO NOT CODE):
+4. EXCLUDED CONDITIONS (DO NOT CODE):
    - Historical-only conditions without documented inpatient care.
    - Definitively ruled-out or negated conditions.
    - Symptoms that are integral to a confirmed underlying diagnosis.
    - Assign role: "EXCLUDED" and is_billable_candidate: false.
 
-4. NO ICD CODES:
+5. NO ICD CODES:
    - You must NEVER generate, suggest, or assign ICD codes. Only assign billing roles ("PRIMARY", "SECONDARY", "EXCLUDED") with explicit clinical reasons.
 
 Output valid JSON strictly conforming to:

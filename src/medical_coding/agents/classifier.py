@@ -1040,9 +1040,23 @@ class PrimarySecondaryClassifier(BaseAgent):
             # 1. Section / Reason for Admission Context (UHDDS Authority Hierarchy)
             # Under UHDDS, condition established after study chiefly responsible for occasioning admission
             # or underlying condition occasioning procedural/medical inpatient therapy
-            # Function to test whether diag_lower is the direct primary diagnosis mention in a clause
+            from medical_coding.utils.text import normalize_diagnosis_name
+
+            def _is_etiological_primary(term: str) -> bool:
+                t = term.lower().strip()
+                return bool(re.search(
+                    r"\bprimary\s+(?:hypertension|essential\s+hypertension|osteoarthritis|biliary|sclerosing|"
+                    r"open[\s\-]?angle|aldosteronism|hyperparathyroidism|pulmonary\s+hypertension|progressive|"
+                    r"spontaneous\s+pneumothorax|amyloidosis|insomnia|cough\s+headache|polycythemia|thrombocythemia)\b",
+                    t,
+                ))
+
+            is_etio_primary = _is_etiological_primary(diag_lower)
+
+            # Function to test whether diag_lower is the direct primary diagnosis mention in an explicit provider header
             def _check_primary_match(text: str, target_diag: str) -> bool:
-                for match in re.finditer(rf"\b(?:principal|primary)(?:\s+diagnos[ei]s)?\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
+                # Require explicit 'principal diagnosis' or 'primary diagnosis' header (never naked 'primary:')
+                for match in re.finditer(rf"\b(?:principal(?:\s+diagnos[ei]s)?|primary\s+diagnos[ei]s|admitting\s+(?:primary|principal)\s+diagnos[ei]s)\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
                     clause = match.group(1).lower().strip()
                     # Strip subsequent conditions attached by "with", "complicated by", "secondary to", ","
                     for delim in [" with ", " complicated by ", " secondary to ", ","]:
@@ -1066,6 +1080,12 @@ class PrimarySecondaryClassifier(BaseAgent):
                 or getattr(asm, "role", None) in (DiagnosisRole.PRIMARY, "PRIMARY")
                 or getattr(asm, "is_primary", False)
             )
+
+            # Guardrail: If condition carries 'Primary' as an etiological label (e.g. Primary hypertension, Primary osteoarthritis)
+            # do not allow it to be marked as explicit primary unless provider explicitly documented it under a true principal diagnosis header
+            if is_etio_primary and not (_check_primary_match(full_context, diag_lower) or (doc_lower and _check_primary_match(doc_lower, diag_lower))):
+                is_explicit_primary = False
+
             is_explicit_secondary = bool(
                 _check_secondary_match(full_context, diag_lower)
                 or (doc_lower and _check_secondary_match(doc_lower, diag_lower))
@@ -1083,7 +1103,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                 )
                 if adm_clause_match:
                     adm_clause = adm_clause_match.group(0).lower()
-                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage", "organism")]
+                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage", "organism", "primary", "secondary")]
                     from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
                     expanded_dwords = set(diag_words)
                     for dw in diag_words:
@@ -1094,12 +1114,19 @@ class PrimarySecondaryClassifier(BaseAgent):
                     ):
                         is_admission_driver = True
 
+            # Etiological 'Primary' in condition name is not inherently an admission driver
+            if is_etio_primary and not any(term in full_context for term in ["emergency", "crisis", "urgency", "malignant hypertension", "acute exacerbation"]):
+                is_admission_driver = False
+
             if is_explicit_primary:
                 score += 10.0
                 reasons.append("Explicitly documented as PRIMARY/PRINCIPAL DIAGNOSIS by provider (+10.0)")
             elif is_admission_driver:
                 score += 6.0
                 reasons.append("Identified as principal condition occasioning admission (+6.0)")
+            elif is_etio_primary:
+                # Clarify that 'primary' is etiological, not role
+                reasons.append("Etiological 'Primary' in condition name denotes idiopathic etiology; evaluated as comorbidity")
 
             if is_explicit_secondary and not is_explicit_primary:
                 score -= 5.0
@@ -1561,6 +1588,28 @@ class PrimarySecondaryClassifier(BaseAgent):
                     evidence_quote=matched_asm.evidence if matched_asm else "",
                 )
             )
+
+        # UHDDS Guardrail: Verify if LLM marked an etiological 'Primary' condition (e.g. Primary hypertension)
+        # as the PRIMARY role when another acute occasioning condition is present
+        primaries = [c for c in classifications if c.role == DiagnosisRole.PRIMARY]
+        if len(primaries) == 1:
+            p = primaries[0]
+            p_name = p.diagnosis.lower()
+            is_etio = bool(re.search(
+                r"\bprimary\s+(?:hypertension|essential\s+hypertension|osteoarthritis|biliary|sclerosing|"
+                r"open[\s\-]?angle|aldosteronism|hyperparathyroidism|pulmonary\s+hypertension|progressive|"
+                r"spontaneous\s+pneumothorax|amyloidosis|insomnia|cough\s+headache|polycythemia|thrombocythemia)\b",
+                p_name,
+            ))
+            if is_etio:
+                acute_other = next((c for c in classifications if c != p and c.role == DiagnosisRole.SECONDARY and (
+                    any(w in c.diagnosis.lower() for w in ["acute", "infarction", "fracture", "appendicitis", "cholecystitis", "sepsis", "stroke", "pneumonia"])
+                )), None)
+                if acute_other:
+                    p.role = DiagnosisRole.SECONDARY
+                    p.classification_reason = f"Etiological 'Primary' in condition name denotes idiopathic etiology; reclassified as Secondary comorbidity under UHDDS guidelines. {p.classification_reason}"
+                    acute_other.role = DiagnosisRole.PRIMARY
+                    acute_other.primary_justification = f"Acute condition occasioning inpatient admission: {acute_other.evidence_quote}"
 
         return classifications if len(classifications) > 0 else None
 
