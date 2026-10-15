@@ -109,6 +109,29 @@ QUALIFIERS_TO_STRIP_FOR_CORE = {
 }
 
 
+def _is_administrative_parenthetical(content: str) -> bool:
+    """Check if parenthetical content is an administrative artifact (dates, codes, MRN) rather than clinical qualifiers."""
+    c = content.strip().lower()
+    if not c:
+        return True
+    # Pure numbering or single index letters e.g. (1), (a), (iv)
+    if re.fullmatch(r"[0-9ivxabcde]+", c):
+        return True
+    # Dates e.g. (12/05/2023), (2022-04-10), (15 jan 2024), (may 2021)
+    if re.search(r"\b(?:\d{1,4}[/\-\.]\d{1,2}[/\-\.]\d{1,4}|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{2,4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4})\b", c):
+        return True
+    # ICD / CPT code citations e.g. (icd-10: i10), (icd: e11.9), (code c61), (icd10-cm: ...)
+    if re.search(r"\b(?:icd(?:-?10)?(?:-?cm)?|cpt|hcpcs|code|drg|billing)\s*[:#]?\s*[a-z0-9\.]+", c):
+        return True
+    # Pure ICD code like (i10), (e11.9), (k80.20), (c61), (z99.81)
+    if re.fullmatch(r"[a-tv-z][0-9]{2}(?:\.[0-9a-z]{1,4})?", c):
+        return True
+    # Administrative records e.g. (mrn: 12345), (patient id: 55), (chart #99)
+    if re.search(r"\b(?:mrn|patient\s+id|record\s+id|chart|page|pg\.?)\s*[:#]?\s*\d+", c):
+        return True
+    return False
+
+
 def normalize_diagnosis_name(text: str) -> str:
     """Strengthened clinical diagnosis normalizer.
 
@@ -138,16 +161,14 @@ def normalize_diagnosis_name(text: str) -> str:
     # Step 3: Strip trailing medication attachments
     cleaned = MEDICATION_ATTACHMENT_PATTERN.sub("", cleaned).strip()
 
-    # Step 4: Handle parentheticals
+    # Step 4: Handle parentheticals (preserve clinical qualifiers, strip purely administrative artifacts)
     def _clean_paren(m: re.Match[str]) -> str:
         inside = m.group(1).strip()
-        # Keep clinical entity words like primary, essential, acute, chronic, bilateral, type 1, type 2
-        if any(w in inside.lower() for w in ["primary", "essential", "acute", "chronic", "type", "bilateral", "left", "right", "congestive", "systolic", "diastolic", "organism"]):
-            return f" {inside} "
-        # Strip notes like dates, non-informative parentheticals
-        return " "
+        if _is_administrative_parenthetical(inside):
+            return " "
+        return f" {inside} "
 
-    cleaned = re.sub(r"\(([^)]+)\)", _clean_paren, cleaned)
+    cleaned = re.sub(r"[\(\[\{]([^\)\]\}]+)[\)\]\}]", _clean_paren, cleaned)
 
     # Step 5: Expand clinical abbreviations
     from medical_coding.retrieval.tokenizer import expand_medical_abbreviations

@@ -322,6 +322,8 @@ class ContextAndRelevanceAgent(BaseAgent):
                 treatment_evidence=item.get("treatment_evidence") or None,
                 abstain_recommended=bool(item.get("abstain_recommended", False)),
                 abstention_reason=None,
+                initial_role=matched_cond.initial_role if matched_cond else None,
+                original_mention=matched_cond.original_mention if matched_cond else None,
             )
             assessments.append(assessment)
 
@@ -693,6 +695,8 @@ class ContextAndRelevanceAgent(BaseAgent):
                     monitored=True,
                     affected_clinical_management=True,
                     influenced_treatment=True,
+                    initial_role=c.initial_role,
+                    original_mention=c.original_mention,
                 )
             else:
                 # Active acute/chronic condition or suspected condition preserving uncertainty
@@ -713,6 +717,8 @@ class ContextAndRelevanceAgent(BaseAgent):
                     affected_clinical_management=True,
                     influenced_treatment=has_treatment,
                     treatment_evidence=c.treatment_evidence,
+                    initial_role=c.initial_role,
+                    original_mention=c.original_mention,
                 )
 
             assessments.append(asm)
@@ -999,11 +1005,12 @@ class PrimarySecondaryClassifier(BaseAgent):
 
         for asm in assessments:
             diag_lower = asm.diagnosis.lower()
+            orig_lower = (getattr(asm, "original_mention", None) or "").lower()
             ev_lower = (asm.evidence or "").lower()
             treat_lower = (asm.treatment_evidence or "").lower()
             reason_lower = (asm.reason or "").lower()
             sec_lower = (getattr(asm, "section", "") or "").lower().replace("_", " ")
-            full_context = f"{diag_lower} {ev_lower} {treat_lower} {reason_lower} {sec_lower}"
+            full_context = f"{diag_lower} {orig_lower} {ev_lower} {treat_lower} {reason_lower} {sec_lower}"
 
             # Gate: Hard clinical candidate check (reject absence statements, instructions, medications)
             is_valid_diag, gate_reason = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, ev_lower)
@@ -1041,6 +1048,7 @@ class PrimarySecondaryClassifier(BaseAgent):
             # Under UHDDS, condition established after study chiefly responsible for occasioning admission
             # or underlying condition occasioning procedural/medical inpatient therapy
             from medical_coding.utils.text import normalize_diagnosis_name
+            from medical_coding.retrieval.tokenizer import expand_medical_abbreviations, CLINICAL_MORPHOLOGY
 
             def _is_etiological_primary(term: str) -> bool:
                 t = term.lower().strip()
@@ -1051,44 +1059,111 @@ class PrimarySecondaryClassifier(BaseAgent):
                     t,
                 ))
 
-            is_etio_primary = _is_etiological_primary(diag_lower)
+            is_etio_primary = _is_etiological_primary(diag_lower) or _is_etiological_primary(orig_lower)
 
-            # Function to test whether diag_lower is the direct primary diagnosis mention in an explicit provider header
-            def _check_primary_match(text: str, target_diag: str) -> bool:
-                # Require explicit 'principal diagnosis' or 'primary diagnosis' header (never naked 'primary:')
-                for match in re.finditer(rf"\b(?:principal(?:\s+diagnos[ei]s)?|primary\s+diagnos[ei]s|admitting\s+(?:primary|principal)\s+diagnos[ei]s)\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
+            PRIMARY_HEADER_PATTERN = re.compile(
+                r"\b(?:"
+                r"principal(?:\s+diagnos[ei]s)?"
+                r"|primary\s+diagnos[ei]s"
+                r"|admitting\s+(?:primary\s+|principal\s+)?diagnos[ei]s"
+                r"|admission\s+(?:primary\s+|principal\s+)?diagnos[ei]s"
+                r"|admit\s+diagnos[ei]s"
+                r"|diagnos[ei]s\s+on\s+admission"
+                r"|reason\s+for\s+(?:admission|visit|hospitalization)"
+                r")\s*[:\-–—]\s*([^\n;]+)",
+                re.IGNORECASE,
+            )
+
+            def _clinical_match_clause(target: str, orig: str, clause: str) -> bool:
+                # Clean subsequent conditions attached by delimiters
+                for delim in [" with ", " complicated by ", " secondary to ", ","]:
+                    if delim in clause:
+                        clause = clause[:clause.find(delim)].strip()
+                t_norm = normalize_diagnosis_name(target).lower()
+                c_norm = normalize_diagnosis_name(clause).lower()
+                o_norm = normalize_diagnosis_name(orig).lower() if orig else ""
+
+                if not t_norm or not c_norm:
+                    return False
+
+                # 1. Exact string matches
+                if t_norm == c_norm or (o_norm and o_norm == c_norm):
+                    return True
+                if re.search(rf"\b{re.escape(t_norm)}\b", c_norm) or re.search(rf"\b{re.escape(c_norm)}\b", t_norm):
+                    return True
+                if o_norm and (re.search(rf"\b{re.escape(o_norm)}\b", c_norm) or re.search(rf"\b{re.escape(c_norm)}\b", o_norm)):
+                    return True
+
+                # 2. Acronym expansion match
+                t_exp = expand_medical_abbreviations(t_norm)
+                c_exp = expand_medical_abbreviations(c_norm)
+                if t_exp == c_exp or re.search(rf"\b{re.escape(t_exp)}\b", c_exp) or re.search(rf"\b{re.escape(c_exp)}\b", t_exp):
+                    return True
+
+                # 3. Core semantic clinical token overlap
+                ignore_words = {"type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage", "organism", "primary", "secondary", "and", "the", "for", "due", "status", "post"}
+                t_words = [w for w in re.findall(r"\b[a-z]{3,}\b", t_exp) if w not in ignore_words]
+                c_words = [w for w in re.findall(r"\b[a-z]{3,}\b", c_exp) if w not in ignore_words]
+                if not t_words or not c_words:
+                    return False
+
+                def _word_in_clause(w: str, words_set: set[str]) -> bool:
+                    if w in words_set:
+                        return True
+                    for syn in CLINICAL_MORPHOLOGY.get(w, []):
+                        if any(sw in words_set for sw in syn.split()):
+                            return True
+                    return False
+
+                c_words_set = set(c_words)
+                matching_words = [w for w in t_words if _word_in_clause(w, c_words_set)]
+                if len(matching_words) == len(t_words) or (len(t_words) >= 2 and len(matching_words) / len(t_words) >= 0.7):
+                    return True
+                return False
+
+            def _check_primary_match(text: str, target: str, orig: str) -> bool:
+                if not text:
+                    return False
+                for match in PRIMARY_HEADER_PATTERN.finditer(text):
                     clause = match.group(1).lower().strip()
-                    # Strip subsequent conditions attached by "with", "complicated by", "secondary to", ","
-                    for delim in [" with ", " complicated by ", " secondary to ", ","]:
-                        if delim in clause:
-                            clause = clause[:clause.find(delim)].strip()
-                    if re.search(rf"\b{re.escape(target_diag)}\b", clause):
+                    if _clinical_match_clause(target, orig, clause):
+                        return True
+                # Multiline matches: Header followed by newline with bullet or diagnosis on line 1
+                for match in re.finditer(r"\b(?:principal(?:\s+diagnos[ei]s)?|primary\s+diagnos[ei]s|admitting\s+(?:primary\s+|principal\s+)?diagnos[ei]s|admission\s+(?:primary\s+|principal\s+)?diagnos[ei]s|reason\s+for\s+admission|final\s+diagnos[ei]s|discharge\s+diagnos[ei]s)\s*[:\-–—]\s*\n\s*(?:(?:\d+[\.\)]|\*|\-|\u2022)\s*)?([^\n;]+)", text, re.IGNORECASE):
+                    clause = match.group(1).lower().strip()
+                    if _clinical_match_clause(target, orig, clause):
                         return True
                 return False
 
-            def _check_secondary_match(text: str, target_diag: str) -> bool:
+            def _check_secondary_match(text: str, target: str, orig: str) -> bool:
+                if not text:
+                    return False
                 for match in re.finditer(rf"\bsecondary(?:\s+diagnos[ei]s)?\s*[:\-–—]\s*([^\n.;]+)", text, re.IGNORECASE):
                     clause = match.group(1).lower().strip()
-                    if re.search(rf"\b{re.escape(target_diag)}\b", clause):
+                    if _clinical_match_clause(target, orig, clause):
                         return True
                 return False
 
             is_explicit_primary = bool(
-                _check_primary_match(full_context, diag_lower)
-                or (doc_lower and _check_primary_match(doc_lower, diag_lower))
-                or sec_lower in ("principal diagnosis", "primary diagnosis", "principal diagnoses", "primary diagnoses")
+                _check_primary_match(full_context, diag_lower, orig_lower)
+                or (doc_lower and _check_primary_match(doc_lower, diag_lower, orig_lower))
+                or sec_lower in (
+                    "principal diagnosis", "primary diagnosis", "principal diagnoses", "primary diagnoses",
+                    "admitting diagnosis", "admission diagnosis", "admit diagnosis", "reason for admission",
+                )
+                or getattr(asm, "initial_role", None) in (DiagnosisRole.PRIMARY, "PRIMARY")
                 or getattr(asm, "role", None) in (DiagnosisRole.PRIMARY, "PRIMARY")
                 or getattr(asm, "is_primary", False)
             )
 
             # Guardrail: If condition carries 'Primary' as an etiological label (e.g. Primary hypertension, Primary osteoarthritis)
             # do not allow it to be marked as explicit primary unless provider explicitly documented it under a true principal diagnosis header
-            if is_etio_primary and not (_check_primary_match(full_context, diag_lower) or (doc_lower and _check_primary_match(doc_lower, diag_lower))):
+            if is_etio_primary and not (_check_primary_match(full_context, diag_lower, orig_lower) or (doc_lower and _check_primary_match(doc_lower, diag_lower, orig_lower))):
                 is_explicit_primary = False
 
             is_explicit_secondary = bool(
-                _check_secondary_match(full_context, diag_lower)
-                or (doc_lower and _check_secondary_match(doc_lower, diag_lower))
+                _check_secondary_match(full_context, diag_lower, orig_lower)
+                or (doc_lower and _check_secondary_match(doc_lower, diag_lower, orig_lower))
                 or sec_lower in ("secondary diagnosis", "secondary diagnoses", "additional diagnoses")
             )
             is_admission_driver = False
@@ -1096,23 +1171,14 @@ class PrimarySecondaryClassifier(BaseAgent):
             if re.search(adm_regex, full_context) or (doc_lower and re.search(adm_regex, doc_lower)):
                 is_admission_driver = True
             else:
-                # Generalized clause matching: admission occasioning phrase matching clinical tokens or acronym
-                adm_clause_match = re.search(
+                adm_clauses = re.findall(
                     r"\b(?:admitted\s+(?:for|with|to|in)|reason\s+for\s+admission|admitting\s+diagnosis|presenting\s+complaint)\b\s*([^\n.;]+)",
-                    full_context if "admitted" in full_context else (doc_lower or ""),
+                    f"{full_context} {doc_lower}",
                 )
-                if adm_clause_match:
-                    adm_clause = adm_clause_match.group(0).lower()
-                    diag_words = [w for w in re.findall(r"\b[a-z]{3,}\b", diag_lower) if w not in ("type", "with", "acute", "chronic", "left", "right", "bilateral", "unspecified", "stage", "organism", "primary", "secondary")]
-                    from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
-                    expanded_dwords = set(diag_words)
-                    for dw in diag_words:
-                        expanded_dwords.update(CLINICAL_MORPHOLOGY.get(dw, []))
-                    if (
-                        re.search(rf"\b{re.escape(diag_lower)}\b", adm_clause)
-                        or any(re.search(rf"\b{re.escape(edw)}\b", adm_clause) for edw in expanded_dwords)
-                    ):
+                for adm_c in adm_clauses:
+                    if _clinical_match_clause(diag_lower, orig_lower, adm_c):
                         is_admission_driver = True
+                        break
 
             # Etiological 'Primary' in condition name is not inherently an admission driver
             if is_etio_primary and not any(term in full_context for term in ["emergency", "crisis", "urgency", "malignant hypertension", "acute exacerbation"]):
@@ -1200,7 +1266,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                 reasons.append("Ligament sprain secondary to co-occurring skeletal fracture (-2.0)")
 
             # 2. Major Interventions & Procedures
-            if any(
+            has_procedure = any(
                 term in full_context
                 for term in [
                     "stent",
@@ -1218,7 +1284,15 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "procedure",
                     "intervention",
                 ]
-            ):
+            )
+            is_chronic_cond = (
+                asm.status == ConditionStatus.CHRONIC
+                or "chronic" in diag_lower
+                or any(m in full_context for m in ["home medication", "home regimen", "continued on", "baseline", "longstanding", "routine control", "past history", "history of"])
+            )
+            # Guard against comorbid condition falsely inheriting procedural score from main surgery
+            is_unrelated_chronic = is_chronic_cond and not is_explicit_primary and not is_admission_driver
+            if has_procedure and not is_unrelated_chronic:
                 score += 3.5
                 reasons.append("Primary procedural or operative intervention performed (+3.5)")
             elif any(
@@ -1231,7 +1305,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "nebulized",
                     "antibiotic",
                 ]
-            ):
+            ) and not is_unrelated_chronic:
                 score += 2.0
                 reasons.append(
                     "Active intravenous / intensive therapeutic management administered (+2.0)"
@@ -1283,14 +1357,11 @@ class PrimarySecondaryClassifier(BaseAgent):
                 reasons.append("Supplementary etiologic organism code secondary to primary organ pathology (-2.0)")
 
             # Chronic baseline conditions without acute exacerbation
-            is_chronic = (
-                asm.status == ConditionStatus.CHRONIC
-                or "chronic" in diag_lower
-                or any(m in full_context for m in ["home medication", "home regimen", "continued on", "baseline", "longstanding", "routine control", "past history", "history of"])
-            )
-            if is_chronic and "acute" not in full_context and not is_explicit_primary and not is_admission_driver:
-                score -= 1.5
-                reasons.append("Chronic background condition without acute exacerbation (-1.5)")
+            if is_chronic_cond and not is_explicit_primary and not is_admission_driver:
+                has_acute_crisis = any(ac in full_context for ac in ["crisis", "emergency", "urgency", "malignant hypertension", "acute exacerbation", "decompensated", "ketoacidosis", "dka"])
+                if not has_acute_crisis:
+                    score -= 1.5
+                    reasons.append("Chronic background condition without acute exacerbation (-1.5)")
 
             scored_candidates.append((asm, score, reasons))
 
@@ -1370,12 +1441,12 @@ class PrimarySecondaryClassifier(BaseAgent):
                 for sym in [
                     "symptom", "pain", "fatigue", "edema", "overload", "dyspnea",
                     "shortness of breath", "nausea", "vomiting", "weakness", "fever",
-                    "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress",
+                    "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress", "dysuria",
                 ]
             )
             has_def = (
                 any(d_lower.endswith(sfx) or f"{sfx} " in d_lower for sfx in ("itis", "oma", "osis"))
-                or any(dx in d_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia"])
+                or any(dx in d_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia", "infection"])
             )
             return is_sym and not has_def
 

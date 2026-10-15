@@ -1104,10 +1104,22 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
             nearest_cand = None
             for cand in retrieved:
                 if catalog.is_valid_code(cand.code) and catalog.is_billable_code(cand.code):
-                    nearest_cand = cand
-                    break
-            if not nearest_cand and retrieved:
-                nearest_cand = retrieved[0]
+                    cand_desc_lower = cand.description.lower()
+                    term_lower = term.lower()
+                    from medical_coding.retrieval.tokenizer import expand_medical_abbreviations, CLINICAL_MORPHOLOGY
+                    t_exp = expand_medical_abbreviations(term_lower)
+                    c_exp = expand_medical_abbreviations(cand_desc_lower)
+                    ignore_w = {"primary", "secondary", "acute", "chronic", "type", "with", "unspecified", "disease", "syndrome", "disorder", "essential"}
+                    term_words = [w for w in re.findall(r"\b[a-z]{3,}\b", t_exp) if w not in ignore_w]
+                    desc_words = set(w for w in re.findall(r"\b[a-z]{3,}\b", c_exp) if w not in ignore_w)
+                    has_core_overlap = any(
+                        tw in desc_words or any(syn in desc_words for syn in CLINICAL_MORPHOLOGY.get(tw, []))
+                        for tw in term_words
+                    ) if term_words else False
+                    score_val = getattr(cand, "retrieval_score", 0.0)
+                    if has_core_overlap and score_val >= 0.45:
+                        nearest_cand = cand
+                        break
 
             if nearest_cand and c_ev:
                 is_icdo = bool(getattr(nearest_cand, "coding_system", None) == "ICD-O" or nearest_cand.code.startswith("M"))
@@ -1149,10 +1161,6 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                         stage=PipelineStage.VALIDATION,
                     )
                 )
-        if not primary_response and secondary_responses:
-            # Promote top coded secondary to primary role
-            primary_response = secondary_responses.pop(0)
-            primary_response.role = DiagnosisRole.PRIMARY
 
     # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING FOR SECONDARIES
     seen_sec_terms = set()
@@ -1754,6 +1762,7 @@ def _extract_conditions_deterministically(
             section=sec_name,
             treatment_evidence=treatment_ev,
             confidence_score=cand.scores.evidence_score,
+            initial_role=cand.role,
         )
         extracted.append(cond)
 

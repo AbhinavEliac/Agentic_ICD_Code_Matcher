@@ -159,6 +159,10 @@ class ExtractedClinicalCondition(BaseModel):
         le=1.0,
         description="Extraction confidence score.",
     )
+    initial_role: DiagnosisRole | None = Field(
+        default=None,
+        description="Initial role identified during clinical fact extraction.",
+    )
 
 
 class ClinicalExtractionResult(BaseModel):
@@ -261,6 +265,14 @@ class ContextAssessment(BaseModel):
     abstention_reason: AbstentionReason | None = Field(
         default=None,
         description="Explicit reason for abstention if recommended.",
+    )
+    initial_role: DiagnosisRole | None = Field(
+        default=None,
+        description="Initial role identified during clinical fact extraction.",
+    )
+    original_mention: str | None = Field(
+        default=None,
+        description="Verbatim original mention before normalization.",
     )
 
 
