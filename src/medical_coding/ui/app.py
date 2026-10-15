@@ -153,37 +153,31 @@ def format_coding_result(result: Any) -> str:
     secondary diagnosises:
     diagnosis: <name>, code: <code>, evidence: <evidence quote>
     """
-    def _clean_ev(text: str | None) -> str:
-        if not text:
-            return "None"
-        clean = str(text).strip()
-        if "Designated as " in clean:
-            clean = clean.split("Designated as ")[0].strip(" -|:\n")
-        return clean if clean else "None"
+    if hasattr(result, "format_output") and callable(getattr(result, "format_output")):
+        return result.format_output()
+
+    from medical_coding.utils.text import clean_and_deduplicate_evidence_quote
 
     def _get_cand_ev(cand: Any) -> str:
-        quotes: list[str] = []
-        ev_list = getattr(cand, "evidence", []) or []
-        if isinstance(ev_list, list):
-            for item in ev_list:
-                q = ""
-                if isinstance(item, dict):
-                    q = _clean_ev(item.get("quote"))
-                elif hasattr(item, "text"):
-                    q = _clean_ev(item.text)
-                elif hasattr(item, "sentence"):
-                    q = _clean_ev(item.sentence)
-                elif isinstance(item, str):
-                    q = _clean_ev(item)
-                if q and q != "None" and q not in quotes:
-                    quotes.append(q)
-        if quotes:
-            return " | ".join(quotes)
-        return _clean_ev(getattr(cand, "evidence_quote", None))
+        raw_ev = getattr(cand, "evidence_quote", None)
+        if not raw_ev:
+            ev_list = getattr(cand, "evidence", []) or []
+            if isinstance(ev_list, list):
+                quotes = []
+                for item in ev_list:
+                    if isinstance(item, dict):
+                        quotes.append(str(item.get("quote", "")))
+                    elif hasattr(item, "quote"):
+                        quotes.append(str(getattr(item, "quote", "")))
+                    elif isinstance(item, str):
+                        quotes.append(item)
+                raw_ev = " | ".join(q for q in quotes if q)
+        diag_name = getattr(cand, "normalized_diagnosis", None) or getattr(cand, "raw_term", None) or getattr(cand, "description", None)
+        return clean_and_deduplicate_evidence_quote(raw_ev, diag_name)
 
     lines = []
     p = getattr(result, "primary_diagnosis", None)
-    if p:
+    if p and getattr(p, "code", None) and getattr(p, "code") != "None":
         p_name = getattr(p, "normalized_diagnosis", None) or getattr(p, "raw_term", None) or getattr(p, "description", None) or "None"
         p_code = getattr(p, "code", None) or getattr(p, "icd10cm", None) or "None"
         p_ev = _get_cand_ev(p)
@@ -191,7 +185,22 @@ def format_coding_result(result: Any) -> str:
     else:
         lines.append("primary diagnosis: None, code: None, evidence: None")
 
-    secondaries = getattr(result, "secondary_diagnoses", []) or []
+    raw_secondaries = getattr(result, "secondary_diagnoses", []) or []
+    seen_codes: set[str] = set()
+    seen_names: set[str] = set()
+    secondaries = []
+    for s in raw_secondaries:
+        s_code = (getattr(s, "code", None) or getattr(s, "icd10cm", None) or "").strip()
+        if not s_code or s_code == "None":
+            continue
+        s_name = (getattr(s, "normalized_diagnosis", None) or getattr(s, "raw_term", None) or getattr(s, "description", None) or "").lower().strip()
+        if s_code in seen_codes or (s_name and s_name in seen_names):
+            continue
+        seen_codes.add(s_code)
+        if s_name:
+            seen_names.add(s_name)
+        secondaries.append(s)
+
     if secondaries:
         lines.append("secondary diagnosises:")
         for s in secondaries:

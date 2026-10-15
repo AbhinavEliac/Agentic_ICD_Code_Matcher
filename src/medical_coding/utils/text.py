@@ -1,6 +1,7 @@
 """Text processing, span extraction, and ICD string normalization utilities."""
 
 import re
+from typing import Any
 
 
 def normalize_whitespace(text: str) -> str:
@@ -244,4 +245,152 @@ def extract_search_query_variations(raw_term: str, evidence: str = "") -> list[s
             _add(" ".join(matching_ev_words[:4]))
 
     return variations
+
+
+def deduplicate_evidence_spans(
+    evidence_items: list[Any] | str | None,
+    diagnosis_name: str | None = None,
+) -> list[str]:
+    """Clean and deduplicate evidence strings, removing identical repeats,
+    subsumed substrings, bare diagnosis label headers, and audit boilerplate.
+
+    Preserves unique clinical evidence statements in chronological order.
+    """
+    if not evidence_items:
+        return []
+
+    # 1. Flatten all items into raw candidate text chunks
+    raw_chunks: list[str] = []
+    if isinstance(evidence_items, str):
+        for part in re.split(r"\s*\|\s*|\n+", evidence_items):
+            if part.strip():
+                raw_chunks.append(part.strip())
+    elif isinstance(evidence_items, list):
+        for item in evidence_items:
+            q = ""
+            if isinstance(item, dict):
+                q = str(item.get("quote") or item.get("text") or item.get("sentence") or "")
+            elif hasattr(item, "quote"):
+                q = str(getattr(item, "quote") or "")
+            elif hasattr(item, "text"):
+                q = str(getattr(item, "text") or "")
+            elif hasattr(item, "sentence"):
+                q = str(getattr(item, "sentence") or "")
+            elif isinstance(item, str):
+                q = item
+            if q.strip():
+                for part in re.split(r"\s*\|\s*|\n+", q):
+                    if part.strip():
+                        raw_chunks.append(part.strip())
+    else:
+        q_str = str(evidence_items).strip()
+        if q_str:
+            raw_chunks.append(q_str)
+
+    # 2. Clean each chunk of audit boilerplate and wrappers
+    cleaned_chunks: list[str] = []
+    for chunk in raw_chunks:
+        c = chunk.strip()
+        if not c or c.lower() in ("none", "null", "undefined", "[no local code]"):
+            continue
+        # Strip internal audit annotations
+        if "Designated as " in c:
+            c = c.split("Designated as ")[0].strip(" -|:\n")
+        if "Clinical criteria:" in c:
+            c = c.split("Clinical criteria:")[0].strip(" -|:\n")
+        if "Confidence:" in c:
+            c = c.split("Confidence:")[0].strip(" -|:\n")
+        # Strip quotes and bullet markers
+        c = c.strip(" \"'“”`•–-*#\t\r\n")
+        c = c.rstrip(":")
+        if c and c.lower() not in ("none", "null"):
+            cleaned_chunks.append(c)
+
+    if not cleaned_chunks:
+        return []
+
+    # 3. Normalized comparison helper
+    def _norm(s: str) -> str:
+        s_low = s.lower().strip()
+        return re.sub(r"[^\w\s]", "", s_low).strip()
+
+    diag_norm = _norm(diagnosis_name) if diagnosis_name else ""
+
+    # 4. Remove bare diagnosis label if more detailed narrative sentences exist
+    has_descriptive_evidence = any(
+        len(_norm(c).split()) >= 4 and _norm(c) != diag_norm for c in cleaned_chunks
+    )
+
+    filtered_chunks: list[str] = []
+    for c in cleaned_chunks:
+        c_norm = _norm(c)
+        if not c_norm:
+            continue
+        if diag_norm and c_norm == diag_norm and has_descriptive_evidence:
+            # Skip bare header match when descriptive narrative evidence is present
+            continue
+        filtered_chunks.append(c)
+
+    if not filtered_chunks:
+        filtered_chunks = cleaned_chunks
+
+    # 5. Deduplicate exact and subsumed chunks (keeping longer/more informative spans)
+    unique_spans: list[str] = []
+    for cand in filtered_chunks:
+        cand_norm = _norm(cand)
+        if not cand_norm:
+            continue
+
+        is_subsumed = False
+        replace_index = -1
+
+        for i, existing in enumerate(unique_spans):
+            ex_norm = _norm(existing)
+            # Exact duplicate
+            if cand_norm == ex_norm:
+                is_subsumed = True
+                break
+            # cand is substring of existing
+            if cand_norm in ex_norm and len(cand_norm) < len(ex_norm):
+                is_subsumed = True
+                break
+            # existing is substring of cand -> cand is more descriptive
+            if ex_norm in cand_norm and len(ex_norm) < len(cand_norm):
+                replace_index = i
+                break
+
+        if replace_index >= 0:
+            unique_spans[replace_index] = cand
+        elif not is_subsumed:
+            unique_spans.append(cand)
+
+    return unique_spans
+
+
+def clean_and_deduplicate_evidence_quote(
+    evidence_text: Any,
+    diagnosis_name: str | None = None,
+) -> str:
+    """Return a single cleaned, non-repetitive evidence string joined by ' | '."""
+    if not evidence_text:
+        return "None"
+    spans = deduplicate_evidence_spans(evidence_text, diagnosis_name=diagnosis_name)
+    return " | ".join(spans) if spans else "None"
+
+
+def clean_and_deduplicate_evidence_list(
+    evidence_list: list[Any] | str | None,
+    diagnosis_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return a list of deduplicated evidence dictionaries."""
+    spans = deduplicate_evidence_spans(evidence_list, diagnosis_name=diagnosis_name)
+    return [
+        {
+            "quote": s,
+            "section": "CLINICAL_DOCUMENTATION",
+            "evidence_type": "CLINICAL_EVIDENCE",
+        }
+        for s in spans
+    ]
+
 

@@ -15,10 +15,13 @@ from medical_coding.models.factory import FastLocalEmbeddings
 from medical_coding.dataset.validator import LocalICDCatalog
 from medical_coding.schemas.clinical import ContextAssessment
 from medical_coding.schemas.enums import (
+    Acuity,
     Certainty,
     ConditionStatus,
     DiagnosisRole,
+    ExecutionStatus,
     NegationStatus,
+    PipelineStage,
     Temporality,
     AbstentionReason,
 )
@@ -298,3 +301,157 @@ def test_finalize_output_node_rechecks_abstentions_with_positive_evidence(
     assert any(c.database_code == "I10" for c in coded_all)
     # Abstention list must be cleared of the recovered condition
     assert not any(a.raw_term == "K/C/O Primary hypertension on medication" for a in res.abstentions)
+
+
+# ==============================================================================
+# 4. DUPLICATE AND REPETITIVE EVIDENCE CLEANING TESTS
+# ==============================================================================
+
+
+def test_deduplicate_evidence_spans_and_clean_repetition() -> None:
+    """Verify that repetitive evidence strings, substrings, and bare headers are cleanly removed."""
+    from medical_coding.utils.text import (
+        clean_and_deduplicate_evidence_quote,
+        deduplicate_evidence_spans,
+    )
+
+    # 1. Bare diagnosis header with narrative evidence -> header dropped
+    raw_ev = "Acute cholecystitis | Patient was admitted with acute RUQ pain and fever, confirmed acute cholecystitis on ultrasound. | Underwent successful laparoscopic cholecystectomy."
+    spans = deduplicate_evidence_spans(raw_ev, diagnosis_name="Acute cholecystitis")
+    assert len(spans) == 2
+    assert "Acute cholecystitis" not in spans
+    assert "Patient was admitted with acute RUQ pain and fever, confirmed acute cholecystitis on ultrasound." in spans
+    assert "Underwent successful laparoscopic cholecystectomy." in spans
+
+    # 2. Identical repeats
+    raw_ev2 = "Blood pressure maintained on lisinopril for hypertension. | Blood pressure maintained on lisinopril for hypertension."
+    spans2 = deduplicate_evidence_spans(raw_ev2)
+    assert len(spans2) == 1
+    assert spans2[0] == "Blood pressure maintained on lisinopril for hypertension."
+
+    # 3. Subsumed substring
+    raw_ev3 = ["Patient presented with chest pain", "Patient presented with chest pain and shortness of breath"]
+    spans3 = deduplicate_evidence_spans(raw_ev3)
+    assert len(spans3) == 1
+    assert spans3[0] == "Patient presented with chest pain and shortness of breath"
+
+    # 4. Clean quote output
+    clean_q = clean_and_deduplicate_evidence_quote(raw_ev, diagnosis_name="Acute cholecystitis")
+    assert clean_q == "Patient was admitted with acute RUQ pain and fever, confirmed acute cholecystitis on ultrasound. | Underwent successful laparoscopic cholecystectomy."
+
+
+def test_coding_result_deduplicates_secondaries_and_cleans_evidences() -> None:
+    """Verify that CodingResult drops duplicate secondary diagnoses, drops secondaries matching primary, and cleans repetitive evidence."""
+    from medical_coding.schemas.response import CodedDiagnosisResponse, CodingResult
+
+    primary = CodedDiagnosisResponse(
+        code="K81.0",
+        description="Acute cholecystitis",
+        role=DiagnosisRole.PRIMARY,
+        acuity=Acuity.ACUTE,
+        certainty=Certainty.CONFIRMED,
+        evidence_quote="Acute cholecystitis | Patient admitted for Acute cholecystitis with fever.",
+        confidence_score=0.95,
+    )
+
+    # Duplicate of primary (same code)
+    dup_pri_sec = CodedDiagnosisResponse(
+        code="K81.0",
+        description="Acute cholecystitis",
+        role=DiagnosisRole.SECONDARY,
+        acuity=Acuity.ACUTE,
+        certainty=Certainty.CONFIRMED,
+        evidence_quote="Patient admitted for Acute cholecystitis with fever.",
+        confidence_score=0.90,
+    )
+
+    # Two identical secondary entries with same code K80.80
+    sec1 = CodedDiagnosisResponse(
+        code="K80.80",
+        description="Other cholelithiasis without obstruction",
+        role=DiagnosisRole.SECONDARY,
+        acuity=Acuity.CHRONIC,
+        certainty=Certainty.CONFIRMED,
+        evidence_quote="Gallstones noted on ultrasound.",
+        confidence_score=0.75,
+    )
+    sec2 = CodedDiagnosisResponse(
+        code="K80.80",
+        description="Other cholelithiasis without obstruction",
+        role=DiagnosisRole.SECONDARY,
+        acuity=Acuity.CHRONIC,
+        certainty=Certainty.CONFIRMED,
+        evidence_quote="Gallstones noted on ultrasound. | Cholelithiasis visualized.",
+        confidence_score=0.85,
+    )
+
+    # Valid different secondary
+    sec_htn = CodedDiagnosisResponse(
+        code="I10",
+        description="Essential (primary) hypertension",
+        role=DiagnosisRole.SECONDARY,
+        acuity=Acuity.CHRONIC,
+        certainty=Certainty.CONFIRMED,
+        evidence_quote="Hypertension on lisinopril. | Hypertension on lisinopril.",
+        confidence_score=0.90,
+    )
+
+    abstention_for_coded_cond = AbstentionRecord(
+        diagnosis_id="chole-abstained",
+        raw_term="Acute cholecystitis",  # Already coded in primary!
+        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+        detail="Old abstention record",
+        stage=PipelineStage.VALIDATION,
+    )
+
+    abstention_valid = AbstentionRecord(
+        diagnosis_id="rare-abstained",
+        raw_term="Uncoded rare condition",
+        reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+        detail="No matching code",
+        stage=PipelineStage.VALIDATION,
+    )
+
+    result = CodingResult(
+        document_id="doc-dedup-test",
+        status=ExecutionStatus.SUCCESS,
+        primary_diagnosis=primary,
+        secondary_diagnoses=[dup_pri_sec, sec1, sec2, sec_htn],
+        abstentions=[abstention_for_coded_cond, abstention_valid],
+        procedures=["Laparoscopic cholecystectomy [CPT: 47600]", "Laparoscopic cholecystectomy"],
+        processing_time_ms=10.0,
+    )
+
+    # 1. Primary evidence should be deduplicated (bare header removed)
+    assert result.primary_diagnosis is not None
+    assert result.primary_diagnosis.evidence_quote == "Patient admitted for Acute cholecystitis with fever."
+
+    # 2. Secondary list must NOT contain duplicate of primary
+    assert not any(s.code == "K81.0" for s in result.secondary_diagnoses)
+
+    # 3. K80.80 must appear exactly ONCE (deduplicated)
+    k80_matches = [s for s in result.secondary_diagnoses if s.code == "K80.80"]
+    assert len(k80_matches) == 1
+    # Evidence merged cleanly
+    assert "Gallstones noted on ultrasound." in k80_matches[0].evidence_quote
+    assert "Cholelithiasis visualized." in k80_matches[0].evidence_quote
+    # Confidence score is max (0.85)
+    assert k80_matches[0].confidence_score == 0.85
+
+    # 4. Hypertension repetitive evidence should be cleaned
+    htn_match = next(s for s in result.secondary_diagnoses if s.code == "I10")
+    assert htn_match.evidence_quote == "Hypertension on lisinopril."
+
+    # 5. Abstention list must drop 'Acute cholecystitis' because it is coded
+    assert len(result.abstentions) == 1
+    assert result.abstentions[0].raw_term == "Uncoded rare condition"
+
+    # 6. Procedures must be deduplicated
+    assert len(result.procedures) == 1
+
+    # 7. Formatted output must have no duplicates
+    formatted = result.format_output()
+    assert formatted.count("code: K80.80") == 1
+    assert formatted.count("code: I10") == 1
+    assert "Hypertension on lisinopril. | Hypertension on lisinopril." not in formatted
+

@@ -1,5 +1,6 @@
 """Final deterministic JSON output models and API request/response schemas."""
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -171,12 +172,123 @@ class CodingResult(BaseModel):
 
     @model_validator(mode="after")
     def verify_primary_constraint(self) -> "CodingResult":
-        """Enforce strict invariant: primary diagnosis must have PRIMARY role if present."""
+        """Enforce strict invariant: primary diagnosis must have PRIMARY role if present,
+        and drop duplicates and repetitive evidences across diagnoses, abstentions, and procedures.
+        """
         if self.primary_diagnosis and self.primary_diagnosis.role != DiagnosisRole.PRIMARY:
             raise ValueError("Primary diagnosis must have role PRIMARY")
         for sec in self.secondary_diagnoses:
             if sec.role == DiagnosisRole.PRIMARY:
                 raise ValueError("Secondary diagnoses cannot have role PRIMARY")
+
+        from medical_coding.utils.text import (
+            clean_and_deduplicate_evidence_list,
+            clean_and_deduplicate_evidence_quote,
+            normalize_diagnosis_name,
+        )
+
+        # 1. Clean and deduplicate primary evidence
+        pri_code = ""
+        pri_clean_norm = ""
+        if self.primary_diagnosis:
+            p = self.primary_diagnosis
+            p_name = p.normalized_diagnosis or p.raw_term or p.description or ""
+            p.evidence_quote = clean_and_deduplicate_evidence_quote(p.evidence_quote, p_name)
+            p.evidence = clean_and_deduplicate_evidence_list(getattr(p, "evidence", []) or p.evidence_quote, p_name)
+            pri_code = (p.code or getattr(p, "database_code", "") or "").strip()
+            pri_norm = (p_name or "").lower().strip()
+            pri_clean_norm = (normalize_diagnosis_name(pri_norm) or pri_norm).lower().strip()
+
+        # 2. Deduplicate secondary diagnoses against primary and among themselves
+        deduped_secondaries: list[CodedDiagnosisResponse] = []
+        seen_sec_codes: set[str] = set()
+        seen_sec_names: set[str] = set()
+
+        for s in (self.secondary_diagnoses or []):
+            s_code = (s.code or getattr(s, "database_code", "") or "").strip()
+            s_name = (s.normalized_diagnosis or s.raw_term or s.description or "").strip()
+            s_norm = s_name.lower().strip()
+            s_clean_norm = (normalize_diagnosis_name(s_norm) or s_norm).lower().strip()
+
+            # Skip secondary if it duplicates the primary diagnosis
+            if pri_code and s_code and s_code == pri_code:
+                continue
+            if pri_clean_norm and s_clean_norm and pri_clean_norm == s_clean_norm:
+                continue
+
+            # Check if already seen among secondaries
+            existing_match: CodedDiagnosisResponse | None = None
+            if s_code and s_code not in ("None", "[NO LOCAL CODE]") and s_code in seen_sec_codes:
+                existing_match = next((x for x in deduped_secondaries if (x.code or "").strip() == s_code), None)
+            elif s_clean_norm and s_clean_norm in seen_sec_names:
+                existing_match = next(
+                    (x for x in deduped_secondaries if (normalize_diagnosis_name(x.normalized_diagnosis or x.raw_term or x.description or "") or "").lower().strip() == s_clean_norm),
+                    None,
+                )
+
+            if existing_match:
+                # Merge evidence cleanly without repetition
+                combined_ev = f"{existing_match.evidence_quote or ''} | {s.evidence_quote or ''}".strip(" |")
+                merged_diag_name = existing_match.normalized_diagnosis or existing_match.description
+                existing_match.evidence_quote = clean_and_deduplicate_evidence_quote(combined_ev, merged_diag_name)
+                merged_ev_list = (getattr(existing_match, "evidence", []) or []) + (getattr(s, "evidence", []) or [])
+                existing_match.evidence = clean_and_deduplicate_evidence_list(merged_ev_list, merged_diag_name)
+                existing_match.confidence_score = max(existing_match.confidence_score, s.confidence_score)
+            else:
+                if s_code and s_code not in ("None", "[NO LOCAL CODE]"):
+                    seen_sec_codes.add(s_code)
+                if s_clean_norm:
+                    seen_sec_names.add(s_clean_norm)
+                # Clean evidence on this secondary
+                s.evidence_quote = clean_and_deduplicate_evidence_quote(s.evidence_quote, s_name)
+                s.evidence = clean_and_deduplicate_evidence_list(getattr(s, "evidence", []) or s.evidence_quote, s_name)
+                deduped_secondaries.append(s)
+
+        self.secondary_diagnoses = deduped_secondaries
+
+        # 3. Drop conditions from abstentions that are ALREADY coded in primary or secondaries
+        coded_names: set[str] = set()
+        if self.primary_diagnosis:
+            p_n = self.primary_diagnosis.normalized_diagnosis or self.primary_diagnosis.raw_term or self.primary_diagnosis.description or ""
+            coded_names.add(p_n.lower().strip())
+            coded_names.add((normalize_diagnosis_name(p_n) or p_n).lower().strip())
+        for s in self.secondary_diagnoses:
+            s_n = s.normalized_diagnosis or s.raw_term or s.description or ""
+            coded_names.add(s_n.lower().strip())
+            coded_names.add((normalize_diagnosis_name(s_n) or s_n).lower().strip())
+
+        deduped_abstentions = []
+        seen_abst_terms: set[str] = set()
+        for abst in (self.abstentions or []):
+            a_term = (abst.raw_term or "").strip()
+            if not a_term:
+                continue
+            a_norm = a_term.lower().strip()
+            a_clean = (normalize_diagnosis_name(a_term) or a_term).lower().strip()
+            if a_norm in coded_names or a_clean in coded_names:
+                continue
+            if a_clean in seen_abst_terms or a_norm in seen_abst_terms:
+                continue
+            seen_abst_terms.add(a_clean)
+            seen_abst_terms.add(a_norm)
+            deduped_abstentions.append(abst)
+        self.abstentions = deduped_abstentions
+
+        # 4. Deduplicate procedures
+        deduped_procs: list[str] = []
+        seen_procs: set[str] = set()
+        for proc in (self.procedures or []):
+            p_str = proc.strip()
+            if not p_str:
+                continue
+            clean_p = re.sub(r"\[.*?\]", "", p_str).lower().strip()
+            clean_p = re.sub(r"\s+", " ", clean_p)
+            if clean_p in seen_procs:
+                continue
+            seen_procs.add(clean_p)
+            deduped_procs.append(p_str)
+        self.procedures = deduped_procs
+
         return self
 
     def format_output(self) -> str:
@@ -185,33 +297,24 @@ class CodingResult(BaseModel):
         secondary diagnosises:
         diagnosis: <name>, code: <code>, evidence: <evidence quote>
         """
-        def _clean_ev(text: str | None) -> str:
-            if not text:
-                return "None"
-            clean = str(text).strip()
-            if "Designated as " in clean:
-                clean = clean.split("Designated as ")[0].strip(" -|:\n")
-            return clean if clean else "None"
+        from medical_coding.utils.text import clean_and_deduplicate_evidence_quote
 
         def _get_cand_ev(cand: Any) -> str:
-            quotes: list[str] = []
-            ev_list = getattr(cand, "evidence", []) or []
-            if isinstance(ev_list, list):
-                for item in ev_list:
-                    q = ""
-                    if isinstance(item, dict):
-                        q = _clean_ev(item.get("quote"))
-                    elif hasattr(item, "text"):
-                        q = _clean_ev(item.text)
-                    elif hasattr(item, "sentence"):
-                        q = _clean_ev(item.sentence)
-                    elif isinstance(item, str):
-                        q = _clean_ev(item)
-                    if q and q != "None" and q not in quotes:
-                        quotes.append(q)
-            if quotes:
-                return " | ".join(quotes)
-            return _clean_ev(getattr(cand, "evidence_quote", None))
+            raw_ev = getattr(cand, "evidence_quote", None)
+            if not raw_ev:
+                ev_list = getattr(cand, "evidence", []) or []
+                if isinstance(ev_list, list):
+                    quotes = []
+                    for item in ev_list:
+                        if isinstance(item, dict):
+                            quotes.append(str(item.get("quote", "")))
+                        elif hasattr(item, "quote"):
+                            quotes.append(str(getattr(item, "quote", "")))
+                        elif isinstance(item, str):
+                            quotes.append(item)
+                    raw_ev = " | ".join(q for q in quotes if q)
+            diag_name = getattr(cand, "normalized_diagnosis", None) or getattr(cand, "raw_term", None) or getattr(cand, "description", None)
+            return clean_and_deduplicate_evidence_quote(raw_ev, diag_name)
 
         def _get_formatted_code(cand: Any) -> str:
             base_code = getattr(cand, "icd10cm", None) or cand.code or ""
@@ -238,10 +341,22 @@ class CodingResult(BaseModel):
         else:
             lines.append("primary diagnosis: None, code: None, evidence: None")
 
-        coded_secondaries = [
-            s for s in (self.secondary_diagnoses or [])
-            if s.code and s.code != "None" and s.matching_status != "NO_DATABASE_MATCH"
-        ]
+        # Deduplicate coded secondaries for printing
+        seen_codes: set[str] = set()
+        seen_names: set[str] = set()
+        coded_secondaries = []
+        for s in (self.secondary_diagnoses or []):
+            if not s.code or s.code == "None" or s.matching_status == "NO_DATABASE_MATCH":
+                continue
+            code_key = s.code.strip()
+            name_key = (s.normalized_diagnosis or s.raw_term or s.description or "").lower().strip()
+            if code_key in seen_codes or (name_key and name_key in seen_names):
+                continue
+            seen_codes.add(code_key)
+            if name_key:
+                seen_names.add(name_key)
+            coded_secondaries.append(s)
+
         if coded_secondaries:
             lines.append("secondary diagnosises:")
             for s in coded_secondaries:

@@ -1475,19 +1475,96 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
     abstentions = rechecked_abstentions
 
-    # Enforce clean role separation: secondary section must NEVER duplicate the primary diagnosis
+    # Deduplicate and clean repetitive evidences on primary response
+    from medical_coding.utils.text import (
+        clean_and_deduplicate_evidence_list,
+        clean_and_deduplicate_evidence_quote,
+        normalize_diagnosis_name,
+    )
+
     if primary_response:
-        pri_code = primary_response.code
-        pri_norm = (primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or "").lower().strip()
-        filtered_sec = []
-        for s in secondary_responses:
-            if pri_code and s.code and s.code == pri_code:
-                continue
-            s_norm = (s.normalized_diagnosis or s.raw_term or s.description or "").lower().strip()
-            if s_norm and pri_norm and s_norm == pri_norm:
-                continue
-            filtered_sec.append(s)
-        secondary_responses = filtered_sec
+        p_diag_name = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description
+        primary_response.evidence_quote = clean_and_deduplicate_evidence_quote(primary_response.evidence_quote, p_diag_name)
+        primary_response.evidence = clean_and_deduplicate_evidence_list(getattr(primary_response, "evidence", []) or primary_response.evidence_quote, p_diag_name)
+
+    # Enforce clean role separation and drop duplicates among secondaries and against primary
+    pri_code = (primary_response.code or getattr(primary_response, "database_code", "") or "").strip() if primary_response else ""
+    pri_norm = (primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or "").lower().strip() if primary_response else ""
+    pri_clean_norm = (normalize_diagnosis_name(pri_norm) or pri_norm).lower().strip() if pri_norm else ""
+
+    deduped_secondaries: list[CodedDiagnosisResponse] = []
+    seen_sec_codes: set[str] = set()
+    seen_sec_names: set[str] = set()
+
+    for s in secondary_responses:
+        s_code = (s.code or getattr(s, "database_code", "") or "").strip()
+        s_name = (s.normalized_diagnosis or s.raw_term or s.description or "").strip()
+        s_norm = s_name.lower().strip()
+        s_clean_norm = (normalize_diagnosis_name(s_norm) or s_norm).lower().strip()
+
+        # Drop secondary if it duplicates the primary diagnosis
+        if pri_code and s_code and s_code == pri_code:
+            continue
+        if pri_clean_norm and s_clean_norm and pri_clean_norm == s_clean_norm:
+            continue
+
+        # Check if already in deduplicated secondaries
+        existing_match: CodedDiagnosisResponse | None = None
+        if s_code and s_code not in ("None", "[NO LOCAL CODE]") and s_code in seen_sec_codes:
+            existing_match = next((x for x in deduped_secondaries if (x.code or "").strip() == s_code), None)
+        elif s_clean_norm and s_clean_norm in seen_sec_names:
+            existing_match = next(
+                (x for x in deduped_secondaries if (normalize_diagnosis_name(x.normalized_diagnosis or x.raw_term or x.description or "") or "").lower().strip() == s_clean_norm),
+                None,
+            )
+
+        if existing_match:
+            # Merge evidence quotes and lists cleanly without repetition
+            combined_ev = f"{existing_match.evidence_quote or ''} | {s.evidence_quote or ''}".strip(" |")
+            merged_diag_name = existing_match.normalized_diagnosis or existing_match.description
+            existing_match.evidence_quote = clean_and_deduplicate_evidence_quote(combined_ev, merged_diag_name)
+            merged_ev_list = (getattr(existing_match, "evidence", []) or []) + (getattr(s, "evidence", []) or [])
+            existing_match.evidence = clean_and_deduplicate_evidence_list(merged_ev_list, merged_diag_name)
+            existing_match.confidence_score = max(existing_match.confidence_score, s.confidence_score)
+        else:
+            if s_code and s_code not in ("None", "[NO LOCAL CODE]"):
+                seen_sec_codes.add(s_code)
+            if s_clean_norm:
+                seen_sec_names.add(s_clean_norm)
+            # Clean and deduplicate evidence on this secondary
+            s.evidence_quote = clean_and_deduplicate_evidence_quote(s.evidence_quote, s_name)
+            s.evidence = clean_and_deduplicate_evidence_list(getattr(s, "evidence", []) or s.evidence_quote, s_name)
+            deduped_secondaries.append(s)
+
+    secondary_responses = deduped_secondaries
+
+    # Drop conditions from abstentions that are ALREADY coded in primary or secondaries
+    coded_names: set[str] = set()
+    if primary_response:
+        p_n = primary_response.normalized_diagnosis or primary_response.raw_term or primary_response.description or ""
+        coded_names.add(p_n.lower().strip())
+        coded_names.add((normalize_diagnosis_name(p_n) or p_n).lower().strip())
+    for s in secondary_responses:
+        s_n = s.normalized_diagnosis or s.raw_term or s.description or ""
+        coded_names.add(s_n.lower().strip())
+        coded_names.add((normalize_diagnosis_name(s_n) or s_n).lower().strip())
+
+    deduped_abstentions: list[AbstentionRecord] = []
+    seen_abst_terms: set[str] = set()
+    for abst in abstentions:
+        a_term = (abst.raw_term or "").strip()
+        if not a_term:
+            continue
+        a_norm = a_term.lower().strip()
+        a_clean = (normalize_diagnosis_name(a_term) or a_term).lower().strip()
+        if a_norm in coded_names or a_clean in coded_names:
+            continue
+        if a_clean in seen_abst_terms or a_norm in seen_abst_terms:
+            continue
+        seen_abst_terms.add(a_clean)
+        seen_abst_terms.add(a_norm)
+        deduped_abstentions.append(abst)
+    abstentions = deduped_abstentions
 
     # Determine execution status
     if primary_response or secondary_responses:

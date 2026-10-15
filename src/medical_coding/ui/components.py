@@ -176,13 +176,15 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
         documented_row = f'<div style="margin: 6px 0; font-size: 14px; color: #e2e8f0;">🩺 <strong style="color: #38bdf8;">Documented Clinical Diagnosis:</strong> {html.escape(str(primary.raw_term))}</div>'
 
     safe_desc = html.escape(primary.description or "")
-    raw_quote = _clean_audit_from_evidence(primary.evidence_quote or "")
-    if " | " in raw_quote:
-        spans = [_clean_audit_from_evidence(s) for s in raw_quote.split(" | ") if _clean_audit_from_evidence(s)]
+    from medical_coding.utils.text import deduplicate_evidence_spans
+    spans = deduplicate_evidence_spans(primary.evidence_quote, primary.normalized_diagnosis or primary.description)
+    if len(spans) > 1:
         spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
         evidence_content_html = spans_html
+    elif spans:
+        evidence_content_html = f'<span class="evidence-quote">"{html.escape(spans[0])}"</span>'
     else:
-        evidence_content_html = f'<span class="evidence-quote">"{html.escape(raw_quote)}"</span>'
+        evidence_content_html = '<span class="evidence-quote">"None"</span>'
 
     primary_html = clean_html(
         f"""
@@ -223,10 +225,24 @@ def render_primary_diagnosis(primary: CodedDiagnosisResponse | None) -> None:
 
 def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> None:
     """Render the list of validated secondary comorbid diagnoses."""
-    valid_secondaries = [
-        s for s in (secondaries or [])
-        if s.code and s.code not in ("None", "[NO LOCAL CODE]") and s.matching_status != "NO_DATABASE_MATCH"
-    ]
+    from medical_coding.utils.text import deduplicate_evidence_spans, normalize_diagnosis_name
+
+    # Deduplicate secondaries by code and clean concept
+    seen_sec_codes: set[str] = set()
+    seen_sec_names: set[str] = set()
+    valid_secondaries: list[CodedDiagnosisResponse] = []
+    for s in (secondaries or []):
+        if not s.code or s.code in ("None", "[NO LOCAL CODE]") or s.matching_status == "NO_DATABASE_MATCH":
+            continue
+        c_key = s.code.strip()
+        n_key = (normalize_diagnosis_name(s.normalized_diagnosis or s.raw_term or s.description or "") or "").strip().lower()
+        if c_key in seen_sec_codes or (n_key and n_key in seen_sec_names):
+            continue
+        seen_sec_codes.add(c_key)
+        if n_key:
+            seen_sec_names.add(n_key)
+        valid_secondaries.append(s)
+
     st.markdown(f"### 📋 Secondary Diagnoses ({len(valid_secondaries)})")
     if not valid_secondaries:
         st.write("No secondary comorbid diagnoses identified.")
@@ -257,13 +273,14 @@ def render_secondary_diagnoses(secondaries: list[CodedDiagnosisResponse]) -> Non
             documented_row = f'<div style="margin-top: 4px; font-size: 13px; color: #cbd5e1;">🩺 <strong style="color: #38bdf8;">Documented Diagnosis:</strong> {html.escape(str(diag.raw_term))}</div>'
 
         safe_desc = html.escape(diag.description or "")
-        raw_sec_quote = _clean_audit_from_evidence(diag.evidence_quote or "")
-        if " | " in raw_sec_quote:
-            spans = [_clean_audit_from_evidence(s) for s in raw_sec_quote.split(" | ") if _clean_audit_from_evidence(s)]
+        spans = deduplicate_evidence_spans(diag.evidence_quote, diag.normalized_diagnosis or diag.description)
+        if len(spans) > 1:
             spans_html = "".join(f'<div style="margin-top: 4px; padding-left: 8px; border-left: 2px solid #38bdf8;">• <span class="evidence-quote">{html.escape(s)}</span></div>' for s in spans)
             sec_evidence_html = spans_html
+        elif spans:
+            sec_evidence_html = f'<span class="evidence-quote">"{html.escape(spans[0])}"</span>'
         else:
-            sec_evidence_html = f'<span class="evidence-quote">"{html.escape(raw_sec_quote)}"</span>'
+            sec_evidence_html = '<span class="evidence-quote">"None"</span>'
 
         secondary_html = clean_html(
             f"""
@@ -300,9 +317,27 @@ def render_abstentions(abstentions: list[AbstentionRecord]) -> None:
     if not abstentions:
         return
 
-    with st.expander(f"🚫 Audited Abstentions & Rule-Outs ({len(abstentions)})", expanded=True):
+    # Deduplicate abstentions
+    from medical_coding.utils.text import normalize_diagnosis_name
+    deduped_abst: list[AbstentionRecord] = []
+    seen_abst: set[str] = set()
+    for abst in abstentions:
+        term = (abst.raw_term or "").strip()
+        if not term:
+            continue
+        norm_t = (normalize_diagnosis_name(term) or term).lower().strip()
+        if norm_t in seen_abst or term.lower() in seen_abst:
+            continue
+        seen_abst.add(norm_t)
+        seen_abst.add(term.lower())
+        deduped_abst.append(abst)
+
+    if not deduped_abst:
+        return
+
+    with st.expander(f"🚫 Audited Abstentions & Rule-Outs ({len(deduped_abst)})", expanded=True):
         st.caption("Conditions detected in documentation that were strictly abstained or excluded under ICD-10 guidelines:")
-        for abst in abstentions:
+        for abst in deduped_abst:
             reason_str = abst.reason.value if hasattr(abst.reason, "value") else str(abst.reason)
             stage_str = abst.stage.value if hasattr(abst.stage, "value") else str(abst.stage)
             raw_term = abst.raw_term or "Unspecified Entity"
