@@ -330,3 +330,46 @@ async def test_throughput_benchmark_ten_documents() -> None:
         f"Total time = {batch_result.total_elapsed_ms:.2f} ms | "
         f"Throughput = {batch_result.throughput_docs_per_sec:.2f} docs/sec"
     )
+
+
+def test_render_pdf_page_inspector_handles_dicts_and_objects() -> None:
+    """Verify that render_pdf_page_inspector works seamlessly with both dict pages and object pages."""
+    from medical_coding.ui.components import render_pdf_page_inspector
+    from medical_coding.pdf.models import ExtractedPage
+
+    # 1. Test dict pages (as produced by IngestionResult / ParsedDocument)
+    dict_pages = [
+        {
+            "page_number": 1,
+            "normalized_text": "Page 1 clinical text.",
+            "char_count": 21,
+            "word_count": 4,
+            "has_images": False,
+        },
+        {
+            "page_number": 2,
+            "normalized_text": "Page 2 clinical text.",
+            "char_count": 21,
+            "word_count": 4,
+            "has_images": True,
+        },
+    ]
+    # Must not raise AttributeError: 'dict' object has no attribute 'page_number'
+    render_pdf_page_inspector(dict_pages)
+
+    # 2. Test object pages (ExtractedPage)
+    obj_pages = [
+        ExtractedPage(
+            page_number=1,
+            raw_text="Raw text page 1",
+            normalized_text="Page 1 clinical text.",
+            char_count=21,
+            word_count=4,
+            has_images=False,
+        )
+    ]
+    render_pdf_page_inspector(obj_pages)
+
+    # 3. Empty list test
+    render_pdf_page_inspector([])
+

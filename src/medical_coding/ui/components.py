@@ -585,27 +585,41 @@ def render_pdf_page_inspector(pages: list[Any]) -> None:
     if not pages:
         return
 
+    def _get(obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    page_numbers = [_get(p, "page_number", idx + 1) for idx, p in enumerate(pages)]
+
     with st.expander(f"📄 Ingested PDF Document Viewer ({len(pages)} Pages)", expanded=False):
         selected_page = st.selectbox(
             "Select Page to Inspect:",
-            options=[p.page_number for p in pages],
+            options=page_numbers,
             format_func=lambda x: f"Page {x} of {len(pages)}",
         )
-        page_obj = next((p for p in pages if p.page_number == selected_page), pages[0])
+        page_obj = next((p for p in pages if _get(p, "page_number") == selected_page), pages[0])
+
+        norm_text = str(_get(page_obj, "normalized_text", "") or "")
+        char_count = _get(page_obj, "char_count", len(norm_text))
+        word_count = _get(page_obj, "word_count", len(norm_text.split()))
+        has_images = _get(page_obj, "has_images", False)
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Character Count", page_obj.char_count)
-        c2.metric("Word Count", page_obj.word_count)
-        c3.metric("Embedded Images", "Yes" if page_obj.has_images else "No")
+        c1.metric("Character Count", char_count)
+        c2.metric("Word Count", word_count)
+        c3.metric("Embedded Images", "Yes" if has_images else "No")
 
+        escaped_text = html.escape(norm_text)
         st.markdown(
             f"""
             <div class="pdf-page-card">
-                <pre style="white-space: pre-wrap; margin: 0; font-size: 12px; color: #e2e8f0;">{page_obj.normalized_text}</pre>
+                <pre style="white-space: pre-wrap; margin: 0; font-size: 12px; color: #e2e8f0;">{escaped_text}</pre>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
 
 
 NODE_TITLES: dict[str, str] = {

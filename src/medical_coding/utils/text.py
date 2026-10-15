@@ -223,7 +223,7 @@ def extract_search_query_variations(raw_term: str, evidence: str = "") -> list[s
         _add(" ".join(core_words))
 
     # 4. Morphological synonyms
-    from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
+    from medical_coding.utils.clinical_lexicon import CLINICAL_MORPHOLOGY
     syn_words: list[str] = []
     has_syn = False
     for w in (core_words or words):
