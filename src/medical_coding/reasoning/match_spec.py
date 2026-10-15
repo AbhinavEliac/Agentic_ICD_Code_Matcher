@@ -16,15 +16,21 @@ logger = get_logger(__name__)
 
 # Mapping from canonical disease family to authoritative ICD-10-CM code category prefixes
 FAMILY_TO_CODE_PREFIXES: dict[str, list[str]] = {
+    "ampullary_malignancy": ["C24.1", "C24"],
+    "morphology_histology": ["M8140.3", "M8140"],
     "prostate_malignancy": ["C61"],
     "bone_metastasis": ["C79.51", "C79.52", "C79.5"],
     "lymph_node_metastasis": ["C77.2", "C77.5", "C77.0", "C77.1", "C77.3", "C77.4", "C77.8", "C77.9", "C77"],
     "breast_malignancy": ["C50"],
     "lymphoma": ["C83", "C81", "C82", "C85"],
     "pyelonephritis": ["N10"],
+    "hydronephrosis": ["N13.2", "N13.1", "N13.0", "N13.3", "N13"],
     "renal_calculus": ["N20.0", "N20"],
     "ureteric_calculus": ["N20.1", "N20"],
+    "acute_kidney_injury": ["N17.9", "N17"],
     "uti": ["N39.0", "N39"],
+    "acute_lower_respiratory_infection": ["J22", "J20", "J12"],
+    "portal_hypertensive_gastropathy": ["K31.811", "K31.81", "K31.8", "K31"],
     "heart_failure": ["I50"],
     "gastritis": ["K29"],
     "bronchitis": ["J20"],

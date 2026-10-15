@@ -18,14 +18,20 @@ logger = get_logger(__name__)
 
 # Canonical Disease Families mapped to key entity detection cues
 DISEASE_FAMILY_PATTERNS: list[tuple[str, list[str], str]] = [
+    ("ampullary_malignancy", ["ampulla of vater", "periampullary adenocarcinoma", "periampullary carcinoma", "periampullary malignancy", "periampullary cancer", "ampullary adenocarcinoma", "carcinoma of ampulla of vater", "malignant neoplasm of ampulla of vater", "periampullary"], "ampulla of vater"),
+    ("morphology_histology", ["adenocarcinoma nos", "adenomas nad adencarcinomas", "infiltrating duct carcinoma", "squamous cell carcinoma nos"], "histology"),
     ("prostate_malignancy", ["prostate cancer", "prostate carcinoma", "carcinoma of prostate", "malignant neoplasm of prostate", "adenocarcinoma of prostate", "prostate adenocarcinoma", "prostate"], "prostate"),
     ("bone_metastasis", ["bone metastasis", "bone metastases", "metastasis to bone", "metastases to bone", "secondary malignant neoplasm of bone", "osteoblastic metastasis", "osteoblastic metastases", "skeletal metastasis", "skeletal metastases", "osseous metastasis", "osseous metastases", "spine metastasis", "spine metastases"], "bone"),
     ("lymph_node_metastasis", ["intra-abdominal lymph node metastases", "retroperitoneal lymph node metastases", "retroperitoneal lymphadenopathy", "retroperitoneal lymph nodes", "intrapelvic lymph nodes", "pelvic lymph node metastases", "intra-abdominal lymph nodes", "lymph node metastasis", "lymph node metastases", "distant lymphadenopathy", "secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes", "secondary and unspecified malignant neoplasm of intrapelvic lymph nodes", "secondary and unspecified malignant neoplasm of lymph nodes"], "lymph nodes"),
     ("breast_malignancy", ["breast cancer", "breast carcinoma", "carcinoma of breast", "malignant neoplasm of breast", "ductal carcinoma", "lobular carcinoma", "breast"], "breast"),
     ("lymphoma", ["dlbcl", "diffuse large b-cell lymphoma", "b-cell lymphoma", "hodgkin", "non-hodgkin", "lymphoma"], "lymph nodes"),
+    ("hydronephrosis", ["hydronephrosis with renal and ureteral calculous obstruction", "hydronephrosis with calculous obstruction", "hydronephrosis", "hydronephrotic"], "kidney"),
     ("renal_calculus", ["renal calculus", "kidney stone", "renal stone", "nephrolithiasis", "calculus of kidney"], "kidney"),
     ("ureteric_calculus", ["ureteric calculus", "ureteral calculus", "ureter stone", "ureteral stone", "calculus of ureter"], "ureter"),
+    ("acute_kidney_injury", ["acute kidney injury", "acute kidney failure", "acute renal failure", "aki"], "kidney"),
     ("uti", ["urinary tract infection", "uti", "catheter-associated uti", "cauti"], "urinary tract"),
+    ("acute_lower_respiratory_infection", ["viral flu like illness", "flu like illness", "viral chest infection", "viral lower respiratory tract infection", "acute lower respiratory infection"], "lung"),
+    ("portal_hypertensive_gastropathy", ["portal hypertensive gastropathy", "phg", "portal gastropathy"], "stomach"),
     ("heart_failure", ["heart failure", "congestive heart failure", "chf", "cardiac failure", "systolic heart failure", "diastolic heart failure"], "heart"),
     ("gastritis", ["gastritis", "gastric inflammation", "antral gastritis"], "stomach"),
     ("pyelonephritis", ["pyelonephritis", "acute pyelonephritis", "emphysematous pyelonephritis"], "kidney"),

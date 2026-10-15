@@ -262,6 +262,7 @@ class CodingResult(BaseModel):
         for abst in (self.abstentions or []):
             a_term = (abst.raw_term or "").strip()
             if not a_term:
+                deduped_abstentions.append(abst)
                 continue
             a_norm = a_term.lower().strip()
             a_clean = (normalize_diagnosis_name(a_term) or a_term).lower().strip()

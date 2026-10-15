@@ -41,8 +41,8 @@ CLINICAL_QUALIFIERS: dict[str, list[str]] = {
 
     # Complications & Manifestations
     "bleeding": ["bleed", "bleeding", "hemorrhage", "hemorrhagic", "melena", "hematemesis", "blood in stool"],
-    "perforation": ["perforat", "rupture", "free air", "hole"],
-    "obstruction": ["obstruct", "blockage", "stricture", "impaction", "occlu"],
+    "perforation": ["perforation", "perforated", "perforat", "rupture", "ruptured", "free air", "hole"],
+    "obstruction": ["obstruction", "obstructive", "obstructed", "obstruct", "blockage", "stricture", "impaction", "occlusion", "occluded", "occlu"],
     "gangrene": ["gangrene", "gangrenous", "necrosis", "necrotic"],
     "ulceration": ["ulcer", "ulcerated", "ulcerative", "erosion"],
     "abscess": ["abscess", "empyema", "purulent collection"],

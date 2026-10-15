@@ -221,6 +221,7 @@ class CandidateRankingAgent(BaseAgent):
                 evidence_quote=evidence_quote,
                 acuity=acuity,
                 candidates=candidates,
+                condition=condition,
             )
 
         # 7. Check Hard Constraint: Is proposed code in candidates list?
@@ -451,6 +452,7 @@ class CandidateRankingAgent(BaseAgent):
         evidence_quote: str,
         acuity: str,
         candidates: list[ICDCandidate],
+        condition: Any = None,
     ) -> RankedSelection:
         """Deterministic evidence-based candidate scoring when offline or in test environments."""
         evidence_clean = (evidence_quote or "").lower()
@@ -526,6 +528,14 @@ class CandidateRankingAgent(BaseAgent):
                 rationale_parts.append(f"core diagnostic entity match ({core_matches}/{len(expanded_core_tokens)})")
 
             # 3. Direct diagnosis term overlap (differentiates diagnosis from incidental narrative mentions)
+            norm_desc = (getattr(condition, "normalized_description", None) or getattr(condition, "diagnosis", "") or "").lower().strip()
+            if desc_lower == term_clean or (norm_desc and desc_lower == norm_desc):
+                score += 0.60
+                rationale_parts.append("exact clinical description match")
+            elif any(syn in term_clean or (norm_desc and syn in norm_desc) for syn in [cand.code.lower(), desc_lower]):
+                score += 0.40
+                rationale_parts.append("strong synonym match")
+
             term_overlap = [
                 t for t in cand_tokens
                 if t in term_tokens or any(v in term_tokens for v in CLINICAL_MORPHOLOGY.get(t, []))

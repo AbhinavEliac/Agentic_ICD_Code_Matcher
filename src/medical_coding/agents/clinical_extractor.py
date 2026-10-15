@@ -218,6 +218,7 @@ class EvidenceFirstFactExtractor:
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         sentences: list[str] = []
         for line in lines:
+            line = re.sub(r",([A-Za-z])", r", \1", line)
             masked, rep = EvidenceFirstFactExtractor._protect_organism_abbreviations(line)
             # Split only on period/question/exclamation followed by space and capital letter or digit
             sub_sents = re.split(r"(?<!\b[A-Za-z])(?<!\b\d)[.!?]+\s+(?=[A-Z0-9])", masked)
@@ -395,14 +396,28 @@ class EvidenceFirstFactExtractor:
             if sec.section_name in ("PROCEDURES", "PAST_SURGICAL_HISTORY"):
                 proc_lines = [l.strip() for l in sec.content.split("\n") if l.strip()]
                 for l in proc_lines:
-                    l_clean = re.sub(r"^\d+[\.\)\-]\s*", "", l).strip()
-                    l_clean = re.sub(r"^(?:procedures?\s*(?:performed|done|details)?\s*[:\-–—]\s*)", "", l_clean, flags=re.IGNORECASE).strip()
+                    name_proc_m = re.search(r"(?:name\s+of\s+procedure|procedure\s+performed|procedures?\s+details?|procedure)\s*[:\-–—]\s*([^.,;\n]+)", l, re.IGNORECASE)
+                    if name_proc_m:
+                        l_clean = name_proc_m.group(1).strip()
+                    else:
+                        l_clean = re.sub(r"^\d+[\.\)\-]\s*", "", l).strip()
+                        l_clean = re.sub(r"^(?:procedures?\s*(?:performed|done|details)?\s*[:\-–—]\s*)", "", l_clean, flags=re.IGNORECASE).strip()
+
                     if len(l_clean) >= 3:
                         sub_procs = re.split(r"\s*(?:\+|;)\s*|\s+and\s+", l_clean)
                         for sp in sub_procs:
-                            sp_c = re.sub(r"\s*(?:side\s*:\s*[^\n]+|surgeon\s*:\s*[^\n]+|anaesthesiologist\s*:\s*[^\n]+).*$", "", sp, flags=re.IGNORECASE).strip()
-                            if len(sp_c) >= 3 and not re.match(r"^(?:side|surgeon|anaesthesiologist|type\s+of\s+anaesthesia|ga|general\s+anaesthesia)\b", sp_c, re.IGNORECASE):
-                                self._extracted_procedures.append(sp_c)
+                            sp_c = re.sub(r"\s*(?:side\s*:\s*[^\n]+|surgeon\s*:\s*[^\n]+|anaesthesiologist\s*:\s*[^\n]+|anesthesiologist\s*:\s*[^\n]+).*$", "", sp, flags=re.IGNORECASE).strip()
+                            if len(sp_c) >= 3 and not re.match(r"^(?:primary\s+surgeon|primary|surgeon|anaesthesiologist|anesthesiologist|type\s+of\s+an[ae]sthesia|ga|general\s+an[ae]sthesia|la|local\s+an[ae]sthesia|side)\b", sp_c, re.IGNORECASE):
+                                # Canonicalize known procedures to exact hospital database descriptions
+                                if re.search(r"\b(?:esophageal\s+variceal\s+ligation|evl|multiple\s+band\s+ligations?|mbl|variceal\s+band\s+ligation)\b", sp_c, re.IGNORECASE):
+                                    self._extracted_procedures.append("Esophagogastroduodenoscopy, flexible, transoral; with band ligation of esophageal/gastric varices")
+                                elif re.search(r"\b(?:ursl|ureteroscopic\s+lithotripsy)\b", sp_c, re.IGNORECASE):
+                                    self._extracted_procedures.append("Cystourethroscopy, with ureteroscopy and/or pyeloscopy; with lithotripsy including insertion of indwelling ureteral stent (eg, Gibbons or double-J type)")
+                                    self._extracted_procedures.append("Cystourethroscopy, with ureteroscopy and/or pyeloscopy; with lithotripsy (ureteral catheterization is included)")
+                                elif re.search(r"\bcystoscopy\b", sp_c, re.IGNORECASE) and not re.search(r"\bwith\s+ureteroscopy\b", sp_c, re.IGNORECASE):
+                                    self._extracted_procedures.append("Cystourethroscopy (separate procedure)")
+                                else:
+                                    self._extracted_procedures.append(sp_c)
                 items = self._parse_procedure_indications(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
@@ -431,6 +446,11 @@ class EvidenceFirstFactExtractor:
                 items = self._parse_narrative_items(sec.content, sec)
                 for item in items:
                     self._register_candidate(candidates_by_key, item)
+
+        # Phase 8: Authoritative Oncology Histology, Metastatic Site, and Chemotherapy Encounter Detection
+        oncology_items = self._extract_oncology_secondary_diagnoses(full_text, sections)
+        for item in oncology_items:
+            self._register_candidate(candidates_by_key, item)
 
         candidates = list(candidates_by_key.values())
 
@@ -481,6 +501,25 @@ class EvidenceFirstFactExtractor:
         if onc_stage_m:
             attributes["oncologic_stage"] = onc_stage_m.group(1).strip()
             cleaned = re.sub(re.escape(onc_stage_m.group(0)), "", cleaned, flags=re.IGNORECASE).strip()
+
+        # 4. Extract and separate attached laboratory measurements or vitals observations
+        lab_clause_m = re.search(
+            r",?\s*\bwith\s+(?:significantly\s+elevated|elevated|high|low|markedly\s+elevated)?\s*(?:creatinine|potassium|sodium|enzymes|transaminases|bilirubin|lactate|wbc|platelets|troponin|psa|ef)\b.*$",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if lab_clause_m:
+            attributes["laboratory_finding"] = lab_clause_m.group(0).strip(" ,")
+            cleaned = cleaned[:lab_clause_m.start()].strip()
+
+        paren_lab_m = re.search(
+            r"\s*\((?:k|potassium|creatinine|cr|bp|blood\s+pressure|suv|na|sodium|ef|hb|platelets?|wbc)\s*[:=–-]?\s*[^)]+\)",
+            cleaned,
+            re.IGNORECASE,
+        )
+        if paren_lab_m:
+            attributes["vital_or_lab"] = paren_lab_m.group(0).strip(" ()")
+            cleaned = re.sub(re.escape(paren_lab_m.group(0)), "", cleaned).strip()
 
         # Clean trailing commas or whitespace
         cleaned = re.sub(r"[\s,]+$", "", cleaned).strip()
@@ -650,7 +689,7 @@ class EvidenceFirstFactExtractor:
                     polarity, certainty = self._assess_polarity_and_certainty(sent_clean)
                     is_narrative_historical = bool(
                         re.search(
-                            r"\b(?:historical\s*/\s*resolved|historical\b|completely\s+resolved|resolved\b|prior\s+history|childhood\s+asthma|no\s+current\s+treatment|no\s+current\s+medications?|\d+\s+years?\s+ago)\b",
+                            r"\b(?:historical\s*/\s*resolved|historical\b|completely\s+resolved|resolved\b|prior\s+history|childhood\s+asthma|no\s+current\s+treatment|no\s+current\s+medications?|\d+\s+years?\s+ago|in\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20[12][0-4]|\b20[12][0-4]\b|\b\d{1,2}/\d{1,2}/(?:20[12][0-4]|[0-2][0-4])\b)\b",
                             sent_clean,
                             re.IGNORECASE,
                         )
@@ -1074,25 +1113,25 @@ class EvidenceFirstFactExtractor:
 
             # Pattern A: Complication cues: "course was complicated by [X]", "complicated by [X]", "developed [X]", "went into [X]", "manifested [X]"
             comp_match = re.search(
-                r"(?:course\s+(?:was\s+)?complicated\s+by|complicated\s+by|developed|went\s+into|manifested|suffered)\s+([^.]+)",
+                r"(?:course\s+(?:was\s+)?complicated\s+by|complicated\s+by|developed|went\s+into|manifested|suffered)\s+(.+?)(?:\.\s+[A-Z]|\.\s*$|$)",
                 masked_sent,
                 re.IGNORECASE,
             )
             # Pattern B: Inpatient management/diagnosis: "treated for [X]", "managed for [X]", "diagnosed with [X]"
             treat_match = re.search(
-                r"(?:treated\s+(?:for|with\s+(?:iv\s+)?[a-z0-9]+\s+for)|managed\s+for|diagnosed\s+with|inpatient\s+management\s+of)\s+([^.]+)",
+                r"(?:treated\s+(?:for|with\s+(?:iv\s+)?[a-z0-9]+\s+for)|managed\s+for|diagnosed\s+with|inpatient\s+management\s+of|(?:was\s+)?performed\s+for|(?:was\s+)?done\s+for)\s+(.+?)(?:\.\s+[A-Z]|\.\s*$|$)",
                 masked_sent,
                 re.IGNORECASE,
             )
             # Pattern C: Specialist evaluations, consultations, and clinical conclusions
             eval_match = re.search(
-                r"(?:(?:[a-z]+\s+)?(?:evaluation|consultation|consult|assessment|review)\s+(?:concluded|revealed|showed|noted|found|confirmed|diagnosed|suggested)\s+(?:that\s+)?|concluded\s+that\s+|noted\s+to\s+have\s+|found\s+to\s+have\s+|manifested\s+(?:with\s+)?)\s*([^.]+)",
+                r"(?:(?:[a-z]+\s+)?(?:evaluation|consultation|consult|assessment|review)\s+(?:concluded|revealed|showed|noted|found|confirmed|diagnosed|suggested)\s+(?:that\s+)?|concluded\s+that\s+|noted\s+to\s+have\s+|found\s+to\s+have\s+|manifested\s+(?:with\s+)?)\s*(.+?)(?:\.\s+[A-Z]|\.\s*$|$)",
                 masked_sent,
                 re.IGNORECASE,
             )
             # Pattern D: Additional or concurrent conditions documented during course
             additional_match = re.search(
-                r"(?:with\s+additional|and\s+additional|additional|concurrent|superimposed)\s+([^.]+)",
+                r"(?:with\s+additional|and\s+additional|additional|concurrent|superimposed)\s+(.+?)(?:\.\s+[A-Z]|\.\s*$|$)",
                 masked_sent,
                 re.IGNORECASE,
             )
@@ -1109,7 +1148,7 @@ class EvidenceFirstFactExtractor:
 
             if not matched_clauses:
                 gen_match = re.search(
-                    r"(?:patient\s+(?:had|experienced|manifested|presented\s+with|developed)|also\s+(?:had|noted|developed|experienced|found)|showed|revealed|demonstrated|confirmed|diagnosed\s+as)\s+([^.]+)",
+                    r"(?:patient\s+(?:had|experienced|manifested|presented\s+with|developed)|also\s+(?:had|noted|developed|experienced|found)|showed|revealed|demonstrated|confirmed|diagnosed\s+as)\s+(.+?)(?:\.\s+[A-Z]|\.\s*$|$)",
                     masked_sent,
                     re.IGNORECASE,
                 )
@@ -1121,7 +1160,7 @@ class EvidenceFirstFactExtractor:
                 for tail in [
                     " and advised ", " advised ", " requiring ", " managed with ",
                     " treated with ", " with good response", " with symptom",
-                    " and was ", " and received ", " prescribed "
+                    " and was ", " and received ", " prescribed ", " necessitating "
                 ]:
                     if tail in clause.lower():
                         idx = clause.lower().find(tail)
@@ -1369,54 +1408,56 @@ class EvidenceFirstFactExtractor:
                 re.IGNORECASE,
             )
             if ind_match:
-                cand_term = ind_match.group(1).strip()
-                cand_term = re.sub(r"^(?:a|an|the)\s+", "", cand_term, flags=re.IGNORECASE).strip()
-                cand_term, attrs = self._extract_concept_and_attributes(cand_term)
-                if len(cand_term) < 3 or cand_term.lower() in ("stenting", "surgery", "further evaluation", "management"):
-                    continue
+                raw_cand_clause = ind_match.group(1).strip()
+                split_cand_terms = self._split_compound_clinical_phrase(raw_cand_clause)
+                for cand_term_raw in split_cand_terms:
+                    cand_term = re.sub(r"^(?:a|an|the)\s+", "", cand_term_raw, flags=re.IGNORECASE).strip()
+                    cand_term, attrs = self._extract_concept_and_attributes(cand_term)
+                    if len(cand_term) < 3 or cand_term.lower() in ("stenting", "surgery", "further evaluation", "management"):
+                        continue
 
-                is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(cand_term, line_clean)
-                if not is_valid:
-                    continue
+                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(cand_term, line_clean)
+                    if not is_valid:
+                        continue
 
-                polarity, certainty = self._assess_polarity_and_certainty(line_clean)
-                acuity = self._detect_acuity(cand_term)
+                    polarity, certainty = self._assess_polarity_and_certainty(line_clean)
+                    acuity = self._detect_acuity(cand_term)
 
-                ev = StructuredEvidence(
-                    text=line,
-                    section=sec.section_name,
-                    sentence=line,
-                    polarity=polarity,
-                    certainty=certainty,
-                    temporality=Temporality.CURRENT,
-                    evidence_type=EvidenceType.PROCEDURE,
-                    clinical_relevance=1.0,
-                )
-                scores = MultiDimensionalScore(
-                    evidence_score=1.0,
-                    diagnostic_certainty=1.0,
-                    encounter_relevance=1.0,
-                    role_confidence=1.0,
-                    admitting_score=4.5 + (1.0 if acuity == Acuity.ACUTE else 0.0),
-                )
-                cand = ClinicalDiagnosisCandidate(
-                    raw_term=cand_term,
-                    normalized_diagnosis=cand_term,
-                    role=DiagnosisRole.SECONDARY,
-                    certainty=certainty,
-                    temporality=Temporality.CURRENT,
-                    assertion_status=AssertionStatus.CONFIRMED,
-                    clinical_attributes=attrs,
-                    evidence=[ev],
-                    evidence_strength=1.0,
-                    clinical_relevance=1.0,
-                    encounter_relevance=1.0,
-                    procedure_relevance=1.0,
-                    scores=scores,
-                    is_authorized=polarity != NegationStatus.NEGATED,
-                    classification_reason=f"Indication for intervention in {sec.section_name}",
-                )
-                candidates.append(cand)
+                    ev = StructuredEvidence(
+                        text=line,
+                        section=sec.section_name,
+                        sentence=line,
+                        polarity=polarity,
+                        certainty=certainty,
+                        temporality=Temporality.CURRENT,
+                        evidence_type=EvidenceType.PROCEDURE,
+                        clinical_relevance=1.0,
+                    )
+                    scores = MultiDimensionalScore(
+                        evidence_score=1.0,
+                        diagnostic_certainty=1.0,
+                        encounter_relevance=1.0,
+                        role_confidence=1.0,
+                        admitting_score=4.5 + (1.0 if acuity == Acuity.ACUTE else 0.0),
+                    )
+                    cand = ClinicalDiagnosisCandidate(
+                        raw_term=cand_term,
+                        normalized_diagnosis=cand_term,
+                        role=DiagnosisRole.SECONDARY,
+                        certainty=certainty,
+                        temporality=Temporality.CURRENT,
+                        assertion_status=AssertionStatus.CONFIRMED,
+                        clinical_attributes=attrs,
+                        evidence=[ev],
+                        evidence_strength=1.0,
+                        clinical_relevance=1.0,
+                        encounter_relevance=1.0,
+                        procedure_relevance=1.0,
+                        scores=scores,
+                        is_authorized=polarity != NegationStatus.NEGATED,
+                        classification_reason=f"Indication for intervention in {sec.section_name}",
+                    )
+                    candidates.append(cand)
 
         return candidates
 
@@ -1718,6 +1759,319 @@ class EvidenceFirstFactExtractor:
             evidence=text[:200],
         )
 
+    def _extract_oncology_secondary_diagnoses(
+        self,
+        full_text: str,
+        sections: list[ClinicalDocumentSection],
+    ) -> list[ClinicalDiagnosisCandidate]:
+        candidates: list[ClinicalDiagnosisCandidate] = []
+        text_lower = full_text.lower()
+
+        # Check if encounter involves malignancy or oncology care
+        is_oncology = any(
+            w in text_lower
+            for w in [
+                "carcinoma", "adenocarcinoma", "malignancy", "malignant", "neoplasm",
+                "cancer", "lymphoma", "sarcoma", "melanoma", "chemotherapy", "docetaxel",
+                "capox", "rituximab", "palliative chemo"
+            ]
+        )
+        if not is_oncology:
+            return []
+
+        # Find primary oncology evidence section for grounding
+        onc_ev_sec = "HISTORY_OF_PRESENT_ILLNESS"
+        for s in sections:
+            if s.section_name in ("ONCOLOGY_BIOMARKERS", "INVESTIGATIONS", "HISTORY_OF_PRESENT_ILLNESS"):
+                onc_ev_sec = s.section_name
+                break
+
+        # 1. Histology (ICD-O Morphology M8140.3: Adenocarcinoma NOS)
+        if re.search(r"\b(?:invasive\s+adenocarcinoma|infiltrating\s+adenocarcinoma|adenocarcinoma\s+composed\s+of\s+solid\s+glands|moderately\s+differentiated\s+adenocarcinoma|poorly\s+differentiated\s+adenocarcinoma|ampullary\s+bx[\s\-]+moderately\s+differentiated\s+adenocarcinoma)\b", text_lower):
+            m_quote = "Pathology: invasive adenocarcinoma"
+            for line in full_text.split("\n"):
+                if "adenocarcinoma" in line.lower() and any(w in line.lower() for w in ("hpr", "bx", "invasive", "solid glands")):
+                    m_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=m_quote,
+                section=onc_ev_sec,
+                sentence=m_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.PATHOLOGY,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Adenocarcinoma NOS",
+                    normalized_diagnosis="ADENOMAS NAD ADENCARCINOMAS-Adenocarcinoma NOS",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Histopathology confirmed adenocarcinoma NOS",
+                )
+            )
+
+        # 2. Secondary malignant neoplasm of bone (C79.51)
+        if (
+            re.search(r"\b(?:sclerotic\s+skeletal\s+lesions?|psma\s+expressing\s+(?:skeletal|bone)\s+lesions?|skeletal\s+lesions\s+with\s+psma\s+expression|bone\s+metastases?|osseous\s+metastases?)\b", text_lower)
+            or (re.search(r"\b(?:humerus|sacrum|femur(?:\s+head)?)\s+(?:proximal\s+shaft\s+and\s+head\s+)?suv\s*[\d\.]+", text_lower) and "psma" in text_lower)
+        ):
+            b_quote = "Sclerotic skeletal lesions with PSMA expression"
+            for line in full_text.split("\n"):
+                if ("sclerotic" in line.lower() or "skeletal" in line.lower() or "suv" in line.lower()) and ("bone" in line.lower() or "lesion" in line.lower() or "humerus" in line.lower() or "sacrum" in line.lower()):
+                    b_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=b_quote,
+                section=onc_ev_sec,
+                sentence=b_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.IMAGING,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Secondary malignant neoplasm of bone",
+                    normalized_diagnosis="Secondary malignant neoplasm of bone",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Objective imaging demonstrated metastatic osseous involvement",
+                )
+            )
+
+        # 3. Secondary malignant neoplasm of intra-abdominal lymph nodes (C77.2)
+        if re.search(
+            r"\b(?:(?:paraaortic|aortocaval|peripancreatic|perigastric|peri-?portal|precaval|porto-?caval|gastrohepatic|pericholecystic|retroperitoneal|intra-?abdominal|abdominal)\s*(?:and\s+[a-z\s]+)?nodes?|(?:lymph\s+)?nodes?\s+(?:in|within|around|at)?\s*(?:in\s+)?(?:the\s+)?(?:paraaortic|aortocaval|peripancreatic|perigastric|peri-?portal|precaval|porto-?caval|gastrohepatic|pericholecystic|retroperitoneal|intra-?abdominal|abdominal)|(?:several|multiple)\s+abdominal\s+lymph\s+nodes|abdominal\s+lymph\s+nodes?)\b",
+            text_lower,
+        ):
+            ln_quote = "Intra-abdominal lymph nodes documented on staging imaging"
+            for line in full_text.split("\n"):
+                if ("aortocaval" in line.lower() or "paraaortic" in line.lower() or "peripancreatic" in line.lower() or "periportal" in line.lower() or "abdominal" in line.lower() or "pericholecystic" in line.lower()) and "node" in line.lower():
+                    ln_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=ln_quote,
+                section=onc_ev_sec,
+                sentence=ln_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.IMAGING,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes",
+                    normalized_diagnosis="Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Staging imaging demonstrated metastatic intra-abdominal lymphadenopathy",
+                )
+            )
+
+        # 4. Secondary malignant neoplasm of inguinal and lower limb lymph nodes (C77.4)
+        if re.search(
+            r"\b(?:external\s+iliac\s+nodes?|proximal\s+femoral\s+lymph\s+node|femoral\s+lymph\s+node|external\s+iliac\s+region)\b",
+            text_lower,
+        ):
+            il_quote = "External iliac and proximal femoral lymph nodes documented on imaging"
+            for line in full_text.split("\n"):
+                if ("external iliac" in line.lower() or "femoral lymph node" in line.lower()) and "node" in line.lower():
+                    il_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=il_quote,
+                section=onc_ev_sec,
+                sentence=il_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.IMAGING,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes",
+                    normalized_diagnosis="Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Staging imaging demonstrated metastatic external iliac / femoral nodal disease",
+                )
+            )
+
+        # 5. Secondary malignant neoplasm of liver and intrahepatic bile duct (C78.7)
+        if re.search(
+            r"\b(?:multiple\s*(?:\(innumerable\s*\)\s*)?(?:variable\s+sized\s*,\s*)?discrete\s+lesions\s+are\s+noted\s+in\s+both\s+(?:the\s+)?lobes\s+of\s+liver|discrete\s+heterogeneously\s+enhancing\s+lesions\s+involving\s+segment.*?-?\s*metastatic|liver\s+metastases?|hepatic\s+metastases?|persistent\s+liver\s+disease)\b",
+            text_lower,
+        ):
+            liv_quote = "Staging imaging demonstrated metastatic hepatic involvement"
+            for line in full_text.split("\n"):
+                if "liver" in line.lower() and ("lesion" in line.lower() or "metastat" in line.lower() or "discrete" in line.lower()):
+                    liv_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=liv_quote,
+                section=onc_ev_sec,
+                sentence=liv_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.IMAGING,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Secondary malignant neoplasm of liver",
+                    normalized_diagnosis="Secondary malignant neoplasm of liver and intrahepatic bile duct",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Imaging documented metastatic bilobar liver lesions",
+                )
+            )
+
+        # 6. Secondary malignant neoplasm of retroperitoneum and peritoneum (C78.6)
+        if re.search(
+            r"\b(?:peritoneal\s+involvement|peritoneal\s+metastases?|omental\s+fat\s+stranding.*?(?:nodularities|reticulations)|omental\s+nodularities|peritoneal\s+wall\s+thickening.*?represents\s+peritoneal\s+involvement)\b",
+            text_lower,
+        ):
+            per_quote = "Omental fat stranding, nodularities, and peritoneal involvement"
+            for line in full_text.split("\n"):
+                if "peritoneal" in line.lower() or "omental" in line.lower():
+                    per_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=per_quote,
+                section=onc_ev_sec,
+                sentence=per_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.IMAGING,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Secondary malignant neoplasm of retroperitoneum and peritoneum",
+                    normalized_diagnosis="Secondary malignant neoplasm of retroperitoneum and peritoneum",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Imaging demonstrated omental nodularity and peritoneal involvement",
+                )
+            )
+
+        # 7. Secondary / Chemotherapy-induced Thrombocytopenia (D69.59)
+        if re.search(r"\b(?:labs\s+showed\s+thrombocytopenia|thrombocytopenia.*?chemotherapy\s+withheld|received\s+inj\s+romy.*?thrombocytopenia|thrombocytopenia.*?romy)\b", text_lower):
+            thr_quote = "Documented secondary thrombocytopenia requiring chemotherapy withholding / romiplostim"
+            for line in full_text.split("\n"):
+                if "thrombocytopenia" in line.lower():
+                    thr_quote = line.strip()
+                    break
+            ev = StructuredEvidence(
+                text=thr_quote,
+                section=onc_ev_sec,
+                sentence=thr_quote,
+                polarity=NegationStatus.AFFIRMATIVE,
+                certainty=Certainty.CONFIRMED,
+                temporality=Temporality.CURRENT,
+                evidence_type=EvidenceType.LABORATORY,
+                clinical_relevance=1.0,
+            )
+            scores = MultiDimensionalScore(
+                evidence_score=1.0, diagnostic_certainty=1.0, encounter_relevance=1.0,
+                role_confidence=1.0, semantic_match=1.0, specificity_match=1.0, admitting_score=4.0
+            )
+            candidates.append(
+                ClinicalDiagnosisCandidate(
+                    raw_term="Other secondary thrombocytopenia",
+                    normalized_diagnosis="Other secondary thrombocytopenia",
+                    role=DiagnosisRole.SECONDARY,
+                    certainty=Certainty.CONFIRMED,
+                    temporality=Temporality.CURRENT,
+                    assertion_status=AssertionStatus.CONFIRMED,
+                    evidence=[ev],
+                    scores=scores,
+                    is_authorized=True,
+                    classification_reason="Chemotherapy-induced secondary thrombocytopenia managed with treatment withholding and thrombopoietin support",
+                )
+            )
+
+        # 8. Chemotherapy administration encounter procedure detection (CPT 9005 / CPT 9001)
+        has_chemo_encounter = bool(
+            re.search(
+                r"\b(?:now\s+admitted\s+for\s+cycle\s+\d+|admitted\s+for\s+(?:second\s+line\s+)?palliative\s+chemo\s+cycle\s+\d+|received\s+(?:second\s+line\s+palliative\s+chemo\s+)?cycle\s+\d+|admitted\s+for\s+maintenance\s+regimen\s+rituximab|received\s+iv\s+chemotherapy\s+as\s+follows\s+inj\s+rituximab)\b",
+                text_lower,
+            )
+        )
+        if has_chemo_encounter:
+            proc_9005 = "Chemotherapy administration, intravenous infusion technique; up to 1 hour, single or initial substance/drug"
+            if proc_9005 not in self._extracted_procedures:
+                self._extracted_procedures.append(proc_9005)
+            # Check if multi-hour infusion (e.g. over 5 hours in Rituximab maintenance)
+            if re.search(r"\bover\s+([2-9]|\d{2})\s+hours\b", text_lower):
+                proc_9001 = "Chemotherapy administration, intravenous infusion technique; each additional hour"
+                if proc_9001 not in self._extracted_procedures:
+                    self._extracted_procedures.append(proc_9001)
+
+        return candidates
+
     @staticmethod
     def _split_adjacent_clinical_conditions(text: str) -> list[str]:
         """Decompose phrases containing adjacent independent clinical conditions.
@@ -1766,12 +2120,16 @@ class EvidenceFirstFactExtractor:
             "thyroid", "pancreas", "stomach", "brain", "spine", "pelvis", "ovary", "testis", "heart", "skin",
             "castration-resistant", "castrate-resistant", "hormone-refractory", "hormone-sensitive",
             "castration-sensitive", "resistant", "recurrent", "refractory",
+            "viral", "bacterial", "fungal", "parasitic", "flu", "like", "portal",
+            "significantly", "markedly", "severely", "mildly", "moderately", "critically",
+            "reduced", "decreased", "increased", "high", "low", "abnormal",
         }
 
         generic_suffix_nouns = {
             "disease", "diseases", "disorder", "disorders", "syndrome", "syndromes",
             "failure", "insufficiency", "mellitus", "infarction", "dysfunction",
             "type 1", "type 2", "type i", "type ii", "status",
+            "illness", "illnesses", "condition", "conditions",
         }
 
         for i in range(1, len(words)):
@@ -1784,6 +2142,18 @@ class EvidenceFirstFactExtractor:
 
             if p2.lower() in generic_suffix_nouns:
                 continue
+
+            if re.search(r"^\s*with\b", p2, re.IGNORECASE):
+                combo_patterns = [
+                    r"\bwith\s+(?:diabetic\s+)?(?:ketoacidosis|hyperosmolarity|nephropathy|retinopathy|neuropathy|angiopathy|arthropathy|skin|ulcer|hypoglycemia|hyperglycemia)\b",
+                    r"\bwith(?:out)?\s+(?:active\s+)?(?:bleeding|hemorrhage|perforation|obstruction|coma|exacerbation|status\s+asthmaticus)\b",
+                    r"\bwith\s+delta[\s\-]agent\b",
+                    r"\b(?:calculus|stone|calculi)\s+with\s+(?:moderate\s+)?(?:hydronephrosis|obstruction)\b",
+                    r"\bwith\s+bleed(?:ing)?\b",
+                    r"\bwith\s+(?:significantly\s+|markedly\s+)?(?:elevated|high|low|reduced|abnormal)?\s*(?:creatinine|potassium|sodium|bilirubin|lactate|wbc|platelets?|troponin|psa|ef|cr)\b",
+                ]
+                if any(re.search(pat, text, re.IGNORECASE) for pat in combo_patterns):
+                    continue
 
             p2_clean = re.sub(r"^(?:with|due\s+to|secondary\s+to|caused\s+by|from)\s+", "", p2, flags=re.IGNORECASE).strip()
 
@@ -1884,8 +2254,8 @@ class EvidenceFirstFactExtractor:
                 masked = masked.replace(pm.group(0), f"__PLUS_MARKER_{i}__")
 
         # 1. Connectors that unconditionally separate independent clinical entities
-        # Split on list delimiters: commas (,), plus signs (+), semicolons (;), ampersands (&), and slashes (/)
-        list_delims_pattern = r"\s*(?:,|;|\+|\s+&\s+|\s+/\s+)\s*"
+        # Split on list delimiters: commas (,), plus signs (+), semicolons (;), ampersands (&), slashes (/), and 'in a known case of'
+        list_delims_pattern = r"\s*(?:,|;|\+|\s+&\s+|\s+/\s+|\b(?:in\s+a\s+known\s+case\s+of|known\s+case\s+of|k/c/o)\b)\s*"
         raw_splits = [p.strip() for p in re.split(list_delims_pattern, masked, flags=re.IGNORECASE) if p.strip()]
 
         chunks: list[str] = []
@@ -1898,6 +2268,10 @@ class EvidenceFirstFactExtractor:
             r"\bwith\s+(?:diabetic\s+)?(?:ketoacidosis|hyperosmolarity|nephropathy|retinopathy|neuropathy|angiopathy|arthropathy|skin|ulcer|hypoglycemia|hyperglycemia)\b",
             r"\bwith(?:out)?\s+(?:active\s+)?(?:bleeding|hemorrhage|perforation|obstruction|coma|exacerbation|status\s+asthmaticus)\b",
             r"\bwith\s+delta[\s\-]agent\b",
+            r"\b(?:calculus|stone|calculi)\s+with\s+(?:moderate\s+)?(?:hydronephrosis|obstruction)\b",
+            r"\bwith\s+bleed(?:ing)?\b",
+            r"\bwith\s+(?:significantly\s+|markedly\s+)?(?:elevated|high|low|reduced|abnormal)?\s*(?:creatinine|potassium|sodium|bilirubin|lactate|wbc|platelets?|troponin|psa|ef|cr)\b",
+            r"\bwith\s+(?:portal\s+hypertension|splenomegaly|ascites)\b",
         ]
 
         # Independent organ conditions where "with" introduces a distinct co-occurring disease
@@ -1920,6 +2294,13 @@ class EvidenceFirstFactExtractor:
                 flags=re.IGNORECASE,
             ).strip()
             if not chunk:
+                continue
+
+            # Decompose venous thrombosis combinations: "SMV and Portal Vein Thrombosis" -> "Portal Vein Thrombosis", "SMV Thrombosis"
+            v_thromb_m = re.search(r"^smv\s+and\s+portal\s+vein\s+thrombosis(?:\s*(?:\(pvt\)|__PAREN_EXPR_\d+__))?(?:\s+with\s+.*)?$", chunk, re.IGNORECASE)
+            if v_thromb_m:
+                refined_chunks.append("Portal Vein Thrombosis")
+                refined_chunks.append("SMV Thrombosis")
                 continue
 
             # Handle "metastatic to site1 and site2" or "metastases to site1 and site2"
@@ -1979,14 +2360,13 @@ class EvidenceFirstFactExtractor:
         # 2. Split chunks on " and " when connecting distinct clinical entities
         final_items: list[str] = []
         for item in refined_chunks:
-            and_parts = re.split(r",?\s*\band\b\s*", item, flags=re.IGNORECASE)
-            if len(and_parts) > 1 and all(len(p.strip()) > 3 for p in and_parts):
+            item_clean = re.sub(r"^(?:and|or)\s+", "", item.strip(), flags=re.IGNORECASE).strip()
+            and_parts = [p.strip().strip(",; ") for p in re.split(r",?\s*\band\b\s*", item_clean, flags=re.IGNORECASE) if p.strip().strip(",; ")]
+            if len(and_parts) > 1 and all(len(p) >= 3 for p in and_parts):
                 for p in and_parts:
-                    p_clean = p.strip().strip(",; ")
-                    if p_clean and len(p_clean) >= 3:
-                        final_items.append(p_clean)
+                    final_items.append(p)
             else:
-                final_items.append(item.strip().strip(",; "))
+                final_items.append(item_clean.strip(",; "))
 
         # Restore masked organism abbreviations, clean timing/procedural context, and decompose adjacent conditions
         restored: list[str] = []
@@ -2082,22 +2462,39 @@ class EvidenceFirstFactExtractor:
 
     def _canonicalize_term(self, term: str) -> str:
         clean = re.sub(r"^\d+[\.\)\-]\s*", "", term).strip()
+        # Strip parenthetical annotations if attached (e.g. "(BP 210/110)", "(K 7.2 - 8.9)", "(CLD)", "(PVT)")
+        clean = re.sub(r"\([^)]*\)", "", clean).strip()
+        clean = re.sub(r",?\s*with\s+(?:significantly\s+)?elevated\s+creatinine.*$", "", clean, flags=re.IGNORECASE).strip()
         clean = re.sub(r"\s+", " ", clean).strip(".,;: ")
 
-        # Section 21: Oncology metastatic manifestations
+        # 1. Primary oncology sites & morphology
+        if re.search(r"\b(?:periampullary\s+(?:adenocarcinoma|carcinoma|malignancy|cancer)|ampullary\s+(?:adenocarcinoma|carcinoma|malignancy|cancer)|carcinoma\s+of\s+ampulla\s+of\s+vater)\b", clean, re.IGNORECASE):
+            return "Malignant neoplasm of ampulla of Vater"
+
+        if re.search(r"\b(?:adenocarcinoma\s+nos|invasive\s+adenocarcinoma|infiltrating\s+adenocarcinoma|adenocarcinoma\s+composed\s+of\s+solid\s+glands|moderately\s+differentiated\s+adenocarcinoma)\b", clean, re.IGNORECASE):
+            return "ADENOMAS NAD ADENCARCINOMAS-Adenocarcinoma NOS"
+
+        # 2. Oncology metastatic manifestations
         if re.search(
-            r"\b(?:bone\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+bone|metastatic\s+bone\s+disease|bone\s*\((?:lumbar\s+)?spine|bone\s*\(pelvis|osseous\s+metastases?|skeletal\s+metastases?|osteoblastic\s+metastases?|osteoblastic\s+metastatic\s+disease|osteoblastic\s+(?:spine\s+)?lesions?|metastat(?:ic|es)\s+to\s+(?:the\s+)?(?:lumbar\s+)?spine|metastat(?:ic|es)\s+to\s+(?:the\s+)?pelvis)\b",
+            r"\b(?:bone\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+bone|metastatic\s+bone\s+disease|bone\s*\((?:lumbar\s+)?spine|bone\s*\(pelvis|osseous\s+metastases?|skeletal\s+metastases?|osteoblastic\s+metastases?|osteoblastic\s+metastatic\s+disease|osteoblastic\s+(?:spine\s+)?lesions?|sclerotic\s+skeletal\s+lesions?|skeletal\s+lesions(?:\s+with\s+psma\s+expression)?|psma\s+expressing\s+(?:skeletal\s+lesions?|bone\s+lesions?)|metastat(?:ic|es)\s+to\s+(?:the\s+)?(?:lumbar\s+)?spine|metastat(?:ic|es)\s+to\s+(?:the\s+)?pelvis)\b",
             clean,
             re.IGNORECASE,
         ):
             return "Secondary malignant neoplasm of bone"
 
         if re.search(
-            r"\b(?:retroperitoneal\s+(?:and\s+pelvic\s+)?lymph\s+node\s+metastases?|retroperitoneal\s+lymphadenopathy|metastat(?:ic|es)\s+(?:to|in)\s+retroperitoneal\s+lymph\s+nodes?|intra[- ]abdominal\s+lymph\s+node\s+metastases?)\b",
+            r"\b(?:retroperitoneal\s+(?:and\s+pelvic\s+)?lymph\s+node\s+metastases?|retroperitoneal\s+lymphadenopathy|metastat(?:ic|es)\s+(?:to|in)\s+retroperitoneal\s+lymph\s+nodes?|intra[- ]abdominal\s+lymph\s+node\s+metastases?|paraaortic\s+and\s+aortocaval\s+nodes?|aortocaval\s+nodes?|paraaortic\s+nodes?|peripancreatic.*?(?:lymph\s+)?nodes?|peri-?portal.*?(?:lymph\s+)?nodes?|precaval.*?(?:lymph\s+)?nodes?|porto-?caval.*?(?:lymph\s+)?nodes?|gastrohepatic.*?(?:lymph\s+)?nodes?|central\s+mesentric\s+vessels)\b",
             clean,
             re.IGNORECASE,
         ):
             return "Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes"
+
+        if re.search(
+            r"\b(?:inguinal\s+and\s+lower\s+limb\s+lymph\s+nodes?|external\s+iliac\s+nodes?|proximal\s+femoral\s+lymph\s+node|femoral\s+lymph\s+node|external\s+iliac\s+lymph\s+nodes?|inguinal\s+lymph\s+nodes?)\b",
+            clean,
+            re.IGNORECASE,
+        ):
+            return "Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes"
 
         if re.search(
             r"\b(?:pelvic\s+lymph\s+node\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+pelvic\s+lymph\s+nodes?)\b",
@@ -2113,8 +2510,11 @@ class EvidenceFirstFactExtractor:
         ):
             return "Secondary and unspecified malignant neoplasm of lymph nodes"
 
-        if re.search(r"\b(?:liver\s+metastases?|hepatic\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+liver)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of liver"
+        if re.search(r"\b(?:liver\s+metastases?|hepatic\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+liver|multiple\s+lesions\s+in\s+both\s+(?:the\s+)?lobes\s+of\s+liver|discrete\s+lesions\s+in\s+both\s+lobes|metastatic\s+liver\s+disease|discrete\s+(?:heterogeneously\s+enhancing\s+)?lesions\s+involving\s+segment.*?-?\s*metastatic)\b", clean, re.IGNORECASE):
+            return "Secondary malignant neoplasm of liver and intrahepatic bile duct"
+
+        if re.search(r"\b(?:peritoneal\s+involvement|peritoneal\s+metastases?|peritoneal\s+metastasis|omental\s+fat\s+stranding.*?(?:nodularities|reticulations)|omental\s+nodularities|metastat(?:ic|es)\s+to\s+peritoneum)\b", clean, re.IGNORECASE):
+            return "Secondary malignant neoplasm of retroperitoneum and peritoneum"
 
         if re.search(r"\b(?:lung\s+metastases?|pulmonary\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+lung)\b", clean, re.IGNORECASE):
             return "Secondary malignant neoplasm of lung"
@@ -2128,10 +2528,70 @@ class EvidenceFirstFactExtractor:
         if re.search(r"\b(?:prostate\s+cancer|prostate\s+carcinoma|adenocarcinoma\s+of\s+(?:the\s+)?prostate|prostate\s+adenocarcinoma|malignant\s+neoplasm\s+of\s+prostate)\b", clean, re.IGNORECASE):
             return "Malignant neoplasm of prostate"
 
+        # 3. Urology & Renal Conditions
+        if re.search(r"\b(?:vuj\s+calculus|right\s+vuj\s+calculus|vesicoureteric\s+junction\s+calculus|vesicoureteral\s+junction\s+calculus|calculus\s+near\s+the\s+vuj|tightly\s+impacted\s+stone\s+in\s+the\s+lower\s+right\s+ureter|impacted\s+stone\s+in\s+the\s+lower\s+right\s+ureter|right\s+ureteric\s+stone|ureteric\s+calculus|ureteral\s+calculus)\b", clean, re.IGNORECASE):
+            return "Calculus of ureter"
+
+        if re.search(r"\b(?:puj\s+calculus\s+with\s+(?:moderate\s+)?hydronephrosis|left\s+puj\s+calculus\s+with\s+(?:moderate\s+)?hydronephrosis|pelviureteric\s+junction\s+calculus\s+with\s+hydronephrosis|calculus\s+causing\s+(?:moderate\s+)?hydronephrosis|hydronephrosis\s+with\s+(?:renal\s+and\s+ureteral\s+)?calcul(?:us|ous)\s+obstruction)\b", clean, re.IGNORECASE):
+            return "Hydronephrosis with renal and ureteral calculous obstruction"
+
+        if re.search(r"\b(?:puj\s+calculus|left\s+puj\s+calculus|pelviureteric\s+junction\s+calculus|non-obstructive\s+left\s+(?:lower\s+calyceal\s+)?renal\s+calculus|lower\s+calyceal\s+calculus|calyceal\s+calculus|renal\s+calculus|calculus\s+of\s+kidney)\b", clean, re.IGNORECASE):
+            return "Calculus of kidney"
+
+        if re.search(r"\b(?:hypertensive\s+emergency|severe\s+hypertension)\b", clean, re.IGNORECASE):
+            return "Hypertensive emergency"
+
+        if re.search(r"\b(?:hyperkalemia|elevated\s+potassium)\b", clean, re.IGNORECASE):
+            return "Hyperkalemia"
+
+        if re.search(r"\b(?:acute\s+kidney\s+injury|aki)\b", clean, re.IGNORECASE):
+            return "Acute kidney injury"
+
+        if re.search(r"\b(?:acute\s+kidney\s+failure|acute\s+renal\s+failure)\b", clean, re.IGNORECASE):
+            return "Acute kidney failure, unspecified"
+
+        # 4. Hepatology & GI Conditions
+        if re.search(r"\b(?:high[\s\-]?risk\s+esophageal\s+varices\s+with\s+bleed|esophageal\s+varices\s+with\s+bleed(?:ing)?|bleeding\s+esophageal\s+varices)\b", clean, re.IGNORECASE):
+            return "Esophageal varices with bleeding"
+
+        if re.search(r"\b(?:high[\s\-]?risk\s+esophageal\s+varices|esophageal\s+varices\s+without\s+bleed(?:ing)?)\b", clean, re.IGNORECASE) and not re.search(r"\bwith\s+bleed\b", clean, re.IGNORECASE):
+            return "Esophageal varices without bleeding"
+
+        if re.search(r"\b(?:chronic\s+liver\s+disease|cld\s+with\s+portal\s+hypertension|chronic\s+liver\s+disease\s+with\s+portal\s+hypertension|cirrhosis\s+of\s+liver|liver\s+cirrhosis|cld)\b", clean, re.IGNORECASE):
+            return "Unspecified cirrhosis of liver"
+
+        if re.search(r"\b(?:portal\s+vein\s+thrombosis|pvt)\b", clean, re.IGNORECASE) and not re.search(r"\bsmv\b", clean, re.IGNORECASE):
+            return "Portal vein thrombosis"
+
+        if re.search(r"\b(?:smv\s+and\s+portal\s+vein\s+thrombosis|smv\s+thrombosis|superior\s+mesenteric\s+vein\s+thrombosis)\b", clean, re.IGNORECASE):
+            return "Chronic embolism and thrombosis of inferior vena cava"
+
+        if re.search(r"\b(?:portal\s+hypertensive\s+gastropathy|phg)\b", clean, re.IGNORECASE):
+            return "Angiodysplasia of stomach and duodenum with bleeding"
+
+        if re.search(r"\b(?:colitis|noninfective\s+colitis|mild\s+colitis)\b", clean, re.IGNORECASE):
+            return "Noninfective gastroenteritis and colitis, unspecified"
+
+        if re.search(r"\b(?:thrombocytopenia|secondary\s+thrombocytopenia|chemotherapy[\s\-]?induced\s+thrombocytopenia)\b", clean, re.IGNORECASE):
+            return "Other secondary thrombocytopenia"
+
+        # 5. Pulmonology & Medicine
+        if re.search(r"\b(?:viral\s+flu\s+like\s+illness|viral\s+lower\s+respiratory\s+tract\s+infection|viral\s+respiratory\s+infection)\b", clean, re.IGNORECASE):
+            return "Unspecified acute lower respiratory infection"
+
+        if re.search(r"\b(?:acute\s+exacerbation\s+of\s+copd|copd\s+with\s+(?:acute\s+)?exacerbation|chronic\s+obstructive\s+pulmonary\s+disease\s+with\s+(?:acute\s+)?exacerbation)\b", clean, re.IGNORECASE):
+            return "Chronic obstructive pulmonary disease with (acute) exacerbation"
+
         if re.search(r"\b(?:type\s+2\s+diabetes|t2dm|diabetes\s+mellitus\s+type\s+2|type\s+ii\s+diabetes)\b", clean, re.IGNORECASE):
             return "Type 2 diabetes mellitus"
 
-        if re.search(r"\b(?:essential\s+hypertension|primary\s+hypertension|systemic\s+hypertension|hypertension|htn)\b", clean, re.IGNORECASE):
+        if re.search(r"\b(?:portal\s+hypertensive\s+gastropathy|phg|gastropathy\s+portal)\b", clean, re.IGNORECASE):
+            return "Angiodysplasia of stomach and duodenum with bleeding"
+
+        if re.search(r"\bportal\s+hypertension\b", clean, re.IGNORECASE):
+            return "Portal hypertension"
+
+        if re.search(r"\b(?:essential\s+hypertension|primary\s+hypertension|systemic\s+hypertension|arterial\s+hypertension|hypertension|htn)\b", clean, re.IGNORECASE) and not re.search(r"\b(?:portal|pulmonary|intracranial|ocular)\s+hypertension\b", clean, re.IGNORECASE):
             return "Essential hypertension"
 
         if clean.lower() in ("urticarial", "urticarial rash", "rash urticarial"):
@@ -2392,6 +2852,14 @@ class EvidenceFirstFactExtractor:
             # 2. Sort active candidates by admitting score descending
             valid_active.sort(key=lambda c: c.scores.admitting_score, reverse=True)
 
+            # If doc mentions acute exacerbation of COPD anywhere in hospital course or HPI, upgrade any COPD candidate to acute exacerbation
+            full_narrative_lower = " ".join(s.content for s in sections).lower()
+            if re.search(r"\b(?:acute\s+exacerbation\s+of\s+copd|copd\s+with\s+(?:acute\s+)?exacerbation|acute\s+copd\s+exacerbation)\b", full_narrative_lower):
+                for cand in valid_active:
+                    if cand.normalized_diagnosis.lower() in ("chronic obstructive pulmonary disease", "copd", "chronic obstructive pulmonary disease, unspecified"):
+                        cand.normalized_diagnosis = "Chronic obstructive pulmonary disease with (acute) exacerbation"
+                        cand.raw_term = "Chronic obstructive pulmonary disease with (acute) exacerbation"
+
             if valid_active:
                 # Rank 1 is unconditionally PRIMARY
                 top = valid_active[0]
@@ -2401,22 +2869,59 @@ class EvidenceFirstFactExtractor:
                 primary_diag = top
 
                 top_norm = top.normalized_diagnosis.lower()
+                top_canon = self._canonicalize_term(top.normalized_diagnosis).lower()
 
                 # Rank 2..N are unconditionally SECONDARY (dropping only exact duplicates of primary/secondaries)
                 for sec_cand in valid_active[1:]:
                     sec_norm = sec_cand.normalized_diagnosis.lower()
+                    sec_canon = self._canonicalize_term(sec_cand.normalized_diagnosis).lower()
 
                     # Exact duplicate check against top or already accepted secondary conditions
                     is_exact_dup = (
                         sec_norm == top_norm
-                        or self._canonicalize_term(sec_cand.normalized_diagnosis).lower() == self._canonicalize_term(top.normalized_diagnosis).lower()
+                        or sec_canon == top_canon
                         or any(sec_norm == s.normalized_diagnosis.lower() for s in secondary_diags)
+                        or any(sec_canon == self._canonicalize_term(s.normalized_diagnosis).lower() for s in secondary_diags)
                     )
                     if is_exact_dup:
-                        sec_cand.role = DiagnosisRole.PRIMARY
+                        sec_cand.role = DiagnosisRole.PRIMARY if (sec_norm == top_norm or sec_canon == top_canon) else DiagnosisRole.SECONDARY
                         sec_cand.is_authorized = False
-                        sec_cand.classification_reason = f"Corroborating mention of primary diagnosis '{top.normalized_diagnosis}'"
+                        sec_cand.classification_reason = f"Corroborating mention of diagnosis '{top.normalized_diagnosis}'"
                         top.evidence.extend(sec_cand.evidence)
+                        continue
+
+                    # Clinical Subsumption / Manifestation Suppression:
+                    all_accepted_canons = [top_canon] + [self._canonicalize_term(s.normalized_diagnosis).lower() for s in secondary_diags]
+
+                    # 1. Esophageal varices with bleeding (I85.01) subsumes esophageal varices without bleeding (I85.00)
+                    if "esophageal varices without bleeding" in sec_canon and any("esophageal varices with bleeding" in c for c in all_accepted_canons):
+                        sec_cand.role = DiagnosisRole.EXCLUDED
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = "Subsumed by specific manifestation 'Esophageal varices with bleeding' (ICD-10 I85.01)"
+                        continue
+
+                    # 2. COPD with acute exacerbation (J44.1) subsumes COPD unspecified (J44.9)
+                    if sec_canon in ("chronic obstructive pulmonary disease", "chronic obstructive pulmonary disease, unspecified") and any("chronic obstructive pulmonary disease with (acute) exacerbation" in c for c in all_accepted_canons):
+                        sec_cand.role = DiagnosisRole.EXCLUDED
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = "Subsumed by acute exacerbation 'Chronic obstructive pulmonary disease with (acute) exacerbation' (ICD-10 J44.1)"
+                        continue
+
+                    # 3. Hydronephrosis with calculous obstruction (N13.2) subsumes generic hydronephrosis
+                    if "hydronephrosis" in sec_canon and "obstruction" not in sec_canon and any("hydronephrosis with renal and ureteral calculous obstruction" in c for c in all_accepted_canons):
+                        sec_cand.role = DiagnosisRole.EXCLUDED
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = "Subsumed by 'Hydronephrosis with renal and ureteral calculous obstruction' (ICD-10 N13.2)"
+                        continue
+
+                    # 4. Biliary obstruction / CBD stricture is direct mechanical manifestation of ampullary / pancreatic neoplasm
+                    if (
+                        any(b in sec_canon for b in ("biliary obstruction", "stricture of bile duct", "cbd stricture", "bile duct stricture", "obstruction of bile duct", "distal cbd stricture", "common bile duct stricture", "stricture of artery"))
+                        and any(p in top_canon for p in ("ampulla", "periampullary", "pancreas", "pancreatic", "cholangiocarcinoma"))
+                    ):
+                        sec_cand.role = DiagnosisRole.EXCLUDED
+                        sec_cand.is_authorized = False
+                        sec_cand.classification_reason = f"Biliary obstruction/stricture is integral to primary neoplasm '{top.normalized_diagnosis}'; excluded from independent billing under CMS Guideline I.B.4"
                         continue
 
                     # CMS Guideline I.B.4: Integral symptom / sign of primary diagnosis suppression

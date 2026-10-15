@@ -94,6 +94,15 @@ CLINICAL_ABBREVIATIONS: dict[str, str] = {
     "sdh": "subdural hematoma",
     "edh": "epidural hematoma",
     "ich": "intracerebral hemorrhage",
+    "vuj": "vesicoureteric junction",
+    "puj": "pelviureteric junction",
+    "pvt": "portal vein thrombosis",
+    "cld": "chronic liver disease",
+    "smv": "superior mesenteric vein",
+    "phg": "portal hypertensive gastropathy",
+    "evl": "esophageal variceal ligation",
+    "ursl": "ureteroscopic lithotripsy",
+    "cbd": "common bile duct",
 }
 
 # Non-informative general words (keeping critical medical distinctions: acute, chronic, type, 1, 2, without, etc.)

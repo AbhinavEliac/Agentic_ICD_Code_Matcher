@@ -149,6 +149,7 @@ class EvidenceType(StrEnum):
     LABORATORY = "LAB"
     HISTORY = "HISTORY"
     CLINICAL_NOTE = "CLINICAL_NOTE"
+    PATHOLOGY = "pathology_confirmation"
     OTHER = "OTHER"
 
 

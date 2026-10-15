@@ -97,6 +97,10 @@ class LocalICDCatalog:
         formatted = format_icd_code(code)
         return self._records_by_formatted.get(formatted)
 
+    def get_record(self, code: str, system: str | None = None) -> ICDCodeRecord | None:
+        """Alias for get_by_code for compatibility."""
+        return self.get_by_code(code, system=system)
+
     def is_valid_code(self, code: str, system: str | None = None) -> bool:
         """Check if code exists in the local authoritative dataset."""
         return self.get_by_code(code, system=system) is not None

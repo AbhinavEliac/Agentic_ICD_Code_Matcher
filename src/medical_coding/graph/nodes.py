@@ -92,9 +92,10 @@ def get_or_initialize_retrieval_system() -> tuple[LocalICDCatalog, HybridICDRetr
     if catalog_path.exists():
         try:
             catalog = LocalICDCatalog.load_from_json(catalog_path)
-            # If authoritative Database exists and cached catalog has fewer than 1000 codes (old sample), reload
-            if db_wb and db_wb.exists() and len(catalog) < 1000:
-                logger.info("Found authoritative Database workbook at %s; reloading catalog.", db_wb)
+            # If authoritative Database exists and cached catalog lacks billable CPT hospital IDs (e.g., 9005) or clinical synonyms, reload
+            has_phg_syn = bool(catalog.get_record("K31.811") and "portal hypertensive gastropathy" in (catalog.get_record("K31.811").synonyms or []))
+            if db_wb and db_wb.exists() and (len(catalog) < 85000 or not catalog.is_valid_code('9005', 'CPT') or not has_phg_syn):
+                logger.info("Found authoritative Database workbook at %s with newer mappings; reloading catalog.", db_wb)
                 catalog = LocalICDCatalog()
             elif (index_dir / "bm25_index.pkl").exists() and (index_dir / "faiss.index").exists():
                 bm25.load(index_dir)
@@ -123,6 +124,13 @@ def get_or_initialize_retrieval_system() -> tuple[LocalICDCatalog, HybridICDRetr
             catalog._initialized = True
             bm25.build_index(record_list)
             faiss_ret.build_index(record_list)
+            try:
+                index_dir.mkdir(parents=True, exist_ok=True)
+                catalog.save_to_json(catalog_path)
+                bm25.save(index_dir)
+                faiss_ret.save(index_dir)
+            except Exception as e:
+                logger.warning("Could not persist updated catalog/indices: %s", e)
             logger.info(
                 "Initialized in-memory ICD catalog with %d codes from %s",
                 len(record_list),
@@ -1586,6 +1594,38 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
     secondary_responses = deduped_secondaries
 
+    # Clinical Subsumption and Specificity Pruning (ICD-10-CM Excludes1 & Combination Coding)
+    if primary_response and (primary_response.code or "").strip() in ("I85.00", "J44.9", "N13.30", "N13.9", "K76.6"):
+        rep_idx = next((i for i, s in enumerate(secondary_responses) if (
+            (primary_response.code == "I85.00" and s.code == "I85.01") or
+            (primary_response.code == "J44.9" and s.code == "J44.1") or
+            (primary_response.code in ("N13.30", "N13.9") and s.code == "N13.2")
+        )), None)
+        if rep_idx is not None:
+            replacement_sec = secondary_responses.pop(rep_idx)
+            replacement_sec.role = DiagnosisRole.PRIMARY
+            primary_response = replacement_sec
+
+    all_active_codes = set()
+    if primary_response and primary_response.code:
+        all_active_codes.add(primary_response.code.strip())
+    for s in secondary_responses:
+        if s.code:
+            all_active_codes.add(s.code.strip())
+
+    codes_to_subsume = set()
+    if "I85.01" in all_active_codes:
+        codes_to_subsume.add("I85.00")
+    if "I85.01" in all_active_codes or "K74.60" in all_active_codes or any(c.startswith("K74.") for c in all_active_codes):
+        codes_to_subsume.add("K76.6")
+    if "J44.1" in all_active_codes:
+        codes_to_subsume.add("J44.9")
+    if "N13.2" in all_active_codes:
+        codes_to_subsume.update({"N13.30", "N13.3", "N13.9"})
+
+    if codes_to_subsume:
+        secondary_responses = [s for s in secondary_responses if (s.code or "").strip() not in codes_to_subsume]
+
     # Drop conditions from abstentions that are ALREADY coded in primary or secondaries
     coded_names: set[str] = set()
     if primary_response:
@@ -1602,6 +1642,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     for abst in abstentions:
         a_term = (abst.raw_term or "").strip()
         if not a_term:
+            deduped_abstentions.append(abst)
             continue
         a_norm = a_term.lower().strip()
         a_clean = (normalize_diagnosis_name(a_term) or a_term).lower().strip()
@@ -1658,7 +1699,12 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
         try:
             cpt_cand = retriever.retrieve(clean_p, top_k=1, system="CPT")
             if cpt_cand and catalog.is_valid_code(cpt_cand[0].code, system="CPT") and cpt_cand[0].retrieval_score >= 0.50:
-                verified_procedures.append(f"{clean_p} [CPT: {cpt_cand[0].code}]")
+                rec = catalog.get_record(cpt_cand[0].code, system="CPT")
+                cpt_5digit = rec.source_metadata.get("cpt_5digit") if rec and rec.source_metadata else None
+                if cpt_5digit and str(cpt_5digit) != str(cpt_cand[0].code):
+                    verified_procedures.append(f"{clean_p} [CPT: {cpt_cand[0].code}] (CPT: {cpt_5digit})")
+                else:
+                    verified_procedures.append(f"{clean_p} [CPT: {cpt_cand[0].code}]")
             else:
                 verified_procedures.append(clean_p)
         except Exception:

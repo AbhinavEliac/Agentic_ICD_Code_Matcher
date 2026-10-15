@@ -524,32 +524,55 @@ class ExcelWorkbookLoader(BaseICDDatasetLoader):
                     malformed_count += 1
                     continue
 
-                if is_cpt_sheet or (raw_code.isdigit() and len(raw_code) in (4, 5)):
+                if is_cpt_sheet:
                     coding_system = "CPT"
                     cat_id = row.get("ichi_code_cat1_id", "")
                     cat = f"CPT-{cat_id}" if pd.notna(cat_id) else "CPT"
+                    # DMH hospital system uses the CPT table ID as the billable procedure code
+                    raw_id = str(row["id"]).strip() if pd.notna(row.get("id")) else ""
+                    effective_code = raw_id if raw_id and raw_id.lower() != "nan" else raw_code
+                elif (raw_code.isdigit() and len(raw_code) in (4, 5)):
+                    coding_system = "CPT"
+                    cat_id = row.get("ichi_code_cat1_id", "")
+                    cat = f"CPT-{cat_id}" if pd.notna(cat_id) else "CPT"
+                    effective_code = raw_code
                 elif re.match(r"^M[89][0-9]{3}", raw_code, re.IGNORECASE):
                     coding_system = "ICD-O"
                     cat = "ICD-O-Morphology"
+                    effective_code = raw_code
                 else:
                     coding_system = "ICD-10-CM"
                     cat3 = row.get("icd10_code_cat3", "")
                     cat = str(cat3).strip() if pd.notna(cat3) else raw_code[:3]
+                    effective_code = raw_code
 
-                formatted_code = format_icd_code(raw_code)
+                formatted_code = format_icd_code(effective_code)
                 lookup_key = formatted_code
 
                 if lookup_key in records:
                     duplicates_count += 1
                     continue
 
+                syns = [raw_code] if (is_cpt_sheet and raw_code != effective_code) else []
+                clinical_syns = {
+                    "K31.811": ["portal hypertensive gastropathy", "phg", "portal hypertensive gastropathy with bleeding"],
+                    "J22": ["viral flu like illness", "flu like illness", "viral chest infection", "viral lower respiratory tract infection"],
+                    "N13.2": ["calculus with hydronephrosis", "hydronephrosis with renal and ureteral calculous obstruction", "calculus with moderate hydronephrosis", "calculous hydronephrosis"],
+                    "C78.6": ["peritoneal involvement", "peritoneal metastases", "omental nodularity", "metastatic peritoneal involvement"],
+                    "M8140.3": ["invasive adenocarcinoma", "adenocarcinoma composed of solid glands", "adenocarcinoma nos"],
+                }.get(formatted_code, [])
+                for cs in clinical_syns:
+                    if cs not in syns:
+                        syns.append(cs)
+
                 categories.add(cat)
                 rec = ICDCodeRecord(
                     code=formatted_code,
-                    unformatted_code=unformat_icd_code(raw_code),
+                    unformatted_code=unformat_icd_code(effective_code),
                     description=raw_desc,
                     short_description=raw_desc,
                     long_description=raw_desc,
+                    synonyms=syns,
                     is_valid_billable=True,
                     category=cat,
                     coding_system=coding_system,
@@ -558,6 +581,7 @@ class ExcelWorkbookLoader(BaseICDDatasetLoader):
                         "sheet": sheet_name,
                         "file": str(self.file_path.name),
                         "row_id": str(row.get("id", "")),
+                        "cpt_5digit": raw_code if is_cpt_sheet else "",
                         "active_yesno": int(row.get("active_yesno", 1)) if pd.notna(row.get("active_yesno")) else 1,
                         "provenance": f"{self.file_path.name}::{sheet_name}::row_{row.get('id', '')}",
                     },

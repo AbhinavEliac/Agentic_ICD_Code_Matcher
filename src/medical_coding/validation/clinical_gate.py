@@ -47,7 +47,7 @@ DOSAGE_FORM_PATTERNS = [
 ]
 
 PRESCRIPTION_SYNTAX_PATTERNS = [
-    r"\b(?:\d+\s*(?:mg|mcg|gm|g|ml|iu|units?|tablets?|capsules?|pills?|puffs?|drops?))\b",
+    r"\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|gm|g|ml|iu|units?|tablets?|capsules?|pills?|puffs?|drops?))(?!\s*/\s*(?:dl|l|ml|kg|day|hr|min|cumm))\b",
     r"\b(?:po|iv|im|sc|prn|daily|od|bd|bid|tds|tid|qid|sos|hs|at\s+bedtime|before\s+meals?|after\s+meals?|subcutaneously|orally|topically)\b",
     r"^\s*(?:take|apply|instill|inhale|inject|infuse|give|initiated|started\s+on)\b",
 ]
@@ -138,6 +138,8 @@ STANDALONE_ATTRIBUTE_PATTERNS = [
 ISOLATED_ANATOMY_PATTERNS = [
     r"^\s*(?:left\s+|right\s+|bilateral\s+)?(?:foot|feet|ankle|heel|toe|toes|hand|wrist|arm|leg|thigh|knee|shoulder|elbow|chest|thorax|breast|abdomen|flank|back|spine|pelvis|hip|neck|head|brain|lung|kidney|liver|spleen|heart|eye|ear|nose|throat|retroperitoneal|intra-abdominal|pelvic|axial|skeletal|osseous)\s*$",
     r"^\s*(?:intra-abdominal|retroperitoneal|pelvic|axial|skeletal|osseous)\s*$",
+    r"^\s*(?:peri[\s\-]?)?(?:cholecystic|pancreatic|portal|gastric|caval|hepatic|ampullary|aortic|splenic|nephric|ureteral|vesical)\s*$",
+    r"^\s*(?:aortocaval|paraaortic|precaval|retrocaval|mesenteric|retroperitoneal|intra-abdominal|pelvic|mediastinal|hilar|subcarinal|axillary|inguinal|cervical|femoral)\s*$",
 ]
 
 # Pathological condition words that validate an anatomical mention into a true disease entity
@@ -169,6 +171,8 @@ PATHOLOGY_KEYWORDS = {
     "deviation", "deviated", "hypertrophy", "hypertrophic", "hyperplasia", "atrophy", "atrophic",
     "hypoplasia", "dysplasia", "thickening", "narrowing", "collapse", "perforation", "calcification",
     "sclerosis", "fibrosis", "adhesions", "dns", "mastoiditis",
+    "flu", "influenza", "viral", "virus", "illness", "coryza", "rhonchi", "bronchospasm",
+    "stricture", "varices", "variceal", "varix", "thrombus", "embolus",
 }
 
 # Clinical symptoms, signs, and patient complaints
@@ -215,7 +219,7 @@ PROCEDURE_TERMS = {
     "salpingo-oophorectomy", "salpingooophorectomy", "oophorectomy", "salpingectomy",
     "lymphadenectomy", "axillary dissection", "lymph node dissection",
     "sentinel node biopsy", "sentinel lymph node biopsy", "cystectomy",
-    "adhesiolysis", "lysis of adhesions", "ablation", "cauterization",
+    "adhesiolysis", "lysis of adhesions", "ablation", "cauterization", "anastomosis",
     "procedure", "surgery", "operation", "intervention", "surgical procedure",
     "surgical intervention", "procedure done", "surgery done", "operation done",
 }
@@ -291,6 +295,62 @@ class HardClinicalCandidateGate:
         if len(clean_term) < 2:
             return False, "Term is too short to be a clinical condition"
 
+        # Check 00a: Unclosed parenthesis or bracket (cut-off text fragment)
+        if clean_term.count("(") > clean_term.count(")") or clean_term.count("[") > clean_term.count("]"):
+            return False, f"Incomplete phrase with unclosed bracket/parenthesis: '{clean_term}'"
+
+        # Check 00b: Dangling phrase ending in preposition, conjunction, or incomplete participle
+        if (
+            re.search(r"\b(?:involving|in\s+both|and\s+a|and\s+an|and\s+the|with|of|for|from|to|by|at|on|in|into|onto|toward|towards|during|following|composed\s+of|measuring|causing|associated\s+with|related\s+to|secondary\s+to|due\s+to|noted\s+in|seen\s+in|bouts|was\s+noted|significantly|markedly|severely|mildly|moderately|critically)\s*$", term_lower)
+            or re.search(r"\b(?:in|of|to|for|from|at|on|by|with)\s+(?:the|a|an)\s*$", term_lower)
+        ):
+            return False, f"Dangling phrase ending in preposition, conjunction, or incomplete participle: '{clean_term}'"
+
+        # Check 00c: Dangling fragment starting with verb, preposition, or conjunction
+        if (
+            re.search(r"^\s*(?:was\s+noted\s+following|noted\s+following|following|and\s+a|and\s+an|and\s+the|with\s+a|with\s+an|is\s+seen\s+in|are\s+seen\s+in|were\s+seen\s+in|noted\s+to\s+have|found\s+to\s+have|and\s+a\s+non[\s\-]?obstructive|causing|composed\s+of|associated\s+with|associated|complaints\s+of|bouts\s+of)\b", term_lower)
+            or re.search(r"^\s*(?:of|in|at|on|for|from|with|by|and|or|as|to|like)\s+", term_lower)
+            or re.search(r"\b(?:was\s+noted\s+following|noted\s+following)\b", term_lower)
+            or re.search(r"^\s*(?:extent\s+of|size\s+of|interval\s+(?:increase|decrease|change|progression)|increase\s+in|decrease\s+in|change\s+in)\b", term_lower)
+        ):
+            return False, f"Dangling fragment starting with verb, preposition, or conjunction: '{clean_term}'"
+
+        # Check 00d: Diagnostic imaging, endoscopy, or pathology report line with dates/headers
+        if (
+            re.search(r"^(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s*[-–—:]|\b(?:pet[\s\-]?ct|ct|mri|mrcp|usg|eus|ercp|2d\s+echo|hpr|cxr|x[\s\-]?ray)\s*[-–—:]|\b(?:pet[\s\-]?ct|ct|mri|mrcp|usg|eus|ercp|2d\s+echo|hpr)\s*\(.*?\)\s*[-–—:]|[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}[-\s]+(?:eus|ercp|pet|ct|mri|usg))", term_lower)
+            or re.search(r"\b(?:mrcp|pet-ct|eus)\s*-\s*\d{1,2}/\d{1,2}/\d{2,4}\b", term_lower)
+            or re.search(r"^\s*(?:ercp|eus|mrcp|ct|pet|usg|cxr|echo|x[\s\-]?ray)\s+(?:revealed|showed|noted|demonstrated|found)\b", term_lower)
+        ):
+            return False, f"Diagnostic imaging, endoscopy, or pathology report line: '{clean_term}'"
+
+        # Check 00e: Pure lab measurements, ratios, or imaging dimensions
+        if (
+            re.search(r"^\s*(?:tumor\s+volume|psa|ef|suv|creatinine|hemoglobin|bilirubin|potassium|sodium|procal|platelet\s+count|tlc|inr|ca\s*19[-.]9|lactate)\s*[:=\s–\-]\s*[\d\.\,]+", term_lower)
+            or re.search(r"\b(?:suv\s*[\d\.\,]+|ef\s*:\s*\d+%|tumor\s+volume\s*:\s*\d+%)\b", term_lower)
+            or re.search(r"^\s*[\d\.]+\s*x\s*[\d\.]+\s*(?:cm|mm)?\s*$", term_lower)
+            or re.search(r"^\s*(?:k\s*[\d\.]+\s*[-–]\s*[\d\.]+\s*meq/l|creatinine\s*[\d\.]+\s*mg/dl)\s*$", term_lower)
+            or re.search(r"^\s*(?:acceptable|normal|abnormal)\s+renal\s+function\b", term_lower)
+            or re.search(r"^\s*(?:pre[\s\-]?operative\s+)?renal\s+function\b", term_lower)
+            or re.search(r"^\s*(?:significantly\s+|markedly\s+)?(?:elevated|high|low|reduced|abnormal)\s+(?:creatinine|potassium|sodium|enzymes|transaminases|bilirubin|lactate|wbc|platelets?|troponin|psa|ef|cr)\b", term_lower)
+        ):
+            return False, f"Laboratory value, imaging dimension, or measurement ratio: '{clean_term}'"
+
+        # Check 00f: Isolated single words, non-diagnostic fragments, or incidental imaging descriptions
+        if (
+            term_lower in (
+                "bleed", "bleeding", "drainage", "ingrowth", "recanalization", "expression",
+                "stenting", "clearance", "in situ", "stents in situ", "non-obstructive", "non obstructive",
+                "minimal pneumobilia", "pneumobilia", "minimal pneumobilia in left lobe", "aerobilia",
+                "viral", "bacterial", "fungal", "parasitic", "flu", "like", "illness",
+                "acute", "chronic", "mild", "moderate", "severe",
+                "proximal obstructive changes", "obstructive changes", "proximal changes",
+            )
+            or re.search(r"^\s*(?:[a-z\-]+\s+)?(?:lesion|lesions|mass|nodule|nodules|thickening|opacity|density|fluid|stranding)\s*$", term_lower)
+            or re.search(r"^\s*minimal\s+free\s+fluid\b", term_lower)
+            or re.search(r"\b(?:wall\s+thickening|fat\s+stranding|nodularit(?:y|ies))\b", term_lower)
+        ):
+            return False, f"Isolated ambiguous single word or non-diagnostic fragment: '{clean_term}'"
+
         # Check 0a: Non-clinical activities, daily living actions, and personal events
         for pat in NON_CLINICAL_ACTIVITY_PATTERNS:
             if re.search(pat, term_lower):
@@ -347,7 +407,12 @@ class HardClinicalCandidateGate:
                     return False, f"Isolated anatomical location lacking pathological condition: '{clean_term}'"
 
         # Check 7: Entire phrase is an explicit absence or negative statement
-        if term_lower.startswith("no evidence of ") or term_lower.startswith("negative for "):
+        if (
+            re.search(r"^\s*(?:no|not|without|denies|denied|negative\s+for|no\s+evidence\s+of)\b", term_lower)
+            or re.search(r"\b(?:showed|shows|revealed|noted|demonstrated)\s+no\b", term_lower)
+            or term_lower.startswith("no evidence of ")
+            or term_lower.startswith("negative for ")
+        ):
             return False, f"Negative finding / absence clause: '{clean_term}'"
 
         # Check 8: Explicit metadata keywords
@@ -421,6 +486,7 @@ class HardClinicalCandidateGate:
             "malari", "dengue", "typhoid", "depress", "anxiet", "bipolar", "schizophren",
             "psychos", "malformat", "anomal", "dysplas", "deviat", "hypertroph", "hyperplas",
             "atroph", "thicken", "narrow", "calcif",
+            "flu", "influenz", "viral", "virus", "illness", "coryza", "rhonch", "bronchospas", "strictur", "varic",
         )
         has_clinical_root = any(r in term_lower for r in CLINICAL_ROOTS)
 
@@ -458,13 +524,16 @@ class HardClinicalCandidateGate:
             "nausea", "vomiting", "dyspepsia", "indigestion", "heartburn",
             "discomfort", "wheezing", "fatigue", "malaise", "respiratory distress",
             "rash", "pruritus", "itching", "edema", "swelling", "cyanosis",
+            "weakness", "coryza", "breathlessness", "jaundice", "icterus",
+            "biliary obstruction", "cbd stricture", "bile duct stricture",
+            "distal cbd stricture", "common bile duct stricture",
         ]
         is_sym = any(s in sym for s in symptom_indicators)
         has_definitive_dx = (
             any(sym.endswith(sfx) or f"{sfx} " in sym for sfx in ("itis", "oma", "osis", "emia", "pathy"))
             or any(dx in sym for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia", "dermatitis"])
         )
-        if not is_sym or has_definitive_dx:
+        if not is_sym or (has_definitive_dx and not any(b in sym for b in ("biliary obstruction", "cbd stricture", "bile duct stricture", "distal cbd stricture", "common bile duct stricture"))):
             return False
 
         # Organ system mapping
@@ -481,16 +550,24 @@ class HardClinicalCandidateGate:
             return True
 
         # 3. Gastrointestinal & Acute Abdominal Inflammation
-        is_gi_sym = any(w in sym for w in ["abdominal pain", "rlq pain", "llq pain", "ruq pain", "luq pain", "pain", "colic", "epigastric pain", "epigastric discomfort", "dyspepsia", "nausea", "vomiting", "heartburn", "indigestion", "diarrhea"])
-        is_gi_pri = any(w in pri for w in ["gastritis", "appendicitis", "cholecystitis", "pancreatitis", "ulcer", "diverticulitis", "gastroenteritis", "colitis", "crohn", "ileus"])
+        is_gi_sym = any(w in sym for w in [
+            "abdominal pain", "rlq pain", "llq pain", "ruq pain", "luq pain", "pain", "colic",
+            "epigastric pain", "epigastric discomfort", "dyspepsia", "nausea", "vomiting",
+            "heartburn", "indigestion", "diarrhea", "jaundice", "icterus",
+            "biliary obstruction", "cbd stricture", "bile duct stricture", "distal cbd stricture", "common bile duct stricture", "dilated cbd",
+        ])
+        is_gi_pri = any(w in pri for w in ["gastritis", "appendicitis", "cholecystitis", "pancreatitis", "ulcer", "diverticulitis", "gastroenteritis", "colitis", "crohn", "ileus", "periampullary", "ampulla", "biliary", "pancreas", "pancreatic"])
         if is_gi_sym and is_gi_pri:
             return True
         if "fever" in sym and any(w in pri for w in ["appendicitis", "cholecystitis", "diverticulitis", "pyelonephritis", "abscess"]):
             return True
 
-        # 4. Respiratory
-        is_resp_sym = any(w in sym for w in ["cough", "wheezing", "dyspnea", "shortness of breath", "stridor", "sputum", "hemoptysis", "respiratory distress"])
-        is_resp_pri = any(w in pri for w in ["pneumonia", "asthma", "copd", "bronchitis", "pneumothorax", "pulmonary edema", "respiratory failure"])
+        # 4. Respiratory & Acute Infections
+        is_resp_sym = any(w in sym for w in ["cough", "wheezing", "dyspnea", "shortness of breath", "stridor", "sputum", "hemoptysis", "respiratory distress", "breathlessness", "coryza", "fever", "weakness", "malaise", "fatigue"])
+        is_resp_pri = any(w in pri for w in [
+            "pneumonia", "asthma", "copd", "bronchitis", "pneumothorax", "pulmonary edema", "respiratory failure",
+            "respiratory infection", "respiratory tract infection", "lower respiratory", "viral flu", "flu like", "influenza", "viral infection", "flu", "illness"
+        ])
         if is_resp_sym and is_resp_pri:
             return True
 
