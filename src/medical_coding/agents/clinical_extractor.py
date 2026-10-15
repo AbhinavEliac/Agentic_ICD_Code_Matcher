@@ -300,6 +300,8 @@ class EvidenceFirstFactExtractor:
             item.normalized_diagnosis = raw_t
 
         canon = self._canonicalize_term(item.raw_term)
+        if canon and canon != item.raw_term:
+            item.normalized_diagnosis = canon
         lat = item.clinical_attributes.get("laterality", "") if item.clinical_attributes else ""
         key = f"{canon.lower().strip()}_{lat}".strip("_")
         if not key or len(key) < 2:
@@ -594,6 +596,12 @@ class EvidenceFirstFactExtractor:
                     flags=re.IGNORECASE,
                 ).strip()
                 clause = re.sub(
+                    r"^(?:patient\s+is\s+an?\s+(?:\d+[\s\-]year[\s\-]old\s+)?(?:male|female|gentleman|lady|man|woman)\s+(?:admitted\s+)?with\s+|patient\s+is\s+a\s+known\s+case\s+of\s+|patient\s+presents?\s+(?:to\s+.*?\s+)?with\s+|pt\s+is\s+an?\s+.*?\s+with\s+)",
+                    "",
+                    clause,
+                    flags=re.IGNORECASE,
+                ).strip()
+                clause = re.sub(
                     r"^(?:(?:several|\d+)\s+(?:days?|weeks?|months?|hours?)\s+of\s+)",
                     "",
                     clause,
@@ -719,9 +727,9 @@ class EvidenceFirstFactExtractor:
             )
             # Strip list numbering e.g. "1. Acute right emphysematous pyelonephritis - underwent DJ stenting"
             cleaned_line = re.sub(r"^\d+[\.\)\-]\s*", "", line).strip()
-            # Strip structural role prefixes (e.g., "Primary:", "Principal Diagnosis -", "Secondary:")
+            # Strip structural role and metadata prefixes (e.g., "Primary:", "Principal Diagnosis -", "Secondary:", "Metastatic sites:")
             cleaned_line = re.sub(
-                r"^(?:(?:primary|principal|secondary|final|admitting)\s*(?:diagnosis|diagnoses|condition)?|(?:diagnosis|diagnoses|condition))\s*[:\-–—]\s*",
+                r"^(?:(?:primary|principal|secondary|final|admitting)\s*(?:diagnosis|diagnoses|condition)?|(?:diagnosis|diagnoses|condition)|metastatic\s+sites?|sites?\s+of\s+metastat\w+|distant\s+sites?|oncology\s+attributes?|biomarkers?)\s*[:\-–—]\s*",
                 "",
                 cleaned_line,
                 flags=re.IGNORECASE,
@@ -1511,9 +1519,13 @@ class EvidenceFirstFactExtractor:
             return None
 
         # 1. Primary Site
-        primary_site = "breast" if "breast" in text_lower else "unknown"
-        if primary_site == "unknown":
-            for site in ["ovary", "ovarian", "colon", "lung", "prostate", "cervix", "uterus", "kidney"]:
+        primary_site = "unknown"
+        if re.search(r"\bprostat(?:e|ic)\b", text_lower):
+            primary_site = "prostate"
+        elif "breast" in text_lower:
+            primary_site = "breast"
+        else:
+            for site in ["ovary", "ovarian", "colon", "lung", "cervix", "uterus", "kidney"]:
                 if site in text_lower:
                     primary_site = site
                     break
@@ -1527,11 +1539,11 @@ class EvidenceFirstFactExtractor:
             laterality = "left"
         elif re.search(rf"\bbilateral\s+(?:\w+\s+)?{site_pat}\b|\b{site_pat}\b[^\n,.]*?\bbilateral\b", text_lower):
             laterality = "bilateral"
-        elif "right" in text_lower and "left" not in text_lower:
+        elif "right" in text_lower and "left" not in text_lower and primary_site in ("breast", "lung", "kidney", "ovary"):
             laterality = "right"
-        elif "left" in text_lower and "right" not in text_lower:
+        elif "left" in text_lower and "right" not in text_lower and primary_site in ("breast", "lung", "kidney", "ovary"):
             laterality = "left"
-        elif "bilateral" in text_lower:
+        elif "bilateral" in text_lower and primary_site in ("breast", "lung", "kidney", "ovary"):
             laterality = "bilateral"
 
         # 3. Histology
@@ -1544,6 +1556,8 @@ class EvidenceFirstFactExtractor:
             r"\bdcis\b",
             r"\bhigh[- ]grade\s+serous\s+carcinoma\b",
             r"\bserous\s+carcinoma\b",
+            r"\bacinar\s+adenocarcinoma\b",
+            r"\bprostatic\s+adenocarcinoma\b",
             r"\badenocarcinoma\b",
             r"\bsquamous\s+cell\s+carcinoma\b",
         ]:
@@ -1552,13 +1566,35 @@ class EvidenceFirstFactExtractor:
                 histology = m.group(0).title()
                 break
 
-        # 4. Grade
+        # 4. Grade, Gleason Score, and Grade Group
         grade = None
-        grade_m = re.search(r"\b(?:grade\s*([1-3]|i{1,3})|poorly\s+differentiated|moderately\s+differentiated|well\s+differentiated)\b", text_lower)
+        gleason_score = None
+        grade_group = None
+
+        gleason_m = re.search(
+            r"\bgleason(?:\s+score)?\s*(?::|=|\s+is|\s+was)?\s*([0-9]+(?:\s*(?:\+|\/|\=|\(.*?\))\s*[0-9]+)?)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if gleason_m:
+            gleason_score = gleason_m.group(1).strip()
+
+        gg_m = re.search(r"\bgrade\s+group\s*([1-5])\b", text, re.IGNORECASE)
+        if gg_m:
+            grade_group = f"Grade Group {gg_m.group(1)}"
+
+        grade_m = re.search(
+            r"\b(?:grade\s*([1-3]|i{1,3})|poorly\s+differentiated|moderately\s+differentiated|well\s+differentiated)\b",
+            text_lower,
+        )
         if grade_m:
             grade = grade_m.group(0).capitalize()
+        elif grade_group:
+            grade = grade_group
+        elif gleason_score:
+            grade = f"Gleason {gleason_score}"
 
-        # 5. Receptor Status (ER, PR, HER2)
+        # 5. Receptor Status (ER, PR, HER2, PSA)
         receptor_status: dict[str, str] = {}
         er_m = re.search(r"\ber\s*(?:[:=]|\s+is|\s+was)?\s*([><=]?\s*\d+%\s*(?:positive|\+)|positive|\+|negative|\-|equivocal|[><=]?\s*\d+%)", text, re.IGNORECASE)
         if er_m:
@@ -1578,7 +1614,27 @@ class EvidenceFirstFactExtractor:
             receptor_status["HER2"] = v
             receptor_status["her2"] = v
 
-        # 6. Ki-67 Proliferation Index
+        psa_level = None
+        psa_m = re.search(
+            r"\bpsa(?:\s+level)?\s*(?::|=|\s+is|\s+was)?\s*([><=]?\s*[\d\.\,]+(?:\s*ng\s*/\s*m[lL])?)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if psa_m:
+            psa_level = psa_m.group(1).strip()
+            if "ng/ml" not in psa_level.lower() and re.match(r"^[\d\.\,]+$", psa_level):
+                psa_level = f"{psa_level} ng/mL"
+            receptor_status["PSA"] = psa_level
+            receptor_status["psa"] = psa_level
+
+        # 6. Castration Status (mCRPC vs Castration-sensitive)
+        castration_status = None
+        if re.search(r"\b(?:metastatic\s+)?castrat(?:ion|e)[- ]resistant(?:\s+(?:status|state|prostate\s+cancer))?\b|\bmcrpc\b|\bcrpc\b", text_lower):
+            castration_status = "Castration-resistant"
+        elif re.search(r"\bcastrat(?:ion|e)[- ]sensitive\b|\bhormone[- ]sensitive\b|\bmhspc\b", text_lower):
+            castration_status = "Castration-sensitive"
+
+        # 7. Ki-67 Proliferation Index
         ki67 = None
         ki67_m = re.search(
             r"\bki-?67(?:\s+(?:proliferation\s+index|labeling\s+index|index))?\s*(?:[:=]|\s+is|\s+was)?\s*([><=]?\s*\d+%(?:\s*(?:high|low))?|high|low)",
@@ -1588,33 +1644,46 @@ class EvidenceFirstFactExtractor:
         if ki67_m:
             ki67 = ki67_m.group(1).strip()
 
-        # 7. Metastatic Status & Sites
+        # 8. Metastatic Status & Sites
         met_sites: list[str] = []
         if re.search(r"\bno\s+(?:evidence\s+of\s+)?(?:distant\s+)?metastases\b|\bnon[- ]metastatic\b|\bm0\b", text_lower):
             met_status = "NON_METASTATIC"
         elif re.search(r"\bmetastat(?:ic|es)\b|\bm1\b", text_lower):
             met_status = "METASTATIC"
-            for site in ["bone", "liver", "lung", "brain", "pleura", "peritoneum", "adrenal", "lymph node"]:
+            for site in ["bone", "liver", "lung", "brain", "pleura", "peritoneum", "adrenal", "lymph node", "spine", "pelvis"]:
                 if site in text_lower:
-                    met_sites.append(site)
+                    norm_site = "bone" if site in ("spine", "pelvis") else site
+                    if norm_site not in met_sites:
+                        met_sites.append(norm_site)
         else:
             met_status = "UNKNOWN"
 
-        # 8. Prior Treatments
+        # 9. Prior Treatments
         prior_tx: list[str] = []
         for tx_pat in [
+            r"\bandrogen\s+deprivation\s+therapy\b|\badt\b",
+            r"\bleuprolide\b|\blupron\b",
+            r"\benzalutamide\b|\bxtandi\b",
+            r"\babiraterone\b|\bzytiga\b",
+            r"\bbicalutamide\b|\bcasodex\b",
+            r"\bdenosumab\b|\bxgeva\b|\bprolia\b",
+            r"\bdocetaxel\b|\btaxotere\b",
+            r"\bcabazitaxel\b|\bjevtana\b",
+            r"\bradium-?223\b|\bxofigo\b",
             r"\bneoadjuvant\s+chemotherapy\b",
             r"\badjuvant\s+chemotherapy\b",
-            r"\bradiotherapy\b|\bradiation\b",
+            r"\bpalliative\s+radiotherapy\b|\bradiotherapy\b|\bradiation\b",
             r"\btamoxifen\b",
             r"\bletrozole\b",
             r"\banastrozole\b",
             r"\btrastuzumab\b|\bherceptin\b",
+            r"\bprostatectomy\b|\bradical\s+prostatectomy\b",
         ]:
-            if re.search(tx_pat, text_lower):
-                prior_tx.append(re.search(tx_pat, text_lower).group(0))
+            m = re.search(tx_pat, text_lower)
+            if m:
+                prior_tx.append(m.group(0))
 
-        # 9. Response to Treatment
+        # 10. Response to Treatment
         resp = None
         for resp_pat in [
             r"\bpathologic(?:al)?\s+complete\s+response\b|\bpcr\b",
@@ -1641,6 +1710,10 @@ class EvidenceFirstFactExtractor:
             receptor_status=receptor_status,
             ki67=ki67,
             treatment_response=resp,
+            gleason_score=gleason_score,
+            grade_group=grade_group,
+            psa_level=psa_level,
+            castration_status=castration_status,
             prior_treatments=prior_tx,
             evidence=text[:200],
         )
@@ -1689,6 +1762,10 @@ class EvidenceFirstFactExtractor:
             "esophageal", "bronchial", "alveolar", "pancreatic", "biliary", "vesical",
             "urethral", "ureteral", "prostatic", "testicular", "ovarian", "uterine",
             "vaginal", "vulvar", "peritoneal", "pleural", "pericardial",
+            "prostate", "breast", "lung", "kidney", "liver", "colon", "bone", "bladder",
+            "thyroid", "pancreas", "stomach", "brain", "spine", "pelvis", "ovary", "testis", "heart", "skin",
+            "castration-resistant", "castrate-resistant", "hormone-refractory", "hormone-sensitive",
+            "castration-sensitive", "resistant", "recurrent", "refractory",
         }
 
         generic_suffix_nouns = {
@@ -1790,6 +1867,16 @@ class EvidenceFirstFactExtractor:
         for i, m in enumerate(abbrev_matches):
             masked = masked.replace(m.group(0), f"__ORGANISM_{i}__")
 
+        # Mask parentheticals to prevent internal splitting on commas or plus signs (e.g. '(4+5)', '(lumbar spine, pelvis)')
+        paren_matches = list(re.finditer(r"\([^\)]*\)|\[[^\]]*\]", masked))
+        for i, pm in enumerate(paren_matches):
+            masked = masked.replace(pm.group(0), f"__PAREN_EXPR_{i}__")
+
+        # Mask plus signs attached to numbers (e.g., Gleason 4+5)
+        plus_num_matches = list(re.finditer(r"\b\d+\+\d+\b", masked))
+        for i, pnm in enumerate(plus_num_matches):
+            masked = masked.replace(pnm.group(0), f"__PLUS_NUM_{i}__")
+
         # Mask plus signs attached to receptor/immunology markers (e.g., CD4+, HER2+, ER+, PR+)
         plus_matches = list(re.finditer(r"\b([A-Za-z0-9\-]+)\+", masked))
         for i, pm in enumerate(plus_matches):
@@ -1823,6 +1910,38 @@ class EvidenceFirstFactExtractor:
         for chunk in chunks:
             chunk = chunk.strip()
             if not chunk:
+                continue
+
+            # Strip metadata headers if embedded in chunk
+            chunk = re.sub(
+                r"^(?:metastatic\s+sites?|oncology\s+attributes?(?:\s*(?:&|and)?\s*biomarkers?)?|biomarkers?(?:\s*&|\s*and)?\s*receptor\s+status)\s*[:\-–—]\s*",
+                "",
+                chunk,
+                flags=re.IGNORECASE,
+            ).strip()
+            if not chunk:
+                continue
+
+            # Handle "metastatic to site1 and site2" or "metastases to site1 and site2"
+            met_to_m = re.search(r"^(.*?)\s*,?\s*\b(metastat(?:ic|es)\s+to)\s+([^.,;\n]+)$", chunk, re.IGNORECASE)
+            if met_to_m:
+                pri_part = met_to_m.group(1).strip()
+                met_pfx = met_to_m.group(2).strip()
+                met_targets = met_to_m.group(3).strip()
+                if pri_part and len(pri_part) >= 3:
+                    refined_chunks.append(pri_part)
+                targets = re.split(r",\s*|\s+and\s+", met_targets)
+                for t in targets:
+                    t_clean = t.strip()
+                    if t_clean and len(t_clean) >= 2:
+                        refined_chunks.append(f"{met_pfx} {t_clean}")
+                continue
+
+            # Handle "[adj1] and [adj2] lymph node metastases"
+            adj_noun_m = re.search(r"^([a-z\-]+)\s+and\s+([a-z\-]+)\s+(lymph\s+node\s+metastases?|osseous\s+metastases?|bone\s+metastases?)$", chunk, re.IGNORECASE)
+            if adj_noun_m:
+                refined_chunks.append(f"{adj_noun_m.group(1)} {adj_noun_m.group(3)}")
+                refined_chunks.append(f"{adj_noun_m.group(2)} {adj_noun_m.group(3)}")
                 continue
 
             is_combo_manifestation = any(re.search(pat, chunk, re.IGNORECASE) for pat in combo_manifestation_patterns)
@@ -1877,6 +1996,10 @@ class EvidenceFirstFactExtractor:
                 res = res.replace(f"__ORGANISM_{i}__", m.group(0))
             for i, pm in enumerate(plus_matches):
                 res = res.replace(f"__PLUS_MARKER_{i}__", pm.group(0))
+            for i, pnm in enumerate(plus_num_matches):
+                res = res.replace(f"__PLUS_NUM_{i}__", pnm.group(0))
+            for i, pm in enumerate(paren_matches):
+                res = res.replace(f"__PAREN_EXPR_{i}__", pm.group(0))
 
             # Strip trailing procedural or temporal timing context (e.g. "gastritis post frozen embryo transfer" -> "gastritis")
             timing_m = re.search(r"\b(?:status\s+post|post|s/p|after)\s+(?:frozen\s+embryo\s+transfer|fet|chemotherapy|surgery|procedure|infusion)\b.*$", res, re.IGNORECASE)
@@ -1895,13 +2018,22 @@ class EvidenceFirstFactExtractor:
 
     def _split_term_and_narrative(self, line: str) -> tuple[str, str]:
         """Split a clinical line into the diagnostic term and accompanying clinical explanation."""
+        # If line begins with metadata/label prefix, strip it so the clinical entity is the term
+        label_prefix_m = re.match(
+            r"^\s*(?:metastatic\s+sites?|sites?\s+of\s+metastat\w+|distant\s+sites?|oncology\s+attributes?|biomarkers?|pathology|histology)\s*[:\-–—]\s*",
+            line,
+            re.IGNORECASE,
+        )
+        if label_prefix_m:
+            line = line[label_prefix_m.end():].strip()
+
         # Narrative delimiters introduce management/course comments (e.g. " - underwent DJ stenting")
         # Do not include ";" or "/" as they separate distinct clinical entities in diagnosis lists
-        for delim in [" - ", " – ", " — ", " : ", ": ", " ("]:
+        for delim in [" - ", " – ", " — ", " : ", ": "]:
             if delim in line:
                 parts = line.split(delim, 1)
                 term = parts[0].strip()
-                narrative = parts[1].rstrip(")").strip()
+                narrative = parts[1].strip()
                 if len(term) >= 3:
                     return term, narrative
 
@@ -1951,9 +2083,57 @@ class EvidenceFirstFactExtractor:
     def _canonicalize_term(self, term: str) -> str:
         clean = re.sub(r"^\d+[\.\)\-]\s*", "", term).strip()
         clean = re.sub(r"\s+", " ", clean).strip(".,;: ")
+
         # Section 21: Oncology metastatic manifestations
-        if re.search(r"\bpleural\s+metastasis\b|\bmetastasis\s+to\s+pleura\b|\bmalignant\s+pleural\s+metastasis\b", clean, re.IGNORECASE):
+        if re.search(
+            r"\b(?:bone\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+bone|metastatic\s+bone\s+disease|bone\s*\((?:lumbar\s+)?spine|bone\s*\(pelvis|osseous\s+metastases?|skeletal\s+metastases?|osteoblastic\s+metastases?|osteoblastic\s+metastatic\s+disease|osteoblastic\s+(?:spine\s+)?lesions?|metastat(?:ic|es)\s+to\s+(?:the\s+)?(?:lumbar\s+)?spine|metastat(?:ic|es)\s+to\s+(?:the\s+)?pelvis)\b",
+            clean,
+            re.IGNORECASE,
+        ):
+            return "Secondary malignant neoplasm of bone"
+
+        if re.search(
+            r"\b(?:retroperitoneal\s+(?:and\s+pelvic\s+)?lymph\s+node\s+metastases?|retroperitoneal\s+lymphadenopathy|metastat(?:ic|es)\s+(?:to|in)\s+retroperitoneal\s+lymph\s+nodes?|intra[- ]abdominal\s+lymph\s+node\s+metastases?)\b",
+            clean,
+            re.IGNORECASE,
+        ):
+            return "Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes"
+
+        if re.search(
+            r"\b(?:pelvic\s+lymph\s+node\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+pelvic\s+lymph\s+nodes?)\b",
+            clean,
+            re.IGNORECASE,
+        ):
+            return "Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes"
+
+        if re.search(
+            r"\b(?:lymph\s+node\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+lymph\s+nodes?|nodal\s+metastases?|distant\s+lymphadenopathy)\b",
+            clean,
+            re.IGNORECASE,
+        ):
+            return "Secondary and unspecified malignant neoplasm of lymph nodes"
+
+        if re.search(r"\b(?:liver\s+metastases?|hepatic\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+liver)\b", clean, re.IGNORECASE):
+            return "Secondary malignant neoplasm of liver"
+
+        if re.search(r"\b(?:lung\s+metastases?|pulmonary\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+lung)\b", clean, re.IGNORECASE):
+            return "Secondary malignant neoplasm of lung"
+
+        if re.search(r"\b(?:brain\s+metastases?|cerebral\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+brain)\b", clean, re.IGNORECASE):
+            return "Secondary malignant neoplasm of brain"
+
+        if re.search(r"\b(?:pleural\s+metastases?|pleural\s+metastasis|metastasis\s+to\s+pleura|malignant\s+pleural\s+effusion|malignant\s+pleural\s+metastasis)\b", clean, re.IGNORECASE):
             return "Secondary malignant neoplasm of pleura"
+
+        if re.search(r"\b(?:prostate\s+cancer|prostate\s+carcinoma|adenocarcinoma\s+of\s+(?:the\s+)?prostate|prostate\s+adenocarcinoma|malignant\s+neoplasm\s+of\s+prostate)\b", clean, re.IGNORECASE):
+            return "Malignant neoplasm of prostate"
+
+        if re.search(r"\b(?:type\s+2\s+diabetes|t2dm|diabetes\s+mellitus\s+type\s+2|type\s+ii\s+diabetes)\b", clean, re.IGNORECASE):
+            return "Type 2 diabetes mellitus"
+
+        if re.search(r"\b(?:essential\s+hypertension|primary\s+hypertension|systemic\s+hypertension|hypertension|htn)\b", clean, re.IGNORECASE):
+            return "Essential hypertension"
+
         if clean.lower() in ("urticarial", "urticarial rash", "rash urticarial"):
             return "Urticaria"
         return clean
@@ -2297,6 +2477,18 @@ class EvidenceFirstFactExtractor:
                 primary_diag.clinical_attributes["ki67"] = oncology_context.ki67
             if oncology_context.treatment_response:
                 primary_diag.clinical_attributes["treatment_response"] = oncology_context.treatment_response
+            if oncology_context.gleason_score:
+                primary_diag.clinical_attributes["gleason_score"] = oncology_context.gleason_score
+            if oncology_context.grade_group:
+                primary_diag.clinical_attributes["grade_group"] = oncology_context.grade_group
+            if oncology_context.psa_level:
+                primary_diag.clinical_attributes["psa_level"] = oncology_context.psa_level
+            if oncology_context.castration_status:
+                primary_diag.clinical_attributes["castration_status"] = oncology_context.castration_status
+            if oncology_context.metastatic_status:
+                primary_diag.clinical_attributes["metastatic_status"] = oncology_context.metastatic_status
+            if oncology_context.metastatic_sites:
+                primary_diag.clinical_attributes["metastatic_sites"] = oncology_context.metastatic_sites
             if oncology_context.prior_treatments:
                 primary_diag.clinical_attributes["prior_treatments"] = oncology_context.prior_treatments
 

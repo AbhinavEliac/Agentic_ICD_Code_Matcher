@@ -572,6 +572,9 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         if not clean_query:
             clean_query = raw_query
 
+        norm_diag = getattr(cond, "normalized_diagnosis", None)
+        search_query = norm_diag if (norm_diag and norm_diag.lower() != raw_query.lower()) else clean_query
+
         # 2. Derive structured ClinicalConcept (Sections 5 & 6)
         concept = ClinicalConceptReasoner.reason_concept(
             cond,
@@ -586,11 +589,18 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         existing_codes: set[str] = set()
 
         # STAGE 1: Primary Hybrid Retrieval with Multi-Round Retry Checking
-        primary_hits = retriever.retrieve_with_retry(clean_query, evidence=ev_quote, top_k=25, system="ICD-10-CM")
+        primary_hits = retriever.retrieve_with_retry(search_query, evidence=ev_quote, top_k=25, system="ICD-10-CM")
         for h in primary_hits:
             if h.code not in existing_codes:
                 hits.append(h)
                 existing_codes.add(h.code)
+
+        if search_query != clean_query and (not primary_hits or primary_hits[0].retrieval_score < 0.70):
+            fallback_primary = retriever.retrieve(clean_query, top_k=15, system="ICD-10-CM")
+            for h in fallback_primary:
+                if h.code not in existing_codes:
+                    hits.append(h)
+                    existing_codes.add(h.code)
 
         # STAGE 2: Microsecond BM25 Inverted-Index Expansions (Bypasses redundant neural vector calls)
         from medical_coding.retrieval.tokenizer import (
@@ -599,10 +609,12 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
             get_expanded_query_tokens,
         )
         lexical_terms: list[str] = []
-        if concept.canonical_name and concept.canonical_name.lower() != clean_query.lower():
-            lexical_terms.append(concept.canonical_name)
-        if raw_query.lower() != clean_query.lower():
-            lexical_terms.append(raw_query)
+        has_exact_match = bool(hits and hits[0].retrieval_score >= 0.90)
+        if not has_exact_match:
+            if concept.canonical_name and concept.canonical_name.lower() != clean_query.lower():
+                lexical_terms.append(concept.canonical_name)
+            if raw_query.lower() != clean_query.lower():
+                lexical_terms.append(raw_query)
 
         query_lower = clean_query.lower()
         for ab, full in CLINICAL_ABBREVIATIONS.items():
@@ -721,13 +733,16 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         if not final_hits:
             final_hits = hits[:10]
 
-        # Handle ICD-O for neoplasms
-        is_neoplasm = (
-            concept.disease_family in ("breast_malignancy", "lymphoma", "pleural_metastasis", "kaposi_sarcoma", "liver_sarcoma", "neuroendocrine_tumor")
-            or any(w in raw_query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma", "melanoma", "malignancy", "dcis"])
-            or bool(getattr(concept, "histology", None))
+        # Handle ICD-O for neoplasms: only primary neoplasms require histology morphology coding
+        is_primary_neoplasm = (
+            getattr(cond, "role", None) in (DiagnosisRole.PRIMARY, "PRIMARY")
+            and (
+                concept.disease_family in ("breast_malignancy", "lymphoma", "pleural_metastasis", "kaposi_sarcoma", "liver_sarcoma", "neuroendocrine_tumor", "prostate_malignancy")
+                or any(w in raw_query.lower() for w in ["cancer", "carcinoma", "neoplasm", "lymphoma", "tumor", "sarcoma", "melanoma", "malignancy", "dcis"])
+                or bool(getattr(concept, "histology", None))
+            )
         )
-        if is_neoplasm:
+        if is_primary_neoplasm:
             icdo_hits = retriever.retrieve(raw_query, top_k=5, system="ICD-O")
             for o_hit in icdo_hits:
                 if o_hit.code not in existing_codes:
@@ -742,15 +757,11 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
             "thoracentesis", "paracentesis", "endoscopy", "colonoscopy", "arthroplasty", "mastectomy"
         ]
         has_proc = (
-            getattr(cond, "procedure_relevance", 0.0) > 0
-            or any(pw in raw_query.lower() or pw in ev_quote.lower() for pw in proc_keywords)
+            getattr(cond, "procedure_relevance", 0.0) > 0.5
+            or any(re.search(rf"\b{re.escape(pw)}\b", raw_query, re.IGNORECASE) for pw in proc_keywords)
         )
         if has_proc:
             proc_query = raw_query
-            for pw in proc_keywords:
-                if pw in ev_quote.lower() and pw not in raw_query.lower():
-                    proc_query = f"{raw_query} {pw}"
-                    break
             cpt_hits = retriever.retrieve(proc_query, top_k=5, system="CPT")
             for c_hit in cpt_hits:
                 if c_hit.code not in existing_codes:
@@ -759,16 +770,12 @@ def retrieve_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
 
         return cond.diagnosis_id, concept, match_spec, final_hits
 
-    # Parallelize retrieval across diagnoses within document
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(len(billable_conditions), 4)
-    ) as executor:
-        futures = [executor.submit(_retrieve_for_condition, c) for c in billable_conditions]
-        for f in concurrent.futures.as_completed(futures):
-            diag_id, concept, match_spec, hits = f.result()
-            clinical_concepts[diag_id] = concept
-            match_specs[diag_id] = match_spec
-            candidate_pool[diag_id] = hits
+    # Sequential condition retrieval (eliminates thread contention on dense vector dot products)
+    for c in billable_conditions:
+        diag_id, concept, match_spec, hits = _retrieve_for_condition(c)
+        clinical_concepts[diag_id] = concept
+        match_specs[diag_id] = match_spec
+        candidate_pool[diag_id] = hits
 
     return {
         "clinical_concepts": clinical_concepts,
@@ -813,12 +820,11 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
 
     from medical_coding.retrieval.tokenizer import CLINICAL_MORPHOLOGY
 
-    for cond in classified:
+    def _rank_for_condition(cond: ClassifiedDiagnosis) -> tuple[RankedSelection, list[ICDCandidate]]:
         candidates = candidate_pool.get(cond.diagnosis_id, [])
         ev_quote = getattr(cond.context.evidence, "quote", "") if hasattr(cond, "context") and hasattr(cond.context, "evidence") and cond.context.evidence else ""
 
         # Corroborate evidence across document narrative (Master Prompt Sections 4, 10, 11)
-        # Merge evidence spans discussing this specific condition from hospital course, exam, etc.
         ev_snippets: list[str] = [s.strip() for s in ev_quote.split(" | ") if s.strip()] if ev_quote else []
         cond_tokens = [
             w for w in re.findall(r"\b[a-z0-9]{3,}\b", cond.raw_term.lower())
@@ -842,6 +848,7 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
         clean_evidence_quote = " | ".join(ev_snippets).strip() if ev_snippets else ev_quote
         selection = agent.rank_candidates(cond, candidates, evidence_override=clean_evidence_quote.strip() or None)
 
+        pool_res = candidates
         # Multi-round re-checking for conditions with positive evidence that were not identified on initial pass
         if (
             selection.selected_code is None
@@ -861,9 +868,18 @@ def rank_candidates_node(state: PipelineGraphState) -> dict[str, Any]:
                 re_selection = agent.rank_candidates(cond, retry_candidates, evidence_override=clean_evidence_quote.strip() or None)
                 if re_selection.selected_code is not None:
                     selection = re_selection
-                    candidate_pool[cond.diagnosis_id] = retry_candidates
+                    pool_res = retry_candidates
 
-        ranked_selections.append(selection)
+        return selection, pool_res
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(len(classified), 4) if classified else 1
+    ) as executor:
+        futures = [executor.submit(_rank_for_condition, c) for c in classified]
+        for f in concurrent.futures.as_completed(futures):
+            selection, pool = f.result()
+            ranked_selections.append(selection)
+            candidate_pool[selection.diagnosis_id] = pool
 
     return {
         "ranked_selections": ranked_selections,
@@ -1214,23 +1230,47 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                 continue
 
             # Per requirement: for [no_local_code] type diagnosis, nearest relatable code should get displayed, because they also have evidence
+            from medical_coding.validation.reverse_attributes import ReverseAttributeChecker
+
+            def _is_clinically_relatable(cand: ICDCandidate) -> bool:
+                if not catalog.is_valid_code(cand.code) or not catalog.is_billable_code(cand.code):
+                    return False
+                anat_ok, _ = ReverseAttributeChecker.validate_anatomical_site(
+                    code_description=cand.description,
+                    evidence_text=c_quote,
+                    diagnosis_term=c_term,
+                )
+                if not anat_ok:
+                    return False
+                lat_ok, _ = ReverseAttributeChecker.validate_laterality(
+                    code_description=cand.description,
+                    evidence_text=c_quote,
+                    diagnosis_term=c_term,
+                )
+                if not lat_ok:
+                    return False
+                attr_ok, _ = ReverseAttributeChecker.validate_code_attributes(
+                    code_description=cand.description,
+                    evidence_text=c_quote,
+                    diagnosis_term=c_term,
+                )
+                if not attr_ok:
+                    return False
+                return True
+
             nearest_cand = None
             cand_pool_item = state.get("candidate_pool", {}).get(getattr(c, "diagnosis_id", ""), [])
             if cand_pool_item:
                 for cand in cand_pool_item:
-                    if catalog.is_valid_code(cand.code) and catalog.is_billable_code(cand.code):
+                    if _is_clinically_relatable(cand):
                         nearest_cand = cand
                         break
-                if not nearest_cand and cand_pool_item:
-                    nearest_cand = cand_pool_item[0]
             if not nearest_cand and c_term:
                 retrieved = retriever.retrieve(c_term, top_k=5)
                 for cand in retrieved:
-                    if catalog.is_valid_code(cand.code) and catalog.is_billable_code(cand.code):
+                    if _is_clinically_relatable(cand):
                         nearest_cand = cand
                         break
-                if not nearest_cand and retrieved:
-                    nearest_cand = retrieved[0]
 
             if nearest_cand and c_quote:
                 is_icdo = bool(getattr(nearest_cand, "coding_system", None) == "ICD-O" or nearest_cand.code.startswith("M"))

@@ -471,17 +471,33 @@ class CandidateRankingAgent(BaseAgent):
         if not core_diag_tokens:
             core_diag_tokens = term_tokens
 
-        # Expand abbreviations (e.g. ACL -> anterior cruciate ligament, NET -> neuroendocrine tumor)
+        # Expand abbreviations and anatomical equivalences (e.g. retroperitoneal -> intra-abdominal)
         expanded_core_tokens = list(core_diag_tokens)
+        ANATOMICAL_EQUIVALENCES: dict[str, list[str]] = {
+            "retroperitoneal": ["intra-abdominal", "intraabdominal", "abdominal"],
+            "pelvic": ["intrapelvic", "pelvis"],
+            "spine": ["bone", "vertebra", "vertebral"],
+            "lumbar": ["bone", "spine", "vertebra"],
+        }
         for ct in core_diag_tokens:
             if ct in CLINICAL_ABBREVIATIONS:
                 for ab_word in CLINICAL_ABBREVIATIONS[ct].split():
                     if ab_word not in QUALIFIERS_TO_IGNORE and ab_word not in expanded_core_tokens:
                         expanded_core_tokens.append(ab_word)
+            if ct in ANATOMICAL_EQUIVALENCES:
+                for eq_word in ANATOMICAL_EQUIVALENCES[ct]:
+                    for w in re.findall(r"[a-z0-9]+", eq_word):
+                        if w not in QUALIFIERS_TO_IGNORE and w not in expanded_core_tokens:
+                            expanded_core_tokens.append(w)
 
         scored_candidates: list[tuple[ICDCandidate, float, str]] = []
 
         for cand in candidates:
+            # 0. CPT procedure codes cannot be selected as diagnosis codes
+            is_cpt = getattr(cand, "coding_system", None) == "CPT" or (cand.code.isdigit() and len(cand.code) in (4, 5))
+            if is_cpt:
+                continue
+
             score = cand.retrieval_score
             desc_lower = cand.description.lower()
             rationale_parts: list[str] = []
@@ -616,6 +632,16 @@ class CandidateRankingAgent(BaseAgent):
                 bool(re.search(rf"\b{re.escape(site_w)}\b", desc_lower)) and bool(re.search(rf"\b{re.escape(site_w)}\b", full_context))
                 for site_w in ["anterior", "inferior", "lateral", "posterior", "apical", "subendocardial", "tarsal", "metatarsal", "malleolus", "femur", "tibia", "fibula", "radius", "ulna", "humerus"]
             )
+            is_unspec_code = (
+                cand.code.endswith(".9")
+                or cand.code.endswith(".90")
+                or cand.code.endswith(".99")
+                or "unspecified site" in desc_lower
+                or "unspecified location" in desc_lower
+                or "lymph node, unspecified" in desc_lower
+                or "unspecified lymph node" in desc_lower
+                or ("unspecified" in desc_lower and not any(spec in desc_lower for spec in ["intra-abdominal", "intrathoracic", "intrapelvic", "head", "neck", "axilla", "inguinal", "upper limb", "lower limb"]))
+            )
             if ("other " in desc_lower or "other specified" in desc_lower) and not has_matching_site:
                 doc_has_other_detail = any(
                     w in full_context for w in ["other", "specified", "variant", "type"]
@@ -623,25 +649,38 @@ class CandidateRankingAgent(BaseAgent):
                 if not doc_has_other_detail:
                     score -= 0.20
                     rationale_parts.append("other specified code without documented detail")
-            elif "unspecified" in desc_lower or "without " in desc_lower or cand.code.endswith(".9") or cand.code.endswith(".90"):
+            elif is_unspec_code or "without " in desc_lower:
                 missing_core_tokens = [
                     ct for ct in expanded_core_tokens
                     if ct not in cand_tokens_set and not any(v in cand_tokens_set for v in CLINICAL_MORPHOLOGY.get(ct, []))
                 ]
                 doc_has_specific_site = any(
                     site_w in full_context
-                    for site_w in ["anterior", "inferior", "lateral", "posterior", "apical", "subendocardial", "tarsal", "metatarsal", "malleolus"]
+                    for site_w in ["anterior", "inferior", "lateral", "posterior", "apical", "subendocardial", "tarsal", "metatarsal", "malleolus", "retroperitoneal", "spine", "lumbar"]
                 )
-                cand_unspec_site = "unspecified" in desc_lower and any(w in desc_lower for w in ["site", "wall", "artery", "bone", "location"])
+                cand_unspec_site = "unspecified" in desc_lower and any(w in desc_lower for w in ["site", "wall", "artery", "bone", "location", "lymph node", "node"])
                 if doc_has_specific_site and cand_unspec_site:
                     score -= 0.25
                     rationale_parts.append("unspecified site when specific anatomical location is documented")
-                elif missing_core_tokens and "unspecified" in desc_lower:
+                elif missing_core_tokens and is_unspec_code:
                     score -= 0.15
                     rationale_parts.append(f"unspecified code when specific detail ({', '.join(missing_core_tokens)}) is documented")
                 elif not missing_core_tokens and not ((doc_left or doc_right) and cand_unspec_lat) and not (doc_has_specific_site and cand_unspec_site):
                     score += 0.10
                     rationale_parts.append("canonical base/unspecified code for general documentation")
+
+            has_matching_site = any(
+                bool(re.search(rf"\b{re.escape(site_w)}\b", desc_lower)) and bool(re.search(rf"\b{re.escape(site_w)}\b", full_context))
+                for site_w in [
+                    "anterior", "inferior", "lateral", "posterior", "apical", "subendocardial",
+                    "tarsal", "metatarsal", "malleolus", "femur", "tibia", "fibula", "radius", "ulna", "humerus",
+                    "intra-abdominal", "abdominal", "pelvis", "pelvic", "spine", "vertebra", "lumbar",
+                ]
+            )
+            if ("retroperitoneal" in full_context and ("intra-abdominal" in desc_lower or "intraabdominal" in desc_lower or "abdominal" in desc_lower)):
+                has_matching_site = True
+            elif ("spine" in full_context or "lumbar" in full_context or "pelvis" in full_context) and "bone" in desc_lower:
+                has_matching_site = True
 
             if has_matching_site:
                 score += 0.25
@@ -649,6 +688,22 @@ class CandidateRankingAgent(BaseAgent):
 
             scored_candidates.append(
                 (cand, round(score, 4), ", ".join(rationale_parts) or "evidence overlap")
+            )
+
+        if not scored_candidates:
+            return RankedSelection(
+                diagnosis_id=diag_id,
+                raw_term=raw_term,
+                selected_code=None,
+                selected_description=None,
+                ranking_reason=f"No valid diagnosis candidates supported for '{raw_term}'.",
+                supporting_evidence=[evidence_quote],
+                confidence=0.0,
+                ranking_score=0.0,
+                abstention_reason="NO_MATCHING_ICD_CANDIDATE",
+                matching_status="NO_DATABASE_MATCH",
+                candidate_pool=candidates,
+                decision="ABSTAINED",
             )
 
         # Sort descending by raw ranking score to maintain discrimination among top candidates

@@ -277,10 +277,17 @@ class ReverseAttributeChecker:
             "stomach": [r"\bstomach\b", r"\bgastric\b"],
             "liver": [r"\bliver\b", r"\bhepatic\b"],
             "pancreas": [r"\bpancreas\b", r"\bpancreatic\b"],
-            "bone": [r"\bbone\b", r"\bfemur\b", r"\btibia\b", r"\bhumerus\b", r"\bfibula\b", r"\bradius\b", r"\bulna\b"],
+            "bone": [r"\bbones?\b", r"\bfemur\b", r"\btibia\b", r"\bhumerus\b", r"\bfibula\b", r"\bradius\b", r"\bulna\b", r"\bspines?\b", r"\blumbar\b", r"\bpelvis\b", r"\bpelvic\s+bone\b", r"\bsacrum\b", r"\bvertebra\w*\b", r"\bribs?\b", r"\bskeletal\b", r"\bosseous\b", r"\bosteoblastic\b"],
+            "lymph_node": [r"\blymph\s*nodes?\b", r"\blymphadenopathy\b", r"\bretroperitoneal\b", r"\bintra-abdominal\b", r"\bintrapelvic\b", r"\bmesenteric\b", r"\baxillary\b", r"\bmediastinal\b", r"\binguinal\b"],
+            "brain": [r"\bbrain\b", r"\bcerebral\b", r"\bcerebellum\b"],
+            "adrenal": [r"\badrenal\b"],
         }
 
-        # Determine documented organs in diagnosis term + evidence
+        # Determine documented organs in diagnosis term (primary) and combined text
+        doc_term_organs = {
+            organ for organ, pats in organ_patterns.items()
+            if any(re.search(pat, diagnosis_term.lower()) for pat in pats)
+        }
         doc_organs = {
             organ for organ, pats in organ_patterns.items()
             if any(re.search(pat, combined) for pat in pats)
@@ -291,6 +298,16 @@ class ReverseAttributeChecker:
             organ for organ, pats in organ_patterns.items()
             if any(re.search(pat, desc_lower) for pat in pats)
         }
+
+        # If diagnosis term itself specifies an organ, candidate code MUST match that organ if code specifies an organ
+        if doc_term_organs and code_organs and not doc_term_organs.intersection(code_organs):
+            gyn_organs = {"ovary", "fallopian_tube", "uterus", "cervix"}
+            if not (doc_term_organs.issubset(gyn_organs) and code_organs.issubset(gyn_organs)):
+                return (
+                    False,
+                    f"anatomical site mismatch: code is for {', '.join(sorted(code_organs))} "
+                    f"but condition is for {', '.join(sorted(doc_term_organs))}",
+                )
 
         # If documented organ is specific and code organ is entirely disjoint
         if doc_organs and code_organs and not doc_organs.intersection(code_organs):
@@ -425,14 +442,31 @@ class ReverseAttributeChecker:
         bracketed_synonyms = [b.strip() for b in re.findall(r"\[(.*?)\]", desc_lower) if b.strip()]
         bracket_supported = any(has_positive_mention(b, combined_evidence) for b in bracketed_synonyms)
 
+        # Identify constituent tokens of qualifiers that were already verified as supported
+        already_supported_qualifier_tokens: set[str] = set()
+        for attr, is_positive in implied_attributes.items():
+            if is_positive and attr not in unsupported:
+                for tok in re.findall(r"[a-z0-9]+", attr):
+                    if len(tok) > 2:
+                        already_supported_qualifier_tokens.add(tok)
+
+        ANATOMICAL_MODIFIER_EQUIVALENCES: dict[str, list[str]] = {
+            "intra": ["retroperitoneal", "intra-abdominal", "intraabdominal", "abdominal"],
+            "abdominal": ["retroperitoneal", "intra-abdominal", "intraabdominal", "abdomen", "abdominal", "pelvic", "pelvis"],
+            "bone": ["spine", "lumbar", "pelvis", "vertebra", "vertebral", "sacrum", "rib", "femur", "tibia", "skeletal", "osseous"],
+            "osseous": ["bone", "spine", "lumbar", "pelvis", "vertebra", "vertebral"],
+        }
+
         for mod in code_modifiers:
-            if mod in unsupported:
+            if mod in unsupported or mod in already_supported_qualifier_tokens:
                 continue
             variants = [mod] + CLINICAL_MORPHOLOGY.get(mod, [])
             if mod in CLINICAL_ABBREVIATIONS:
                 variants.extend(CLINICAL_ABBREVIATIONS[mod].split())
             if mod in ORGANISM_EQUIVALENCES:
                 variants.extend(ORGANISM_EQUIVALENCES[mod])
+            if mod in ANATOMICAL_MODIFIER_EQUIVALENCES:
+                variants.extend(ANATOMICAL_MODIFIER_EQUIVALENCES[mod])
             if mod.endswith("s") and len(mod) > 4:
                 variants.append(mod[:-1])
             if mod.endswith("ic") and len(mod) > 4:

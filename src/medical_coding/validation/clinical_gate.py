@@ -108,6 +108,10 @@ METADATA_PATTERNS = [
     r"^\s*[\d\.\,\/]+\s*(?:mg/dl|mmol/l|g/dl|mmhg|bpm|%|cells/cumm)?\s*$",
     r"^\s*(?:ecg|ekg|cxr|chest\s+x[\s\-]?ray|ct\s+scan|mri|ultrasound|usg|2d\s+echo|cbc|bmp|cmp|lft|kft|rft|urinalysis|blood\s+culture|troponin|hba1c)\s*(?:normal|clear|pending|done|negative|reviewed)?\s*$",
     r"^\s*(?:patient\s+name|mrn|admission\s+date|discharge\s+date|admit\s+date|date\s+of\s+admission|date\s+of\s+discharge|dob|age|sex|gender)\s*[:\-–—]",
+    r"^\s*metastatic\s+sites?\s*(?::\s*)?$",
+    r"^\s*(?:oncology\s+attributes?(?:\s*(?:&|and)?\s*biomarkers?)?|biomarkers?\s*(?:&|and)?\s*receptor\s+status)\s*(?::\s*)?$",
+    r"^\s*castration[- ]resistant\s+status(?:\s+on.*)?$",
+    r"^\s*(?:androgen\s+deprivation\s+therapy|adt|palliative\s+radiotherapy)\s*$",
 ]
 
 # 5. Tumor attributes / Staging markers (attributes of a neoplasm, not standalone diagnoses)
@@ -117,6 +121,12 @@ STANDALONE_ATTRIBUTE_PATTERNS = [
     r"^\s*double\s+expressor(?:\s*(?:bcl2/bcl6|myc/bcl2|\(.*\)))?\s*$",
     r"^\s*ki[\s\-]?67\s*(?:index)?\s*(?:>|=|<)?\s*\d+\s*%?\s*$",
     r"^\s*grade\s+(?:i|ii|iii|iv|[1-4])(?:\s+histology)?\s*$",
+    r"^\s*grade\s+group\s*[1-5]\s*$",
+    r"^\s*gleason(?:\s+score)?\s*(?::|=|\b)\s*\d+(?:\s*(?:\+|\/|\=|\(.*?\))\s*\d+)?\s*$",
+    r"^\s*psa(?:\s+level)?\s*(?::|=|\b)\s*[\d\.\,]+(?:\s*ng\s*/\s*m[lL])?\s*$",
+    r"^\s*(?:metastatic\s+)?castrat(?:ion|e)[- ]resistant(?:\s+(?:status|state|prostate\s+cancer))?\s*$",
+    r"^\s*(?:mcrpc|crpc|nmcrpc|mhspc)\s*$",
+    r"^\s*metastatic\s+sites?\s*$",
     r"^\s*t\d+n\d+m\d+\s*$",
     r"^\s*(?:triple\s+negative|er\s+negative|pr\s+negative|her2\s*(?:positive|negative|0|\d+))\s*$",
     r"^\s*brca(?:\s*1|\s*2)?\s+(?:pathogenic|mutation|positive|negative)(?:\s+mutation)?\s*$",
@@ -126,7 +136,8 @@ STANDALONE_ATTRIBUTE_PATTERNS = [
 
 # 6. Isolated anatomical locations lacking any clinical condition / pathology descriptor
 ISOLATED_ANATOMY_PATTERNS = [
-    r"^\s*(?:left\s+|right\s+|bilateral\s+)?(?:foot|feet|ankle|heel|toe|toes|hand|wrist|arm|leg|thigh|knee|shoulder|elbow|chest|thorax|breast|abdomen|flank|back|spine|pelvis|hip|neck|head|brain|lung|kidney|liver|spleen|heart|eye|ear|nose|throat)\s*$",
+    r"^\s*(?:left\s+|right\s+|bilateral\s+)?(?:foot|feet|ankle|heel|toe|toes|hand|wrist|arm|leg|thigh|knee|shoulder|elbow|chest|thorax|breast|abdomen|flank|back|spine|pelvis|hip|neck|head|brain|lung|kidney|liver|spleen|heart|eye|ear|nose|throat|retroperitoneal|intra-abdominal|pelvic|axial|skeletal|osseous)\s*$",
+    r"^\s*(?:intra-abdominal|retroperitoneal|pelvic|axial|skeletal|osseous)\s*$",
 ]
 
 # Pathological condition words that validate an anatomical mention into a true disease entity
@@ -416,6 +427,14 @@ class HardClinicalCandidateGate:
         if not (has_pathology or has_symptom or has_med_suffix or has_microbiology or has_lab_abnormality or has_clinical_root):
             # If the phrase has no clinical terms at all, reject it as a non-diagnostic statement
             return False, f"Phrase does not describe a clinical disease, disorder, pathology, or symptom: '{clean_term}'"
+
+        # Check: Incomplete adjectival phrases lacking a clinical condition noun
+        if re.search(r"^\s*(?:metastatic\s+)?castrat(?:ion|e)[- ]resistant(?:\s+(?:status|state))?\s*$", term_lower) or term_lower in (
+            "metastatic castration-resistant", "castration-resistant", "metastatic sites",
+            "metastatic disease sites", "sites of metastasis", "metastatic status",
+            "intra-abdominal", "retroperitoneal", "pelvic", "axial", "skeletal", "osseous",
+        ):
+            return False, f"Adjectival modifier or attribute phrase without clinical entity: '{clean_term}'"
 
         return True, "Valid clinical diagnosis entity"
 

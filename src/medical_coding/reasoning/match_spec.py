@@ -16,6 +16,9 @@ logger = get_logger(__name__)
 
 # Mapping from canonical disease family to authoritative ICD-10-CM code category prefixes
 FAMILY_TO_CODE_PREFIXES: dict[str, list[str]] = {
+    "prostate_malignancy": ["C61"],
+    "bone_metastasis": ["C79.51", "C79.52", "C79.5"],
+    "lymph_node_metastasis": ["C77.2", "C77.5", "C77.0", "C77.1", "C77.3", "C77.4", "C77.8", "C77.9", "C77"],
     "breast_malignancy": ["C50"],
     "lymphoma": ["C83", "C81", "C82", "C85"],
     "pyelonephritis": ["N10"],
@@ -143,6 +146,38 @@ class MatchSpecBuilder:
                 "hepatocellular",
             ])
             required_attrs["site"] = "liver"
+            required_attrs["metastatic"] = True
+
+        elif concept.disease_family == "prostate_malignancy":
+            forbidden_attrs.extend([
+                "secondary malignant neoplasm of prostate",
+                "c79.82",
+                "n40",
+                "benign prostatic hyperplasia",
+            ])
+            required_attrs["primary_site"] = "prostate"
+
+        elif concept.disease_family == "bone_metastasis":
+            forbidden_attrs.extend([
+                "c40", "c41",
+                "primary malignant neoplasm of bone",
+                "osteosarcoma",
+                "chondrosarcoma",
+                "k68.2", "retroperitoneal fibrosis",
+                "d16",
+                "m47", "m51", "m54",
+            ])
+            required_attrs["site"] = "bone"
+            required_attrs["metastatic"] = True
+
+        elif concept.disease_family == "lymph_node_metastasis":
+            forbidden_attrs.extend([
+                "k68.2", "retroperitoneal fibrosis",
+                "c81", "c82", "c83", "c84", "c85",
+                "hodgkin", "non-hodgkin", "lymphoma",
+                "i88", "lymphadenitis",
+            ])
+            required_attrs["site"] = "lymph_node"
             required_attrs["metastatic"] = True
 
         # 3. Symptom Firewall (Section 20 & CMS Guideline I.B.4)

@@ -433,19 +433,52 @@ def render_oncology_context(oncology_context: dict[str, Any] | None) -> None:
     metastatic_sites = oncology_context.get("metastatic_sites", [])
     prior_treatments = oncology_context.get("prior_treatments", [])
     treatment_response = oncology_context.get("treatment_response") or "Not documented"
+    gleason_score = oncology_context.get("gleason_score")
+    grade_group = oncology_context.get("grade_group")
+    psa_level = oncology_context.get("psa_level")
+    castration_status = oncology_context.get("castration_status")
+
+    display_grade = grade
+    if display_grade == "Not documented" and (gleason_score or grade_group):
+        parts = [p for p in (f"Gleason {gleason_score}" if gleason_score else None, grade_group) if p]
+        display_grade = ", ".join(parts)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Primary Site", f"{primary_site} ({laterality})")
+        st.metric("Primary Site", f"{primary_site} ({laterality})" if laterality != "Unspecified" else primary_site)
     with c2:
         st.metric("Histology", histology)
     with c3:
-        st.metric("Histologic Grade", grade)
+        st.metric("Histologic Grade", display_grade)
     with c4:
-        st.metric("Ki-67 Index", ki67)
+        st.metric("Biomarker Index", f"PSA: {psa_level}" if psa_level else (f"Ki-67: {ki67}" if ki67 != "Not documented" else "Not documented"))
 
-    # Receptor panel
+    # Receptor and Biomarker panel
     rec_pills = []
+    if psa_level:
+        rec_pills.append(
+            f'<span style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; margin-right: 8px; font-size: 13px;">'
+            f'<strong style="color: #94a3b8;">PSA:</strong> <span style="color: #38bdf8; font-weight: 600;">{html.escape(str(psa_level))}</span>'
+            f'</span>'
+        )
+    if gleason_score:
+        rec_pills.append(
+            f'<span style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; margin-right: 8px; font-size: 13px;">'
+            f'<strong style="color: #94a3b8;">GLEASON:</strong> <span style="color: #f59e0b; font-weight: 600;">{html.escape(str(gleason_score))}</span>'
+            f'</span>'
+        )
+    if grade_group:
+        rec_pills.append(
+            f'<span style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; margin-right: 8px; font-size: 13px;">'
+            f'<strong style="color: #94a3b8;">GRADE GROUP:</strong> <span style="color: #f59e0b; font-weight: 600;">{html.escape(str(grade_group))}</span>'
+            f'</span>'
+        )
+    if castration_status:
+        rec_pills.append(
+            f'<span style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; margin-right: 8px; font-size: 13px;">'
+            f'<strong style="color: #94a3b8;">CASTRATION STATUS:</strong> <span style="color: #ec4899; font-weight: 600;">{html.escape(str(castration_status))}</span>'
+            f'</span>'
+        )
     if receptors:
         for r_name, r_val in receptors.items():
             r_color = "#34d399" if "pos" in str(r_val).lower() or "+" in str(r_val) else "#f87171"

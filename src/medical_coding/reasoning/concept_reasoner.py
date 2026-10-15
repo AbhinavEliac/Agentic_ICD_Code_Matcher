@@ -18,6 +18,9 @@ logger = get_logger(__name__)
 
 # Canonical Disease Families mapped to key entity detection cues
 DISEASE_FAMILY_PATTERNS: list[tuple[str, list[str], str]] = [
+    ("prostate_malignancy", ["prostate cancer", "prostate carcinoma", "carcinoma of prostate", "malignant neoplasm of prostate", "adenocarcinoma of prostate", "prostate adenocarcinoma", "prostate"], "prostate"),
+    ("bone_metastasis", ["bone metastasis", "bone metastases", "metastasis to bone", "metastases to bone", "secondary malignant neoplasm of bone", "osteoblastic metastasis", "osteoblastic metastases", "skeletal metastasis", "skeletal metastases", "osseous metastasis", "osseous metastases", "spine metastasis", "spine metastases"], "bone"),
+    ("lymph_node_metastasis", ["intra-abdominal lymph node metastases", "retroperitoneal lymph node metastases", "retroperitoneal lymphadenopathy", "retroperitoneal lymph nodes", "intrapelvic lymph nodes", "pelvic lymph node metastases", "intra-abdominal lymph nodes", "lymph node metastasis", "lymph node metastases", "distant lymphadenopathy", "secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes", "secondary and unspecified malignant neoplasm of intrapelvic lymph nodes", "secondary and unspecified malignant neoplasm of lymph nodes"], "lymph nodes"),
     ("breast_malignancy", ["breast cancer", "breast carcinoma", "carcinoma of breast", "malignant neoplasm of breast", "ductal carcinoma", "lobular carcinoma", "breast"], "breast"),
     ("lymphoma", ["dlbcl", "diffuse large b-cell lymphoma", "b-cell lymphoma", "hodgkin", "non-hodgkin", "lymphoma"], "lymph nodes"),
     ("renal_calculus", ["renal calculus", "kidney stone", "renal stone", "nephrolithiasis", "calculus of kidney"], "kidney"),
@@ -167,19 +170,42 @@ class ClinicalConceptReasoner:
         # 3. Metastatic Status and Direction (Master Prompt Section 7 & 38)
         # Distinguish primary cancer with distant metastasis from metastatic lesions to an organ
         is_metastatic = bool(
-            re.search(r"\b(?:metastatic|metastasis|metastasized|stage\s+iv)\b", local_context)
-            and not re.search(r"\bwithout\s+metastasis\b", local_context)
+            matched_family in ("bone_metastasis", "lymph_node_metastasis", "pleural_metastasis", "liver_metastasis")
+            or (
+                re.search(r"\b(?:metastatic|metastasis|metastases|metastasized|stage\s+iv)\b", local_context)
+                and not re.search(r"\bwithout\s+metastasis\b", local_context)
+            )
         )
         metastatic_sites: list[str] = []
         if is_metastatic:
-            for site_cand in ["pleura", "pleural", "lung", "liver", "bone", "brain"]:
-                if re.search(rf"\b{site_cand}\s+metastasis\b", local_context) or re.search(rf"\bmetastasis\s+to\s+{site_cand}\b", local_context):
-                    metastatic_sites.append(site_cand)
+            site_checks = [
+                ("pleura", [r"\bpleura\w*\b"]),
+                ("lung", [r"\blung\w*\b", r"\bpulmonary\b"]),
+                ("liver", [r"\bliver\b", r"\bhepatic\b"]),
+                ("bone", [r"\bbone\w*\b", r"\bosseous\b", r"\bskeletal\b", r"\bosteoblastic\b", r"\bspine\b", r"\bpelvis\b"]),
+                ("brain", [r"\bbrain\b", r"\bcerebral\b"]),
+                ("lymph nodes", [r"\blymph\s+nodes?\b", r"\bretroperitoneal\b", r"\bintra-abdominal\b", r"\bintrapelvic\b", r"\blymphadenopathy\b"]),
+            ]
+            for canonical_site, patterns in site_checks:
+                if any(
+                    re.search(rf"{pat}.*?\b(?:metasta\w+|secondary)\b", local_context)
+                    or re.search(rf"\b(?:metasta\w+|secondary).*?{pat}", local_context)
+                    for pat in patterns
+                ):
+                    if canonical_site not in metastatic_sites:
+                        metastatic_sites.append(canonical_site)
+
+        if matched_family == "bone_metastasis" and "bone" not in metastatic_sites:
+            metastatic_sites.append("bone")
+        elif matched_family == "lymph_node_metastasis" and "lymph nodes" not in metastatic_sites:
+            metastatic_sites.append("lymph nodes")
 
         # 4. Histology & Etiology
         histology = None
         if "dlbcl" in local_context or "diffuse large b-cell" in local_context:
             histology = "diffuse large b-cell"
+        elif "adenocarcinoma" in local_context:
+            histology = "adenocarcinoma"
         elif "carcinoma" in local_context:
             histology = "carcinoma"
         elif "sarcoma" in local_context:
