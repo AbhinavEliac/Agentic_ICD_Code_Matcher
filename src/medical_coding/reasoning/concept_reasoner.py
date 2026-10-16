@@ -264,12 +264,73 @@ class ClinicalConceptReasoner:
             if not any(q in local_context for q in quadrants):
                 unknown_attributes.append("quadrant")
 
-        # 6. Assertion & Temporality
+        # 6. Assertion, Temporality & Clinical Contradiction Analysis
         assertion = "CONFIRMED"
-        if "ruled out" in quote.lower() or "no evidence" in quote.lower():
+        contradictory_attributes: list[str] = []
+        contradiction_evidence: list[str] = []
+
+        # Check candidate's pre-existing certainty, role, or negation metadata
+        cand_certainty = str(getattr(candidate, "certainty", "")).upper()
+        cand_role = str(getattr(candidate, "role", "")).upper()
+        cand_negation = str(getattr(candidate, "negation", "")).upper()
+        is_auth = getattr(candidate, "is_authorized", True)
+
+        if (
+            "RULED_OUT" in cand_certainty
+            or "RULED_OUT" in cand_role
+            or "EXCLUDED" in cand_role
+            or "NEGATED" in cand_negation
+            or is_auth is False
+        ):
             assertion = "RULED_OUT"
-        elif "?" in raw_term or "suspected" in quote.lower() or "possible" in quote.lower():
-            assertion = "SUSPECTED"
+            contradictory_attributes.append("negated_or_ruled_out_in_extraction")
+
+        # Linguistic assertion check on quote and local context
+        explicit_ruled_out_pat = r"\b(?:ruled\s+out|no\s+evidence\s+of|negative\s+for|denies|denied|no\s+active|free\s+of|unsupported)\b"
+        if re.search(explicit_ruled_out_pat, quote.lower()):
+            assertion = "RULED_OUT"
+            contradictory_attributes.append("explicitly_ruled_out")
+            contradiction_evidence.append(quote)
+        elif "?" in raw_term or re.search(r"\b(?:suspected|possible|probable|differential|rule\s+out)\b", quote.lower()):
+            if assertion != "RULED_OUT":
+                assertion = "SUSPECTED"
+
+        # Check physiological and hemodynamic polarity contradictions across document and local context
+        combined_text_for_contra = f"{local_context} {document_text}".lower()
+
+        # 1. Shock vs Hemodynamic Stability / Normotension
+        if "shock" in term_lower or matched_family in ("septic_shock", "shock"):
+            shock_stability_pats = [
+                r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|bp\s+normalized|normotensive)\b",
+            ]
+            for pat in shock_stability_pats:
+                m = re.search(pat, combined_text_for_contra)
+                if m:
+                    assertion = "RULED_OUT"
+                    contradictory_attributes.append("hemodynamic_stability_contradiction")
+                    contradiction_evidence.append(m.group(0))
+                    break
+
+        # 2. Acute Hypotension vs Hypertensive Emergency / Crisis
+        if ("hypotension" in term_lower or "hypotensive" in term_lower) and (
+            matched_family == "hypertension" or "emergency" in term_lower or "crisis" in term_lower
+        ):
+            assertion = "RULED_OUT"
+            contradictory_attributes.append("hypotension_hypertension_polarity_conflict")
+
+        # 3. Hypoglycemia vs Hyperglycemia / DKA
+        if "hypoglycemia" in term_lower and any(w in combined_text_for_contra for w in ["hyperglycemia", "dka", "ketoacidosis"]):
+            if not any(w in local_context for w in ["hypoglycemia", "low blood sugar"]):
+                assertion = "RULED_OUT"
+                contradictory_attributes.append("glycemic_polarity_conflict")
+
+        # 4. Neonatal Condition in Adult Patient
+        if matched_family in ("neonatal_diabetes", "perinatal_condition") or "neonatal" in term_lower:
+            has_adult = bool(re.search(r"\b(?:adult|\d+\s*(?:years?[\s\-]old|yo|y/o|year)|type\s+2|t2dm|geriatric|elderly)\b", combined_text_for_contra))
+            has_neonate = bool(re.search(r"\b(?:neonate|newborn|infant|day\s+of\s+life)\b", combined_text_for_contra))
+            if has_adult and not has_neonate:
+                assertion = "RULED_OUT"
+                contradictory_attributes.append("neonatal_adult_demographic_contradiction")
 
         temporality = "CURRENT"
         if getattr(candidate, "temporality", None) in ("HISTORICAL", "RESOLVED"):
@@ -313,8 +374,9 @@ class ClinicalConceptReasoner:
             source_sections=[getattr(candidate, "source_section", "DISCHARGE_DIAGNOSES") or "DISCHARGE_DIAGNOSES"],
             supported_attributes=supported_attributes,
             unknown_attributes=unknown_attributes,
-            contradictory_attributes=[],
-            contradiction_evidence=[],
+            contradictory_attributes=contradictory_attributes,
+            contradiction_evidence=contradiction_evidence,
             confidence=float(getattr(candidate, "confidence_score", 1.0) or 1.0),
             clinical_confidence=float(getattr(candidate, "confidence_score", 1.0) or 1.0),
         )
+

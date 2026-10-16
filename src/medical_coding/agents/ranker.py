@@ -529,10 +529,29 @@ class CandidateRankingAgent(BaseAgent):
 
             # 3. Direct diagnosis term overlap (differentiates diagnosis from incidental narrative mentions)
             norm_desc = (getattr(condition, "normalized_description", None) or getattr(condition, "diagnosis", "") or "").lower().strip()
-            if desc_lower == term_clean or (norm_desc and desc_lower == norm_desc):
+            from medical_coding.reasoning.concept_matcher import (
+                normalize_for_concept_matching,
+                strip_nonessential_modifiers,
+            )
+            desc_stripped = strip_nonessential_modifiers(desc_lower)
+            term_stripped = strip_nonessential_modifiers(term_clean)
+            norm_stripped = strip_nonessential_modifiers(norm_desc) if norm_desc else ""
+
+            cand_norm = normalize_for_concept_matching(desc_lower)
+            term_norm = normalize_for_concept_matching(term_clean)
+            norm_norm = normalize_for_concept_matching(norm_desc) if norm_desc else ""
+
+            if (
+                desc_lower == term_clean
+                or (norm_desc and desc_lower == norm_desc)
+                or desc_stripped == term_stripped
+                or (norm_stripped and desc_stripped == norm_stripped)
+                or cand_norm == term_norm
+                or (norm_norm and cand_norm == norm_norm)
+            ):
                 score += 0.60
                 rationale_parts.append("exact clinical description match")
-            elif any(syn in term_clean or (norm_desc and syn in norm_desc) for syn in [cand.code.lower(), desc_lower]):
+            elif any(syn in term_clean or (norm_desc and syn in norm_desc) for syn in [cand.code.lower(), desc_lower, desc_stripped]):
                 score += 0.40
                 rationale_parts.append("strong synonym match")
 
@@ -615,11 +634,20 @@ class CandidateRankingAgent(BaseAgent):
                 code_description=cand.description,
                 evidence_text=evidence_clean,
                 diagnosis_term=term_clean,
+                code=cand.code,
             )
             if not is_attr_valid:
-                # Proportional soft specificity penalty instead of binary disqualification (Master Prompt Section 4 & 25)
-                score -= min(0.35, 0.15 * len(unsupp_attrs))
-                rationale_parts.append(f"unsupported attributes: {', '.join(unsupp_attrs)}")
+                has_hard_fail = any(
+                    any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen"))
+                    for u in unsupp_attrs
+                )
+                if has_hard_fail:
+                    score = -10.0
+                    rationale_parts.append(f"disqualified by clinical contradiction: {', '.join(unsupp_attrs)}")
+                else:
+                    # Proportional soft specificity penalty instead of binary disqualification (Master Prompt Section 4 & 25)
+                    score -= min(0.35, 0.15 * len(unsupp_attrs))
+                    rationale_parts.append(f"unsupported attributes: {', '.join(unsupp_attrs)}")
 
             # 7. Laterality alignment (Master Prompt Section 5, 24: reward documented laterality, penalize unspecified laterality)
             doc_left = bool(re.search(r"\b(?:left|lt)\b", full_context))
@@ -725,32 +753,42 @@ class CandidateRankingAgent(BaseAgent):
         # and has core_match_fraction > 0.0
         matching_status = "MATCHED"
         if top_score < self.min_confidence:
-            fallback_cand = None
+            valid_candidates = []
             for cand, s, rat in scored_candidates:
                 if not cand.is_valid_billable:
                     continue
                 is_valid, _ = ReverseAttributeChecker.validate_code_attributes(
-                    cand.description, evidence_clean, term_clean
+                    cand.description, evidence_clean, term_clean, code=cand.code
                 )
-                if is_valid and s >= 0.35:
-                    fallback_cand = cand
-                    top_score = s
-                    top_rationale = f"specificity realigned: {rat}"
-                    break
+                if is_valid:
+                    valid_candidates.append(cand)
 
-            if fallback_cand:
-                top_cand = fallback_cand
+            if valid_candidates:
+                from medical_coding.reasoning.concept_matcher import select_best_concept_match
+                best_cand, best_s, best_rat = select_best_concept_match(
+                    candidates=valid_candidates,
+                    concept_name=raw_term,
+                    evidence_text=evidence_clean,
+                    min_score_threshold=0.30,
+                )
+                if best_cand:
+                    top_cand = best_cand
+                    top_score = max(0.40, best_s)
+                    top_rationale = f"specificity realigned (best concept match): {best_rat}"
             elif candidates and evidence_quote:
-                # Per requirement: for [no_local_code] diagnoses with evidence, display the nearest relatable code
-                nearest_cand = scored_candidates[0][0]
-                for cand, s, rat in scored_candidates:
-                    if cand.is_valid_billable:
-                        nearest_cand = cand
-                        break
-                top_cand = nearest_cand
-                top_score = max(0.40, top_score)
-                top_rationale = f"nearest relatable candidate assigned for documented condition ({top_rationale})"
-                matching_status = "NEAREST_MATCH"
+                from medical_coding.reasoning.concept_matcher import select_best_concept_match
+                billable_pool = [c for c in candidates if c.is_valid_billable] or candidates
+                best_cand, best_s, best_rat = select_best_concept_match(
+                    candidates=billable_pool,
+                    concept_name=raw_term,
+                    evidence_text=evidence_clean,
+                    min_score_threshold=0.20,
+                )
+                if best_cand:
+                    top_cand = best_cand
+                    top_score = max(0.40, best_s)
+                    top_rationale = f"nearest relatable candidate for documented condition: {best_rat}"
+                    matching_status = "NEAREST_MATCH"
             else:
                 abstain_reason = (
                     "UNSUPPORTED_SPECIFICITY"

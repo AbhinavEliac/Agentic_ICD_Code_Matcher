@@ -30,7 +30,7 @@ NON_SPECIFICITY_WORDS: set[str] = {
     "essential", "uncomplicated",
     "native", "atherosclerotic", "atherosclerosis", "arteriosclerotic", "gallbladder",
     "collapse", "failure", "pneumonia",
-    "septicemia", "shock", "bacteremia", "systemic",
+    "systemic",
 }
 
 # Clinical attribute qualifiers mapped to documentary confirmation tokens/synonyms
@@ -281,6 +281,11 @@ class ReverseAttributeChecker:
             "lymph_node": [r"\blymph\s*nodes?\b", r"\blymphadenopathy\b", r"\bretroperitoneal\b", r"\bintra-abdominal\b", r"\bintrapelvic\b", r"\bmesenteric\b", r"\baxillary\b", r"\bmediastinal\b", r"\binguinal\b"],
             "brain": [r"\bbrain\b", r"\bcerebral\b", r"\bcerebellum\b"],
             "adrenal": [r"\badrenal\b"],
+            "oral": [r"\boral\b", r"\bmouth\b", r"\bbuccal\b", r"\blips?\b", r"\btongue\b", r"\bgingiv\w*", r"\bgums?\b", r"\bpalate\b", r"\bstomatitis\b"],
+            "nasal": [r"\bnasal\b", r"\bnose\b", r"\bnares\b", r"\bseptum\b", r"\bsinus(?:es)?\b", r"\bsinusitis\b", r"\bturbinate\w*"],
+            "pharynx": [r"\bpharyn\w*", r"\bthroat\b", r"\btonsil\w*", r"\badenoid\w*"],
+            "ear": [r"\bear\b", r"\botic\b", r"\baural\b", r"\btympanic\b"],
+            "eye": [r"\beye\b", r"\beyes\b", r"\bocular\b", r"\bophthalm\w*", r"\bcornea\w*", r"\bretina\w*", r"\bconjunctiv\w*"],
         }
 
         # Determine documented organs in diagnosis term (primary) and combined text
@@ -319,6 +324,14 @@ class ReverseAttributeChecker:
                     f"but documented condition is {', '.join(sorted(doc_organs))}",
                 )
 
+        # Enforce CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY:
+        # If code specifies an organ/site, evidence must substantiate at least one organ/site in that code
+        if code_organs and not code_organs.intersection(doc_organs):
+            return (
+                False,
+                f"unsupported anatomical site: code specifies '{', '.join(sorted(code_organs))}' but evidence does not document this site",
+            )
+
         # Breast quadrants check: If code specifies a specific quadrant, evidence must support it
         quadrant_specs = {
             "upper-outer quadrant": [r"upper[- ]outer\s+quadrant", r"\buoq\b", r"upper\s+and\s+outer"],
@@ -342,6 +355,7 @@ class ReverseAttributeChecker:
         code_description: str,
         evidence_text: str,
         diagnosis_term: str = "",
+        code: str = "",
     ) -> tuple[bool, list[str]]:
         """Validate that all positive attributes in the code description are evidenced.
 
@@ -349,13 +363,142 @@ class ReverseAttributeChecker:
             code_description: Exact description from the database.
             evidence_text: Verbatim clinical documentation / evidence quote.
             diagnosis_term: Extracted normalized clinical diagnosis term.
+            code: Optional ICD-10-CM / CPT code string.
 
         Returns:
             Tuple of (is_valid: bool, unsupported_attributes: list[str]).
         """
         combined_evidence = f"{diagnosis_term} {evidence_text}".lower()
-        implied_attributes = cls.extract_code_attributes(code_description)
+        clean_code = (code or "").strip().upper()
+        desc_lower = code_description.lower()
         unsupported: list[str] = []
+
+        # 1. Demographic & Perinatal Guardrail (ICD-10-CM Chapter 16: P00-P96)
+        # Chapter 16 codes are strictly for perinatal conditions (birth through day 28 of life).
+        is_perinatal_code = clean_code.startswith("P") or bool(
+            re.search(r"\b(?:neonatal|perinatal|newborn|fetus|fetal)\b", desc_lower)
+        )
+        if is_perinatal_code:
+            has_adult_context = bool(
+                re.search(
+                    r"\b(?:adult|\d+\s*(?:years?[\s\-]old|yo|y/o|year)|type\s+2|t2dm|geriatric|elderly|gentleman|lady|man|woman)\b",
+                    combined_evidence,
+                )
+            )
+            has_neonate_evidence = bool(
+                re.search(
+                    r"\b(?:neonate|neonatal|newborn|day\s+of\s+life|dol\s*\d+|birth\s+weight|premature\s+infant|gestational\s+age)\b",
+                    combined_evidence,
+                )
+            )
+            if has_adult_context and not has_neonate_evidence:
+                unsupported.append("demographic mismatch: perinatal/neonatal code (Chapter 16) for adult patient")
+            elif not has_neonate_evidence and re.search(r"\b(?:neonatal|newborn)\b", desc_lower):
+                unsupported.append("unsupported neonatal/newborn status")
+
+        # 2. Obstetric & Pregnancy Guardrail (ICD-10-CM Chapter 15: O00-O9A, Z33-Z34)
+        is_pregnancy_code = (
+            clean_code.startswith("O")
+            or clean_code.startswith("Z33")
+            or clean_code.startswith("Z34")
+            or bool(re.search(r"\b(?:incidental\s+pregnancy|in\s+pregnancy|during\s+pregnancy|childbirth|puerperium|antepartum|postpartum|gestational)\b", desc_lower))
+        )
+        if is_pregnancy_code:
+            has_pregnancy_evidence = bool(
+                re.search(
+                    r"\b(?:pregnant|pregnancy|gravid|gravida|gestation|intrauterine\s+pregnancy|trimester|postpartum|puerperal|delivery|labor)\b",
+                    combined_evidence,
+                )
+            )
+            if not has_pregnancy_evidence:
+                unsupported.append("unsupported pregnancy/obstetric status in non-pregnant documentation")
+
+        # 3. Clinical Polarity & Hemodynamic Contradiction Guardrail
+        # Hypotension vs Hypertension / Hypertensive Emergency
+        has_hypotension = (
+            has_positive_mention("hypotension", combined_evidence)
+            or has_positive_mention("hypotensive", combined_evidence)
+            or has_positive_mention("low blood pressure", combined_evidence)
+            or bool(re.search(r"\bbp\s*(?:of\s*)?(?:6\d|7\d|8\d)/\d+", combined_evidence))
+        )
+        is_hypertension_code = (
+            clean_code.startswith("I16")
+            or clean_code == "I10"
+            or bool(re.search(r"\b(?:hypertensive\s+emergency|hypertensive\s+crisis|urgency|essential\s+hypertension)\b", desc_lower))
+        )
+        if is_hypertension_code:
+            has_hypertension_doc = (
+                has_positive_mention("hypertension", combined_evidence)
+                or has_positive_mention("hypertensive", combined_evidence)
+                or has_positive_mention("htn", combined_evidence)
+                or has_positive_mention("high blood pressure", combined_evidence)
+            )
+            if clean_code.startswith("I16") or "emergency" in desc_lower or "crisis" in desc_lower:
+                has_crisis_doc = bool(re.search(r"\b(?:hypertensive\s+(?:emergency|crisis|urgency)|malignant\s+hypertension)\b", combined_evidence))
+                if not has_crisis_doc:
+                    unsupported.append("unsupported hypertensive emergency/crisis (requires documented crisis)")
+            if has_hypotension and not has_hypertension_doc:
+                unsupported.append("clinical polarity conflict: hypertension code assigned when evidence documents hypotension")
+
+        # Shock confirmation vs documented contradiction / stability
+        is_shock_code = (
+            clean_code.startswith("R57")
+            or bool(re.search(r"\bshock\b", desc_lower) and not re.search(r"\b(?:without|no)\s+shock\b", desc_lower))
+        )
+        if is_shock_code:
+            has_shock_doc = has_positive_mention("shock", combined_evidence)
+            has_shock_contradiction = bool(
+                re.search(
+                    r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|bp\s+normalized|normotensive)\b",
+                    combined_evidence,
+                )
+            )
+            if not has_shock_doc:
+                unsupported.append("unsupported shock: shock code assigned without affirmative diagnosis of shock in evidence")
+            elif has_shock_contradiction:
+                unsupported.append("contradictory clinical evidence: shock documented as absent/ruled out or patient hemodynamically stable")
+
+        # Glycemic Polarity: Hypoglycemia vs Hyperglycemia
+        if "hypoglycemia" in desc_lower and (has_positive_mention("hyperglycemia", combined_evidence) or has_positive_mention("dka", combined_evidence)):
+            if not has_positive_mention("hypoglycemia", combined_evidence):
+                unsupported.append("clinical polarity conflict: hypoglycemia code assigned when evidence documents hyperglycemia")
+
+        # 4. Specific Pathogen & Organism Hallucination Guardrail
+        # A code for a specific pathogen (e.g. Hepatitis B/C) MUST require evidence of that pathogen
+        is_hepatitis_code = (
+            clean_code.startswith("B15")
+            or clean_code.startswith("B16")
+            or clean_code.startswith("B17")
+            or clean_code.startswith("B18")
+            or clean_code.startswith("B19")
+            or bool(re.search(r"\b(?:viral\s+hepatitis|hepatitis\s+[abcde])\b", desc_lower))
+        )
+        if is_hepatitis_code:
+            has_hepatitis_doc = (
+                has_positive_mention("hepatitis", combined_evidence)
+                or has_positive_mention("hbv", combined_evidence)
+                or has_positive_mention("hcv", combined_evidence)
+                or has_positive_mention("hav", combined_evidence)
+            )
+            if not has_hepatitis_doc:
+                unsupported.append("unsupported pathogen specificity: viral hepatitis code assigned without documented hepatitis diagnosis")
+
+        # 5. Core Anatomical Entity vs General Constitutional Symptom Guardrail
+        # e.g., R39.14 (Feeling of incomplete bladder emptying) derived from "feverish feeling"
+        is_urinary_code = clean_code.startswith("R39") or clean_code.startswith("N30") or clean_code.startswith("N39") or bool(
+            re.search(r"\b(?:bladder|urinary|emptying|micturition|voiding|urine|dysuria)\b", desc_lower)
+        )
+        is_constitutional_term = bool(
+            re.search(r"^\s*(?:fever|feverish|feverish\s+feeling|chills?|rigors?|malaise|fatigue|weakness|body\s+aches?)\s*$", diagnosis_term.lower().strip())
+        )
+        if is_urinary_code and is_constitutional_term:
+            has_urinary_doc = bool(
+                re.search(r"\b(?:bladder|urinary|urine|dysuria|frequency|urgency|micturition|voiding|emptying|retention)\b", combined_evidence)
+            )
+            if not has_urinary_doc:
+                unsupported.append("core anatomical entity mismatch: urinary/bladder code assigned for constitutional symptom")
+
+        implied_attributes = cls.extract_code_attributes(code_description)
 
         for attr, is_positive in implied_attributes.items():
             if not is_positive:
@@ -387,7 +530,6 @@ class ReverseAttributeChecker:
             unsupported.append(anat_error)
 
         # Diabetes Type 1 vs Type 2 distinction
-        desc_lower = code_description.lower()
         if re.search(r"\btype\s+1\b", desc_lower) and not re.search(
             r"\b(?:type\s+1|t1dm|type\s+i\b)", combined_evidence
         ):
@@ -488,6 +630,7 @@ class ReverseAttributeChecker:
         code_description: str,
         evidence_text: str,
         diagnosis_term: str = "",
+        code: str = "",
     ) -> float:
         """Calculate penalty (0.0 to 0.95) for unsupported attributes.
 
@@ -498,6 +641,7 @@ class ReverseAttributeChecker:
             code_description=code_description,
             evidence_text=evidence_text,
             diagnosis_term=diagnosis_term,
+            code=code,
         )
         if not is_valid:
             return 0.90

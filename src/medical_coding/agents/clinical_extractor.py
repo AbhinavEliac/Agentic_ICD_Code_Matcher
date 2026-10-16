@@ -308,12 +308,45 @@ class EvidenceFirstFactExtractor:
         if not key or len(key) < 2:
             return
 
+        # Check if item itself is contradicted by clinical stability / absence in its evidence quote
+        ev_snippet = (item.primary_evidence_quote or "").lower()
+        if "shock" in key or "shock" in raw_t.lower():
+            if re.search(r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|normotensive)\b", ev_snippet):
+                item.certainty = Certainty.RULED_OUT
+                item.role = DiagnosisRole.RULED_OUT
+                item.assertion_status = AssertionStatus.RULED_OUT
+                item.is_authorized = False
+                item.classification_reason = "Contradictory clinical evidence: shock documented as absent/ruled out or patient hemodynamically stable"
+
         if key not in candidates_by_key:
             candidates_by_key[key] = item
         else:
             existing = candidates_by_key[key]
             existing.evidence.extend(item.evidence)
-            if item.role == DiagnosisRole.PRIMARY:
+
+            # Contradiction / Ruled-out propagation: subsequent negative or ruled-out findings supersede initial impressions
+            if (
+                item.certainty == Certainty.RULED_OUT
+                or item.role == DiagnosisRole.RULED_OUT
+                or any(ev.polarity == NegationStatus.NEGATED for ev in item.evidence)
+            ):
+                existing.certainty = Certainty.RULED_OUT
+                existing.role = DiagnosisRole.RULED_OUT
+                existing.assertion_status = AssertionStatus.RULED_OUT
+                existing.is_authorized = False
+                existing.classification_reason = f"Ruled out / negated by clinical evidence: {item.primary_evidence_quote}"
+
+            # Check shock contradiction in merged evidence
+            if "shock" in key or "shock" in existing.raw_term.lower():
+                all_ev_text = " ".join(ev.text for ev in existing.evidence).lower()
+                if re.search(r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|normotensive)\b", all_ev_text):
+                    existing.certainty = Certainty.RULED_OUT
+                    existing.role = DiagnosisRole.RULED_OUT
+                    existing.assertion_status = AssertionStatus.RULED_OUT
+                    existing.is_authorized = False
+                    existing.classification_reason = "Contradictory clinical evidence: shock documented as absent/ruled out or patient hemodynamically stable"
+
+            if existing.certainty != Certainty.RULED_OUT and item.role == DiagnosisRole.PRIMARY:
                 existing.role = DiagnosisRole.PRIMARY
                 if item.primary_justification:
                     existing.primary_justification = item.primary_justification
@@ -333,7 +366,7 @@ class EvidenceFirstFactExtractor:
                     existing.encounter_relevance = 0.0
                     existing.scores.encounter_relevance = 0.0
                     existing.scores.admitting_score = -50.0
-            elif item.temporality == Temporality.CURRENT:
+            elif item.temporality == Temporality.CURRENT and existing.certainty != Certainty.RULED_OUT:
                 existing.temporality = Temporality.CURRENT
                 if existing.role == DiagnosisRole.HISTORICAL:
                     existing.role = DiagnosisRole.SECONDARY
@@ -825,6 +858,17 @@ class EvidenceFirstFactExtractor:
                 proc_rel = 1.0 if any(re.search(pat, cleaned_line, re.IGNORECASE) for pat in PROCEDURE_SOURCE_CONTROL_CUES) else 0.0
                 treat_rel = 1.0 if any(w in cleaned_line.lower() for w in ["treated", "iv", "antibiotic", "diuresis", "insulin", "surgery", "stent", "infusion"]) else 0.0
 
+                is_chronic_baseline = bool(
+                    re.search(
+                        r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|benign\s+prostatic\s+hyperplasia|bph)\b",
+                        sub_term.lower(),
+                    )
+                    and not re.search(
+                        r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated|failure)\b",
+                        sub_term.lower(),
+                    )
+                )
+
                 cand_temp = Temporality.HISTORICAL if is_explicit_historical else Temporality.CURRENT
                 cand_role = (
                     DiagnosisRole.HISTORICAL
@@ -832,8 +876,11 @@ class EvidenceFirstFactExtractor:
                     else (
                         DiagnosisRole.PRIMARY
                         if (
-                            (is_explicit_primary_line and sub_idx == 0)
-                            or (sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and line_idx == 0 and sub_idx == 0)
+                            not is_chronic_baseline
+                            and (
+                                (is_explicit_primary_line and sub_idx == 0)
+                                or (sec.section_name in ("DISCHARGE_DIAGNOSES", "FINAL_DIAGNOSES", "PRINCIPAL_DIAGNOSIS") and line_idx == 0 and sub_idx == 0)
+                            )
                         )
                         else DiagnosisRole.SECONDARY
                     )
@@ -853,6 +900,8 @@ class EvidenceFirstFactExtractor:
                 # Explicit PRINCIPAL_DIAGNOSIS gets highest base score (+15.0); DISCHARGE_DIAGNOSES gets +10.0; SECONDARY gets +3.0
                 if is_explicit_historical:
                     base_admitting = -50.0
+                elif is_chronic_baseline:
+                    base_admitting = 4.0
                 elif is_explicit_primary_line and sub_idx == 0:
                     base_admitting = 15.0
                 elif sec.section_name in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS"):
@@ -2276,8 +2325,8 @@ class EvidenceFirstFactExtractor:
 
         # Independent organ conditions where "with" introduces a distinct co-occurring disease
         independent_with_pattern = (
-            r",?\s*\bwith\s+(?:an?\s+)?(?:acute\s+|chronic\s+|severe\s+)?(?:right\s+|left\s+|bilateral\s+)?(?:parenchymal\s+)?(?:obstructive\s+)?"
-            r"(renal\s+calculus|kidney\s+stone|ureteral\s+stone|ureteric\s+stone|nephrolithiasis|renal\s+abscess|bacteremia|septic\s+shock|sepsis|cholecystitis|pancreatitis|pneumonia|abscess|(?:bilobar\s+|multiple\s+|solitary\s+)?(?:liver|pleural|pulmonary|bone|brain|distant)?\s*metastases?)\b"
+            r",?\s*\bwith\s+(?:an?\s+)?(?:acute\s+|chronic\s+|severe\s+|generalized\s+)?(?:right\s+|left\s+|bilateral\s+)?(?:parenchymal\s+)?(?:obstructive\s+)?"
+            r"(renal\s+calculus|kidney\s+stone|ureteral\s+stone|ureteric\s+stone|nephrolithiasis|renal\s+abscess|bacteremia|septic\s+shock|sepsis|cholecystitis|pancreatitis|pneumonia|abscess|(?:bilobar\s+|multiple\s+|solitary\s+)?(?:liver|pleural|pulmonary|bone|brain|distant)?\s*metastases?|hypotension|hypovolemia|dehydration|thrombocytopenia|petechiae|petechia|body\s+aches?|myalgia|arthralgia|constipation|vomiting|diarrhea|acute\s+kidney\s+injury|aki|acidosis|electrolyte\s+imbalance)\b"
         )
 
         refined_chunks: list[str] = []
@@ -2358,11 +2407,26 @@ class EvidenceFirstFactExtractor:
                     refined_chunks.append(chunk)
 
         # 2. Split chunks on " and " when connecting distinct clinical entities
+        ANATOMICAL_OR_MODIFIER_WORDS = {
+            "renal", "ureteral", "hepatic", "biliary", "aortic", "coronary", "gastric", "duodenal",
+            "splenic", "calcaneofibular", "deltoid", "left", "right", "bilateral", "upper", "lower",
+            "inner", "outer", "medial", "lateral", "anterior", "posterior", "acute", "chronic",
+            "subacute", "mild", "moderate", "severe", "head", "neck", "tarsal", "metatarsal",
+            "bone", "osseous", "signs", "symptoms", "rest", "fluids", "without", "with",
+        }
         final_items: list[str] = []
         for item in refined_chunks:
             item_clean = re.sub(r"^(?:and|or)\s+", "", item.strip(), flags=re.IGNORECASE).strip()
             and_parts = [p.strip().strip(",; ") for p in re.split(r",?\s*\band\b\s*", item_clean, flags=re.IGNORECASE) if p.strip().strip(",; ")]
-            if len(and_parts) > 1 and all(len(p) >= 3 for p in and_parts):
+            can_split = (
+                len(and_parts) > 1
+                and all(len(p) >= 3 for p in and_parts)
+                and not any(
+                    set(re.findall(r"[a-z]+", p.lower())).issubset(ANATOMICAL_OR_MODIFIER_WORDS)
+                    for p in and_parts
+                )
+            )
+            if can_split:
                 for p in and_parts:
                     final_items.append(p)
             else:
@@ -2462,8 +2526,15 @@ class EvidenceFirstFactExtractor:
 
     def _canonicalize_term(self, term: str) -> str:
         clean = re.sub(r"^\d+[\.\)\-]\s*", "", term).strip()
-        # Strip parenthetical annotations if attached (e.g. "(BP 210/110)", "(K 7.2 - 8.9)", "(CLD)", "(PVT)")
-        clean = re.sub(r"\([^)]*\)", "", clean).strip()
+        # Handle parentheticals: preserve clinical qualifiers e.g. (calculous), (stage 3b); strip purely administrative artifacts
+        from medical_coding.utils.text import _is_administrative_parenthetical
+        def _clean_paren(m: re.Match[str]) -> str:
+            inside = m.group(1).strip()
+            if _is_administrative_parenthetical(inside):
+                return " "
+            return f" ({inside}) "
+
+        clean = re.sub(r"[\(\[\{]([^\)\]\}]+)[\)\]\}]", _clean_paren, clean)
         clean = re.sub(r",?\s*with\s+(?:significantly\s+)?elevated\s+creatinine.*$", "", clean, flags=re.IGNORECASE).strip()
         clean = re.sub(r"\s+", " ", clean).strip(".,;: ")
 
@@ -2472,7 +2543,7 @@ class EvidenceFirstFactExtractor:
             return "Malignant neoplasm of ampulla of Vater"
 
         if re.search(r"\b(?:adenocarcinoma\s+nos|invasive\s+adenocarcinoma|infiltrating\s+adenocarcinoma|adenocarcinoma\s+composed\s+of\s+solid\s+glands|moderately\s+differentiated\s+adenocarcinoma)\b", clean, re.IGNORECASE):
-            return "ADENOMAS NAD ADENCARCINOMAS-Adenocarcinoma NOS"
+            return "Adenocarcinoma NOS"
 
         # 2. Oncology metastatic manifestations
         if re.search(
@@ -2564,10 +2635,10 @@ class EvidenceFirstFactExtractor:
             return "Portal vein thrombosis"
 
         if re.search(r"\b(?:smv\s+and\s+portal\s+vein\s+thrombosis|smv\s+thrombosis|superior\s+mesenteric\s+vein\s+thrombosis)\b", clean, re.IGNORECASE):
-            return "Chronic embolism and thrombosis of inferior vena cava"
+            return "Superior mesenteric vein thrombosis"
 
         if re.search(r"\b(?:portal\s+hypertensive\s+gastropathy|phg)\b", clean, re.IGNORECASE):
-            return "Angiodysplasia of stomach and duodenum with bleeding"
+            return "Portal hypertensive gastropathy"
 
         if re.search(r"\b(?:colitis|noninfective\s+colitis|mild\s+colitis)\b", clean, re.IGNORECASE):
             return "Noninfective gastroenteritis and colitis, unspecified"
@@ -2584,9 +2655,6 @@ class EvidenceFirstFactExtractor:
 
         if re.search(r"\b(?:type\s+2\s+diabetes|t2dm|diabetes\s+mellitus\s+type\s+2|type\s+ii\s+diabetes)\b", clean, re.IGNORECASE):
             return "Type 2 diabetes mellitus"
-
-        if re.search(r"\b(?:portal\s+hypertensive\s+gastropathy|phg|gastropathy\s+portal)\b", clean, re.IGNORECASE):
-            return "Angiodysplasia of stomach and duodenum with bleeding"
 
         if re.search(r"\bportal\s+hypertension\b", clean, re.IGNORECASE):
             return "Portal hypertension"
@@ -2849,6 +2917,29 @@ class EvidenceFirstFactExtractor:
                     cand.role = DiagnosisRole.EXCLUDED
                     cand.is_authorized = False
 
+            def _is_chronic_baseline_cand(c: ClinicalDiagnosisCandidate) -> bool:
+                c_term = c.normalized_diagnosis.lower()
+                return bool(
+                    re.search(
+                        r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|benign\s+prostatic\s+hyperplasia|bph)\b",
+                        c_term,
+                    )
+                    and not re.search(
+                        r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated|failure)\b",
+                        c_term,
+                    )
+                )
+
+            has_acute_driver = any(
+                (c.scores.admitting_score >= 4.0 or any(w in c.normalized_diagnosis.lower() for w in ("acute", "fever", "hypotension", "sepsis", "shock", "infarction", "fracture", "appendicitis", "cholecystitis", "pneumonia")))
+                and not _is_chronic_baseline_cand(c)
+                for c in valid_active
+            )
+            if has_acute_driver:
+                for c in valid_active:
+                    if _is_chronic_baseline_cand(c):
+                        c.scores.admitting_score = min(c.scores.admitting_score, 3.5)
+
             # 2. Sort active candidates by admitting score descending
             valid_active.sort(key=lambda c: c.scores.admitting_score, reverse=True)
 
@@ -2928,7 +3019,12 @@ class EvidenceFirstFactExtractor:
                     is_integral = HardClinicalCandidateGate.is_symptom_integral_to_primary(
                         sec_cand.normalized_diagnosis, top.normalized_diagnosis, sec_cand.primary_evidence_quote
                     )
-                    if is_integral:
+                    has_dedicated_management = (
+                        sec_cand.treatment_relevance > 0
+                        or sec_cand.procedure_relevance > 0
+                        or any(w in sec_cand.primary_evidence_quote.lower() for w in ("treated", "managed", "laxative", "fluid", "bolus", "iv ", "support", "transfusion", "monitored"))
+                    )
+                    if is_integral and not has_dedicated_management:
                         from medical_coding.schemas.enums import ClinicalEntityType
                         sec_cand.role = DiagnosisRole.SYMPTOM
                         sec_cand.entity_type = ClinicalEntityType.SYMPTOM

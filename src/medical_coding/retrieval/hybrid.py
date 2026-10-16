@@ -245,18 +245,34 @@ class HybridICDRetriever(BaseICDRetriever):
         k = top_k if top_k is not None else self.default_top_k
         threshold = min_score if min_score is not None else self.min_score_threshold
 
-        # Round 1: Standard retrieval with original query
-        round1_hits = self.retrieve(query, top_k=k, min_score=threshold, system=system)
-        if round1_hits and round1_hits[0].retrieval_score >= threshold:
-            return round1_hits
-
+        from medical_coding.reasoning.concept_matcher import (
+            compute_concept_match_score,
+            normalize_for_concept_matching,
+        )
         from medical_coding.utils.text import extract_search_query_variations
 
-        variations = extract_search_query_variations(query, evidence=evidence)
+        # Round 1: Standard retrieval with original query
+        round1_hits = self.retrieve(query, top_k=k, min_score=threshold, system=system)
         merged_candidates: dict[str, ICDCandidate] = {c.code: c for c in round1_hits}
 
-        # Round 2: Query variations with slightly relaxed threshold
-        if max_rounds >= 2 and variations:
+        # Check if Round 1 already contains an exact match
+        has_exact = False
+        for c in round1_hits:
+            _, _, is_exact = compute_concept_match_score(
+                candidate_code=c.code,
+                candidate_description=c.description,
+                concept_name=query,
+                evidence_text=evidence,
+            )
+            if is_exact:
+                has_exact = True
+                break
+
+        # If no exact match in Round 1, expand across normalized query variations
+        variations = extract_search_query_variations(query, evidence=evidence)
+
+        # Round 2: Query variations (core clinical entities, synonyms, expanded acronyms)
+        if (not has_exact or len(merged_candidates) < k) and max_rounds >= 2 and variations:
             relaxed_threshold_r2 = max(0.20, threshold - 0.10)
             for var in variations:
                 if var.lower().strip() == query.lower().strip():
@@ -265,22 +281,38 @@ class HybridICDRetriever(BaseICDRetriever):
                 for h in var_hits:
                     if h.code not in merged_candidates or h.retrieval_score > merged_candidates[h.code].retrieval_score:
                         merged_candidates[h.code] = h
+                        _, _, is_exact = compute_concept_match_score(
+                            candidate_code=h.code,
+                            candidate_description=h.description,
+                            concept_name=query,
+                            evidence_text=evidence,
+                        )
+                        if is_exact:
+                            has_exact = True
 
-            if merged_candidates:
-                ranked = sorted(merged_candidates.values(), key=lambda c: c.retrieval_score, reverse=True)
-                if ranked[0].retrieval_score >= threshold:
-                    return ranked[:k]
-
-        # Round 3: Evidence-anchored search and relaxed threshold
-        if max_rounds >= 3:
+        # Round 3: Evidence-anchored search if still below top_k or no exact match
+        if (not has_exact or len(merged_candidates) < 5) and max_rounds >= 3 and evidence:
             relaxed_threshold_r3 = max(0.15, threshold - 0.15)
-            # Try evidence text directly if available
-            if evidence:
-                ev_hits = self.retrieve(evidence[:120], top_k=k, min_score=relaxed_threshold_r3, system=system)
-                for h in ev_hits:
-                    if h.code not in merged_candidates or h.retrieval_score > merged_candidates[h.code].retrieval_score:
-                        merged_candidates[h.code] = h
+            ev_hits = self.retrieve(evidence[:120], top_k=k, min_score=relaxed_threshold_r3, system=system)
+            for h in ev_hits:
+                if h.code not in merged_candidates or h.retrieval_score > merged_candidates[h.code].retrieval_score:
+                    merged_candidates[h.code] = h
 
-        ranked = sorted(merged_candidates.values(), key=lambda c: c.retrieval_score, reverse=True)
-        return ranked[:k] if ranked else []
+        # Rescore all candidates based on clinical concept match to prevent returning first good-enough candidate
+        scored_candidates: list[tuple[float, ICDCandidate]] = []
+        for cand in merged_candidates.values():
+            c_score, _, is_ex = compute_concept_match_score(
+                candidate_code=cand.code,
+                candidate_description=cand.description,
+                concept_name=query,
+                evidence_text=evidence,
+            )
+            composite_score = round(max(cand.retrieval_score, (0.80 * c_score) + (0.20 * cand.retrieval_score)), 4)
+            if is_ex:
+                composite_score = max(composite_score, 0.98)
+            cand.retrieval_score = composite_score
+            scored_candidates.append((composite_score, cand))
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in scored_candidates[:k]]
 

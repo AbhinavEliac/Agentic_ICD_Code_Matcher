@@ -1360,8 +1360,8 @@ class PrimarySecondaryClassifier(BaseAgent):
             if is_chronic_cond and not is_explicit_primary and not is_admission_driver:
                 has_acute_crisis = any(ac in full_context for ac in ["crisis", "emergency", "urgency", "malignant hypertension", "acute exacerbation", "decompensated", "ketoacidosis", "dka"])
                 if not has_acute_crisis:
-                    score -= 1.5
-                    reasons.append("Chronic background condition without acute exacerbation (-1.5)")
+                    score -= 6.0
+                    reasons.append("Chronic background condition without acute exacerbation (-6.0)")
 
             scored_candidates.append((asm, score, reasons))
 
@@ -1450,8 +1450,21 @@ class PrimarySecondaryClassifier(BaseAgent):
             )
             return is_sym and not has_def
 
+        def _is_chronic_baseline(cand_asm: ContextAssessment) -> bool:
+            d_l = cand_asm.diagnosis.lower()
+            return bool(
+                re.search(
+                    r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|bph)\b",
+                    d_l,
+                )
+                and not re.search(
+                    r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated)\b",
+                    d_l,
+                )
+            )
+
         has_definitive_candidates = any(
-            not _is_pure_symptom(c[0]) for c in scored_candidates if c[1] > 1.5
+            not _is_pure_symptom(c[0]) and not _is_chronic_baseline(c[0]) for c in scored_candidates if c[1] > 1.5
         )
 
         chosen_primary_idx = None
@@ -1528,7 +1541,13 @@ class PrimarySecondaryClassifier(BaseAgent):
                 is_integral = HardClinicalCandidateGate.is_symptom_integral_to_primary(
                     asm.diagnosis, top_asm.diagnosis, asm.evidence or ""
                 )
-                if is_integral:
+                has_dedicated_management = (
+                    getattr(asm, "treated_or_managed", False)
+                    or getattr(asm, "monitored", False)
+                    or getattr(asm, "affected_clinical_management", False)
+                    or any(w in (asm.evidence or "").lower() for w in ("treated", "managed", "laxative", "fluid", "bolus", "iv ", "support", "transfusion", "monitored"))
+                )
+                if is_integral and not has_dedicated_management:
                     classifications.append(
                         ConditionClassification(
                             diagnosis_id=asm.condition_id or str(uuid4()),
@@ -1661,7 +1680,7 @@ class PrimarySecondaryClassifier(BaseAgent):
             )
 
         # UHDDS Guardrail: Verify if LLM marked an etiological 'Primary' condition (e.g. Primary hypertension)
-        # as the PRIMARY role when another acute occasioning condition is present
+        # or a chronic baseline comorbidity (e.g. Type 2 diabetes) as the PRIMARY role when an acute occasioning condition is present
         primaries = [c for c in classifications if c.role == DiagnosisRole.PRIMARY]
         if len(primaries) == 1:
             p = primaries[0]
@@ -1672,13 +1691,25 @@ class PrimarySecondaryClassifier(BaseAgent):
                 r"spontaneous\s+pneumothorax|amyloidosis|insomnia|cough\s+headache|polycythemia|thrombocythemia)\b",
                 p_name,
             ))
-            if is_etio:
+            is_chronic_comorbid = bool(
+                re.search(
+                    r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|bph)\b",
+                    p_name,
+                )
+                and not re.search(
+                    r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated)\b",
+                    p_name,
+                )
+            )
+            if is_etio or is_chronic_comorbid:
                 acute_other = next((c for c in classifications if c != p and c.role == DiagnosisRole.SECONDARY and (
-                    any(w in c.diagnosis.lower() for w in ["acute", "infarction", "fracture", "appendicitis", "cholecystitis", "sepsis", "stroke", "pneumonia"])
+                    any(w in c.diagnosis.lower() for w in ["acute", "infarction", "fracture", "appendicitis", "cholecystitis", "sepsis", "stroke", "pneumonia", "fever", "hypotension", "infection"])
+                    or any(w in (c.evidence_quote or "").lower() for w in ["admitted", "presented", "chief complaint", "reason for admission", "fever", "hypotension"])
                 )), None)
                 if acute_other:
                     p.role = DiagnosisRole.SECONDARY
-                    p.classification_reason = f"Etiological 'Primary' in condition name denotes idiopathic etiology; reclassified as Secondary comorbidity under UHDDS guidelines. {p.classification_reason}"
+                    reason_label = "Etiological 'Primary' in condition name denotes idiopathic etiology" if is_etio else "Chronic baseline comorbidity"
+                    p.classification_reason = f"{reason_label}; reclassified as Secondary comorbidity under UHDDS guidelines. {p.classification_reason}"
                     acute_other.role = DiagnosisRole.PRIMARY
                     acute_other.primary_justification = f"Acute condition occasioning inpatient admission: {acute_other.evidence_quote}"
 

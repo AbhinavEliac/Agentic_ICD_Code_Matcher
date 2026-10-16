@@ -161,6 +161,14 @@ def normalize_diagnosis_name(text: str) -> str:
     # Step 3: Strip trailing medication attachments
     cleaned = MEDICATION_ATTACHMENT_PATTERN.sub("", cleaned).strip()
 
+    # Step 3b: Strip narrative explanations attached via delimiters (e.g. "Acute systolic heart failure - Patient admitted...")
+    for delim in [" - ", " – ", " — ", " : "]:
+        if delim in cleaned:
+            cand_head = cleaned.split(delim, 1)[0].strip()
+            if len(cand_head) >= 3 and not cand_head.lower().startswith(("date", "mrn", "patient", "name", "dr")):
+                cleaned = cand_head
+                break
+
     # Step 4: Handle parentheticals (preserve clinical qualifiers, strip purely administrative artifacts)
     def _clean_paren(m: re.Match[str]) -> str:
         inside = m.group(1).strip()
@@ -175,10 +183,20 @@ def normalize_diagnosis_name(text: str) -> str:
     cleaned = expand_medical_abbreviations(cleaned)
 
     # Step 6: Normalize whitespace and trailing punctuation
-    cleaned = re.sub(r"[,\-–—:;]+$", "", cleaned).strip()
+    cleaned = re.sub(r"[\.,\-–—:;]+$", "", cleaned).strip()
     cleaned = normalize_whitespace(cleaned)
 
     return cleaned
+
+
+def strip_nonessential_modifiers(text: str) -> str:
+    """Strip ICD-10-CM parenthetical nonessential modifiers for exact concept matching."""
+    if not text:
+        return ""
+    stripped = re.sub(r"\([^)]*\)", " ", text)
+    stripped = re.sub(r"\[[^\]]*\]", " ", stripped)
+    return re.sub(r"\s+", " ", stripped).strip()
+
 
 
 def extract_search_query_variations(raw_term: str, evidence: str = "") -> list[str]:

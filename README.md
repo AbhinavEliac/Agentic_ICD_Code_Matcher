@@ -20,7 +20,10 @@
 ### 🏥 Production System Overview
 **Autonomous Clinical Medical Coding Architecture**  
 🛡️ **Strict UHDDS & HIPAA Validation Engine**  
-📦 **Repository**: [Agentic ICD Code Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
+👤 **Author**: **Abhinav Gupta** — AI Developer, AI India Innovations  
+📧 **Email**: [abhinavg.aiindia@gmail.com](mailto:abhinavg.aiindia@gmail.com)  
+📦 **Gitea Repository**: [Agentic-ICD-Code-Matcher](https://gitea.aiindia.ai/Abhinav_Gupta/Agentic-ICD-Code-Matcher.git)  
+🌐 **GitHub Mirror**: [Agentic_ICD_Code_Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
 
 </div>
 
@@ -47,6 +50,7 @@
 - [10. Verification, Testing & Diagnostic Case Studies](#10-verification-testing--diagnostic-case-studies)
 - [11. Security & Data Privacy (HIPAA Compliance)](#11-security--data-privacy-hipaa-compliance)
 - [12. License](#12-license)
+- [13. Author & Contact](#13-author--contact)
 
 ---
 
@@ -408,6 +412,14 @@ Agentic_ICD_Code_Matcher/
 
 ## 6. Installation & Environment Setup
 
+### 📥 Clone Repository
+
+```bash
+# Clone from Gitea
+git clone https://gitea.aiindia.ai/Abhinav_Gupta/Agentic-ICD-Code-Matcher.git
+cd Agentic-ICD-Code-Matcher
+```
+
 ### 🚀 Automated Quick-Start Installers (Windows & Linux)
 
 The repository provides cross-platform installer scripts that automate the entire setup:
@@ -687,6 +699,18 @@ This system is engineered for compliance with the **Health Insurance Portability
 ## 12. License
 
 Distributed under the **MIT License**. See `LICENSE` for details.
+
+---
+
+## 13. Author & Contact
+
+**Abhinav Gupta**  
+*AI Developer, AI India Innovations*  
+- 📧 **Email**: [abhinavg.aiindia@gmail.com](mailto:abhinavg.aiindia@gmail.com)  
+- 🏢 **Organization**: AI India Innovations  
+- 🐙 **GitHub**: [@AbhinavEliac](https://github.com/AbhinavEliac)  
+- 📦 **Gitea Repository**: [Agentic-ICD-Code-Matcher](https://gitea.aiindia.ai/Abhinav_Gupta/Agentic-ICD-Code-Matcher.git)  
+- 🔄 **GitHub Mirror**: [Agentic_ICD_Code_Matcher](https://github.com/AbhinavEliac/Agentic_ICD_Code_Matcher)
 
 ---
 

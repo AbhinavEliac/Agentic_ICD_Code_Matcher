@@ -35,6 +35,14 @@ class CompatibilityReasoner:
         supported_attrs: list[str] = []
         unsupported_attrs: list[str] = []
 
+        # 0. Concept-Level Assertion & Contradiction Evaluation (Hard Contradictions)
+        if getattr(concept, "assertion_status", None) == "RULED_OUT":
+            contradictions.append(f"Clinical concept '{concept.canonical_name}' is ruled out/excluded in documentation")
+        for ca in getattr(concept, "contradictory_attributes", []):
+            contradictions.append(f"Concept contradiction: {ca}")
+        for ce in getattr(concept, "contradiction_evidence", []):
+            contradictions.append(f"Contradicting evidence: {ce}")
+
         # 1. Family / Prefix Compatibility (Master Prompt Section 20 & 21: SOFT Prior)
         matches_family = True
         if match_spec and match_spec.allowed_code_families:
@@ -74,42 +82,69 @@ class CompatibilityReasoner:
             code_description=candidate_description,
             evidence_text=combined_ev,
             diagnosis_term=concept.canonical_name,
+            code=candidate_code,
         )
         if not is_attr_valid:
             unsupported_attrs.extend(unsupp)
+            for u in unsupp:
+                if "contradiction" in u.lower() or "conflict" in u.lower():
+                    contradictions.append(u)
 
         # Identify supported attributes in code description
         for a in concept.supported_attributes:
             if a in desc_lower:
                 supported_attrs.append(a)
 
-        # 5. Composite Dimensional Compatibility Score (Master Prompt Section 24, 25)
-        # Unknown is NOT contradiction; missing info is NOT negative info.
-        base_score = 0.60
+        # 5. Composite Concept Match & Dimensional Compatibility Score
+        from medical_coding.reasoning.concept_matcher import compute_concept_match_score
+
+        concept_score, match_rat, is_exact = compute_concept_match_score(
+            candidate_code=candidate_code,
+            candidate_description=candidate_description,
+            concept_name=concept.canonical_name or concept.normalized_concept or "",
+            evidence_text=combined_ev,
+        )
+
+        if is_exact and not contradictions and not unsupported_attrs:
+            final_score = 1.0
+            is_compatible = True
+            reason = f"Candidate '{candidate_code}' is an exact clinical concept match for '{concept.canonical_name}' ({match_rat})."
+            return CompatibilityResult(
+                compatible=is_compatible,
+                score=final_score,
+                candidate_code=candidate_code,
+                candidate_description=candidate_description,
+                supported_attributes=supported_attrs,
+                unsupported_attributes=unsupported_attrs,
+                contradictions=contradictions,
+                reason=reason,
+            )
+
+        base_score = concept_score
         if matches_family:
-            base_score += 0.25
+            base_score = min(1.0, base_score + 0.08)
         else:
-            # Soft penalty for being outside family prefix if specified, but NOT a hard rejection
-            base_score -= 0.15
+            base_score = max(0.0, base_score - 0.15)
 
         if supported_attrs:
-            base_score += 0.10
+            base_score = min(1.0, base_score + 0.05)
 
         # Specificity penalty for unevidenced qualifiers (e.g. bleeding when none documented)
         spec_penalty = min(0.35, 0.10 * len(unsupported_attrs))
         base_score -= spec_penalty
 
-        # Severe penalty for explicit contradictions
+        # Zero tolerance for explicit contradictions (Master Specification Section 5 & 10)
         if contradictions:
-            base_score -= 0.80
-
-        final_score = max(0.0, min(1.0, round(base_score, 4)))
-        is_compatible = (len(contradictions) == 0) and (final_score >= 0.35)
+            final_score = 0.0
+            is_compatible = False
+        else:
+            final_score = max(0.0, min(1.0, round(base_score, 4)))
+            is_compatible = final_score >= 0.35
 
         if is_compatible:
-            reason = f"Candidate '{candidate_code}' is clinically compatible with concept '{concept.canonical_name}' (score={final_score})."
+            reason = f"Candidate '{candidate_code}' is clinically compatible with concept '{concept.canonical_name}' (score={final_score}, {match_rat})."
         else:
-            reason_parts: list[str] = []
+            reason_parts: list[str] = [match_rat]
             if contradictions:
                 reason_parts.append(f"Contradictions: {'; '.join(contradictions)}")
             if unsupported_attrs:

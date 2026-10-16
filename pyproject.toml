@@ -9,7 +9,7 @@ description = "Production-oriented local medical ICD-10-CM coding system using o
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "Proprietary" }
-authors = [{ name = "Principal Software Architect" }]
+authors = [{ name = "Abhinav Gupta", email = "abhinavg.aiindia@gmail.com" }]
 
 [tool.setuptools.packages.find]
 where = ["src"]

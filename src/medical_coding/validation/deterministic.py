@@ -105,13 +105,18 @@ class DeterministicValidator:
             )
 
         # 3. Clinical Meaning & Anatomical Consistency Checks
-        ev_text = (
-            getattr(condition.context.evidence, "quote", "")
-            if hasattr(condition, "context") and hasattr(condition.context, "evidence") and condition.context.evidence
-            else ""
-        )
+        ev_pieces: list[str] = []
+        if hasattr(condition, "context") and hasattr(condition.context, "evidence") and condition.context.evidence:
+            ev_pieces.append(condition.context.evidence.quote)
+        if hasattr(condition, "context") and hasattr(condition.context, "clinical_justification") and condition.context.clinical_justification:
+            ev_pieces.append(condition.context.clinical_justification)
+        if getattr(condition, "classification_reason", None):
+            ev_pieces.append(condition.classification_reason)
+        if getattr(condition, "evidence_quote", None):
+            ev_pieces.append(condition.evidence_quote)
         if selection.supporting_evidence:
-            ev_text = f"{ev_text} {' '.join(selection.supporting_evidence)}"
+            ev_pieces.extend(selection.supporting_evidence)
+        ev_text = " | ".join(p.strip() for p in ev_pieces if p and p.strip())
 
         def _evaluate_candidate_clinical_meaning(cand: ICDCandidate) -> tuple[bool, str | None, bool, str | None, bool, list[str]]:
             anat_ok, anat_err = ReverseAttributeChecker.validate_anatomical_site(
@@ -128,6 +133,7 @@ class DeterministicValidator:
                 code_description=cand.description,
                 evidence_text=ev_text,
                 diagnosis_term=condition.raw_term,
+                code=cand.code,
             )
             return anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs
 
@@ -137,28 +143,30 @@ class DeterministicValidator:
         if not is_clinically_valid:
             better_candidate = None
             if selection.candidate_pool:
+                valid_alts: list[ICDCandidate] = []
                 for alt_cand in selection.candidate_pool:
                     if not self.catalog.is_valid_code(alt_cand.code) or not self.catalog.is_billable_code(alt_cand.code):
                         continue
                     a_ok, _, l_ok, _, at_ok, _ = _evaluate_candidate_clinical_meaning(alt_cand)
                     if a_ok and l_ok and at_ok:
-                        better_candidate = alt_cand
-                        break
+                        valid_alts.append(alt_cand)
+
+                if valid_alts:
+                    from medical_coding.reasoning.concept_matcher import select_best_concept_match
+                    better_candidate, _, _ = select_best_concept_match(
+                        candidates=valid_alts,
+                        concept_name=condition.raw_term,
+                        evidence_text=ev_text,
+                        catalog=self.catalog,
+                    )
 
             if better_candidate:
                 candidate = better_candidate
                 code = better_candidate.code
                 anat_ok, anat_err, lat_ok, lat_err, attr_ok, attr_errs = _evaluate_candidate_clinical_meaning(candidate)
-            elif getattr(selection, "matching_status", "") == "NEAREST_MATCH":
-                # User requirement: for [no_local_code] type diagnosis, nearest relatable code should get displayed, because they also have evidence
-                checks.append(
-                    ValidationCheck(
-                        rule_name="NearestRelatableMatch",
-                        passed=True,
-                        details=f"Nearest relatable code '{code}' ({candidate.description}) accepted for documented clinical condition.",
-                    )
-                )
-            else:
+                is_clinically_valid = anat_ok and lat_ok and attr_ok
+
+            if not is_clinically_valid:
                 failure_reasons = []
                 if not anat_ok and anat_err:
                     failure_reasons.append(anat_err)
@@ -298,7 +306,24 @@ class DeterministicValidator:
         selection_map = {s.diagnosis_id: s for s in selections}
 
         for cond in conditions:
-            if not cond.is_billable_candidate or cond.role == DiagnosisRole.EXCLUDED:
+            cond_certainty = getattr(cond.context, "certainty", None) if hasattr(cond, "context") else None
+            cond_negation = getattr(cond.context, "negation", None) if hasattr(cond, "context") else None
+            is_excluded = not cond.is_billable_candidate or cond.role == DiagnosisRole.EXCLUDED
+            is_ruled_out = (
+                cond_certainty == Certainty.RULED_OUT
+                or cond_negation == NegationStatus.NEGATED
+                or any(k in cond.raw_term.lower() for k in ("ruled out", "negated"))
+            )
+            # Polarity contradiction check: Shock with documented stability
+            cond_ev = f"{cond.raw_term} {getattr(cond, 'classification_reason', '')}".lower()
+            if hasattr(cond, "context") and hasattr(cond.context, "evidence") and cond.context.evidence:
+                cond_ev = f"{cond_ev} {cond.context.evidence.quote.lower()}"
+            is_shock_contra = (
+                "shock" in cond.raw_term.lower()
+                and bool(re.search(r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|bp\s+normalized|normotensive)\b", cond_ev))
+            )
+
+            if is_excluded or is_ruled_out or is_shock_contra:
                 abstention_list.append(
                     AbstentionRecord(
                         diagnosis_id=cond.diagnosis_id,
@@ -306,7 +331,7 @@ class DeterministicValidator:
                         reason=AbstentionReason.EXCLUDED_BY_TEMPORALITY
                         if "historical" in cond.classification_reason.lower()
                         else AbstentionReason.EXCLUDED_BY_NEGATION,
-                        detail=cond.classification_reason,
+                        detail=cond.classification_reason or f"Condition '{cond.raw_term}' is excluded, ruled out, or contradicted by evidence.",
                         stage=PipelineStage.CLASSIFICATION,
                     )
                 )
@@ -415,7 +440,7 @@ class PrimarySecondaryClassificationValidator:
             cond = cond_in.model_copy()
             ctx = ctx_map.get(cond.diagnosis_id) or ctx_map.get(cond.diagnosis.lower())
 
-            # Rule: Ruled-out or negated conditions CANNOT be PRIMARY or SECONDARY
+            # Rule: Ruled-out, negated, or contradicted conditions CANNOT be PRIMARY or SECONDARY
             is_ruled_out_or_negated = False
             if ctx:
                 if ctx.certainty == Certainty.RULED_OUT or ctx.negation == NegationStatus.NEGATED:
@@ -426,14 +451,20 @@ class PrimarySecondaryClassificationValidator:
             ):
                 is_ruled_out_or_negated = True
 
-            if is_ruled_out_or_negated and cond.role != DiagnosisRole.EXCLUDED:
+            # Rule: Physiological contradiction (e.g. provisional impression contradicted by objective stability)
+            is_contradicted = False
+            ev_check = f"{cond.diagnosis} {getattr(cond, 'evidence_quote', '')} {cond.classification_reason}".lower()
+            if "shock" in cond.diagnosis.lower() and bool(re.search(r"\b(?:no\s+shock|normotensive\s+without\s+shock|hemodynamically\s+stable|ruled\s+out\s+shock|shock\s+ruled\s+out|no\s+evidence\s+of\s+shock|stable\s+without\s+shock|not\s+in\s+shock|stable\s+hemodynamics|bp\s+normalized|normotensive)\b", ev_check)):
+                is_contradicted = True
+
+            if (is_ruled_out_or_negated or is_contradicted) and cond.role != DiagnosisRole.EXCLUDED:
                 audit_notes.append(
                     f"Deterministic override: Condition '{cond.diagnosis}' was marked {cond.role.value} "
-                    "but is ruled out/negated. Forcing to EXCLUDED."
+                    "but is ruled out/contradicted by clinical evidence. Forcing to EXCLUDED."
                 )
                 cond.role = DiagnosisRole.EXCLUDED
                 cond.is_billable_candidate = False
-                cond.classification_reason = f"Ruled out / negated condition excluded from coding: {cond.classification_reason}"
+                cond.classification_reason = f"Ruled out / contradicted condition excluded from coding: {cond.classification_reason}"
                 abstentions.append(
                     AbstentionRecord(
                         diagnosis_id=cond.diagnosis_id,
@@ -847,14 +878,39 @@ class CandidateRankingDeterministicValidator:
                     decision="ABSTAINED",
                 )
 
-        # Reverse Attribute Check (Master Prompt: CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
-        is_attr_valid, unsupp_attrs = ReverseAttributeChecker.validate_code_attributes(
-            code_description=matching_candidate.description,
-            evidence_text=clean_evidence,
-            diagnosis_term=clean_diagnosis,
-        )
-        if not is_attr_valid:
-            # Look for a candidate in candidate pool that is billable and valid under reverse attribute check
+        # 6. Reverse Attribute & Clinical Semantic Consistency Check (CODE_SPECIFICITY <= EVIDENCE_SPECIFICITY)
+        def _evaluate_candidate_semantics(cand: ICDCandidate) -> tuple[bool, list[str]]:
+            errs: list[str] = []
+            anat_ok, anat_err = ReverseAttributeChecker.validate_anatomical_site(
+                code_description=cand.description,
+                evidence_text=clean_evidence,
+                diagnosis_term=clean_diagnosis,
+            )
+            if not anat_ok and anat_err:
+                errs.append(anat_err)
+
+            lat_ok, lat_err = ReverseAttributeChecker.validate_laterality(
+                code_description=cand.description,
+                evidence_text=clean_evidence,
+                diagnosis_term=clean_diagnosis,
+            )
+            if not lat_ok and lat_err:
+                errs.append(lat_err)
+
+            attr_ok, attr_errs = ReverseAttributeChecker.validate_code_attributes(
+                code_description=cand.description,
+                evidence_text=clean_evidence,
+                diagnosis_term=clean_diagnosis,
+                code=cand.code,
+            )
+            if not attr_ok and attr_errs:
+                errs.extend(attr_errs)
+
+            return (len(errs) == 0), errs
+
+        is_cand_valid, unsupp_attrs = _evaluate_candidate_semantics(matching_candidate)
+        if not is_cand_valid:
+            # Look for a candidate in candidate pool that is billable and valid under full semantic validation
             better_candidate = None
             best_cand_score = -999.0
             diag_clean_lower = clean_diagnosis.lower()
@@ -864,11 +920,7 @@ class CandidateRankingDeterministicValidator:
             for alt_cand in sorted_candidates:
                 if not alt_cand.is_valid_billable:
                     continue
-                alt_valid, _ = ReverseAttributeChecker.validate_code_attributes(
-                    code_description=alt_cand.description,
-                    evidence_text=clean_evidence,
-                    diagnosis_term=clean_diagnosis,
-                )
+                alt_valid, _ = _evaluate_candidate_semantics(alt_cand)
                 if alt_valid:
                     alt_desc_lower = alt_cand.description.lower()
                     if any(t in alt_desc_lower for t in diag_tokens):
@@ -891,7 +943,7 @@ class CandidateRankingDeterministicValidator:
                 selection.selected_description = better_candidate.description
                 selection.selected_candidate = better_candidate
                 selection.ranking_reason = (
-                    f"Specificity realigned: Documentation does not support {', '.join(unsupp_attrs)}; "
+                    f"Clinical semantic realigned: Original candidate violated {'; '.join(unsupp_attrs)}; "
                     f"selected supported code {better_candidate.code} ({better_candidate.description})."
                 )
             else:
@@ -902,8 +954,8 @@ class CandidateRankingDeterministicValidator:
                     selected_description=None,
                     selected_candidate=None,
                     ranking_reason=(
-                        f"Unsupported specificity: Candidate '{matching_candidate.code}' requires {', '.join(unsupp_attrs)}, "
-                        "which is not documented in clinical evidence."
+                        f"Failed clinical semantic validation: Candidate '{matching_candidate.code}' violates "
+                        f"{'; '.join(unsupp_attrs)}, which is not documented in clinical evidence."
                     ),
                     supporting_evidence=[clean_evidence],
                     confidence=0.0,

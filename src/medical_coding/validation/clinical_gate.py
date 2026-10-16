@@ -173,11 +173,14 @@ PATHOLOGY_KEYWORDS = {
     "sclerosis", "fibrosis", "adhesions", "dns", "mastoiditis",
     "flu", "influenza", "viral", "virus", "illness", "coryza", "rhonchi", "bronchospasm",
     "stricture", "varices", "variceal", "varix", "thrombus", "embolus",
+    "petechiae", "petechia", "purpura", "ecchymosis", "myalgia", "arthralgia",
 }
 
 # Clinical symptoms, signs, and patient complaints
 SYMPTOM_KEYWORDS = {
     "pain", "colic", "discomfort", "ache", "aching", "soreness", "tenderness",
+    "body ache", "body aches", "myalgia", "arthralgia",
+    "petechiae", "petechia", "purpura", "ecchymosis",
     "fever", "pyrexia", "chill", "chills", "rigor", "rigors", "sweating", "diaphoresis",
     "cough", "coughing", "hemoptysis", "dyspnea", "breathlessness", "tachypnea",
     "wheeze", "wheezing", "stridor", "rhonchi", "rales", "crackles",
@@ -487,6 +490,7 @@ class HardClinicalCandidateGate:
             "psychos", "malformat", "anomal", "dysplas", "deviat", "hypertroph", "hyperplas",
             "atroph", "thicken", "narrow", "calcif",
             "flu", "influenz", "viral", "virus", "illness", "coryza", "rhonch", "bronchospas", "strictur", "varic",
+            "petechi", "purpur", "ecchymo", "myalg", "arthralg",
         )
         has_clinical_root = any(r in term_lower for r in CLINICAL_ROOTS)
 
