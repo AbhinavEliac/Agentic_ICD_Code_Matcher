@@ -1443,6 +1443,8 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "shortness of breath", "nausea", "vomiting", "weakness", "fever",
                     "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress", "dysuria",
                     "malaise", "lethargy", "dizziness", "lightheadedness", "loss of appetite", "anorexia",
+                    "chills", "rigor", "purpura", "petechiae", "headache", "constipation", "diarrhea",
+                    "rash", "pruritus", "itching", "hematuria", "hemoptysis", "palpitations", "jaundice", "icterus",
                 ]
             )
             has_def = (
@@ -1451,6 +1453,8 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "syndrome", "failure", "infarction", "disease", "disorder", "calculus",
                     "lithiasis", "ulcer", "pneumonia", "infection", "carcinoma", "cancer",
                     "neoplasm", "adenocarcinoma", "lymphoma", "leukemia", "sepsis", "shock", "fracture",
+                    "varices", "cirrhosis", "thrombosis", "embolism", "viral", "virus", "bacterial",
+                    "hypotension", "emergency", "injury", "trauma", "poisoning", "hemorrhage",
                 ])
             )
             return is_sym and not has_def
@@ -1468,10 +1472,6 @@ class PrimarySecondaryClassifier(BaseAgent):
                 )
             )
 
-        has_definitive_candidates = any(
-            not _is_pure_symptom(c[0]) and not _is_chronic_baseline(c[0]) for c in scored_candidates if c[1] > 1.5
-        )
-
         chosen_primary_idx = None
         for i, (asm, s, _r_list) in enumerate(scored_candidates):
             if (
@@ -1480,7 +1480,8 @@ class PrimarySecondaryClassifier(BaseAgent):
                 and asm.temporality in (Temporality.CURRENT, "CURRENT")
                 and bool(asm.evidence and asm.evidence.strip())
             ):
-                if has_definitive_candidates and (_is_pure_symptom(asm) or _is_chronic_baseline(asm)):
+                is_explicit_pri = any(r.startswith("Explicitly documented as PRIMARY/PRINCIPAL") for r in _r_list)
+                if (_is_pure_symptom(asm) or _is_chronic_baseline(asm)) and not is_explicit_pri:
                     continue
                 is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
                 if is_valid:
@@ -1494,16 +1495,22 @@ class PrimarySecondaryClassifier(BaseAgent):
                     asm.temporality in (Temporality.CURRENT, "CURRENT")
                     and bool(asm.evidence and asm.evidence.strip())
                 ):
-                    if has_definitive_candidates and (_is_pure_symptom(asm) or _is_chronic_baseline(asm)):
+                    is_explicit_pri = any(r.startswith("Explicitly documented as PRIMARY/PRINCIPAL") for r in _r_list)
+                    if (_is_pure_symptom(asm) or _is_chronic_baseline(asm)) and not is_explicit_pri:
                         continue
                     is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
                     if is_valid:
                         chosen_primary_idx = i
                         break
 
-        # Unconditional fallback: Rank 1 among scored_candidates
-        if chosen_primary_idx is None and scored_candidates:
-            chosen_primary_idx = 0
+        # Explicit provider designation check if still not chosen
+        if chosen_primary_idx is None:
+            for i, (asm, s, _r_list) in enumerate(scored_candidates):
+                if any(r.startswith("Explicitly documented as PRIMARY/PRINCIPAL") for r in _r_list):
+                    is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
+                    if is_valid:
+                        chosen_primary_idx = i
+                        break
 
         if chosen_primary_idx is not None:
             top_asm, top_score, top_reasons = scored_candidates[chosen_primary_idx]
@@ -1511,10 +1518,12 @@ class PrimarySecondaryClassifier(BaseAgent):
                 item for j, item in enumerate(scored_candidates) if j != chosen_primary_idx
             ]
         else:
-            top_asm, top_score, top_reasons = scored_candidates[0]
-            remaining_candidates = scored_candidates[1:]
+            top_asm = None
+            top_score = 0.0
+            top_reasons = []
+            remaining_candidates = scored_candidates
 
-        if chosen_primary_idx is not None:
+        if top_asm is not None:
             # Primary selected (either unique or prioritized under UHDDS Section II.C)
             top_ev_quote = (top_asm.evidence or "").strip()
             is_explicit = any(r.startswith("Explicitly documented as PRIMARY/PRINCIPAL") for r in top_reasons)

@@ -629,12 +629,13 @@ class EvidenceFirstFactExtractor:
 
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-            # Skip absence statements, treatment instructions, non-clinical activities, generic procedures, and cross-reference boilerplate
+            # Skip absence statements, treatment instructions, non-clinical activities, generic procedures, normal findings, and cross-reference boilerplate
             if (
                 HardClinicalCandidateGate.is_absence_statement(sent_clean)
                 or HardClinicalCandidateGate.is_treatment_instruction(sent_clean)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent_clean)
                 or HardClinicalCandidateGate.is_generic_procedure(sent_clean)
+                or HardClinicalCandidateGate.is_normal_finding(sent_clean)
                 or re.search(r"\b(?:symptoms?|complaints?)\s+described\s+in\b|\bdescribed\s+in\s+(?:the\s+)?final\s+diagnosis\b|\babove\s+mentioned\s+complaints\b", sent_clean, re.IGNORECASE)
             ):
                 continue
@@ -1155,6 +1156,7 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(sent)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent)
                 or HardClinicalCandidateGate.is_generic_procedure(sent)
+                or HardClinicalCandidateGate.is_normal_finding(sent)
             ):
                 continue
 
@@ -1315,6 +1317,7 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(sent)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent)
                 or HardClinicalCandidateGate.is_generic_procedure(sent)
+                or HardClinicalCandidateGate.is_normal_finding(sent)
             ):
                 continue
 
@@ -1447,6 +1450,7 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(line_clean)
                 or HardClinicalCandidateGate.is_non_clinical_activity(line_clean)
                 or HardClinicalCandidateGate.is_generic_procedure(line_clean)
+                or HardClinicalCandidateGate.is_normal_finding(line_clean)
             ):
                 continue
 
@@ -2538,76 +2542,76 @@ class EvidenceFirstFactExtractor:
         clean = re.sub(r",?\s*with\s+(?:significantly\s+)?elevated\s+creatinine.*$", "", clean, flags=re.IGNORECASE).strip()
         clean = re.sub(r"\s+", " ", clean).strip(".,;: ")
 
-        # 1. Primary oncology sites & morphology
+        # 1. Primary oncology sites & morphology (grounded in clinical documentation)
         if re.search(r"\b(?:periampullary\s+(?:adenocarcinoma|carcinoma|malignancy|cancer)|ampullary\s+(?:adenocarcinoma|carcinoma|malignancy|cancer)|carcinoma\s+of\s+ampulla\s+of\s+vater)\b", clean, re.IGNORECASE):
-            return "Malignant neoplasm of ampulla of Vater"
+            return "Periampullary adenocarcinoma"
 
         if re.search(r"\b(?:adenocarcinoma\s+nos|invasive\s+adenocarcinoma|infiltrating\s+adenocarcinoma|adenocarcinoma\s+composed\s+of\s+solid\s+glands|moderately\s+differentiated\s+adenocarcinoma)\b", clean, re.IGNORECASE):
-            return "Adenocarcinoma NOS"
+            return "Adenocarcinoma"
 
-        # 2. Oncology metastatic manifestations
+        # 2. Oncology metastatic manifestations (grounded in documented clinical terms)
         if re.search(
             r"\b(?:bone\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+bone|metastatic\s+bone\s+disease|bone\s*\((?:lumbar\s+)?spine|bone\s*\(pelvis|osseous\s+metastases?|skeletal\s+metastases?|osteoblastic\s+metastases?|osteoblastic\s+metastatic\s+disease|osteoblastic\s+(?:spine\s+)?lesions?|sclerotic\s+skeletal\s+lesions?|skeletal\s+lesions(?:\s+with\s+psma\s+expression)?|psma\s+expressing\s+(?:skeletal\s+lesions?|bone\s+lesions?)|metastat(?:ic|es)\s+to\s+(?:the\s+)?(?:lumbar\s+)?spine|metastat(?:ic|es)\s+to\s+(?:the\s+)?pelvis)\b",
             clean,
             re.IGNORECASE,
         ):
-            return "Secondary malignant neoplasm of bone"
+            return "Bone metastases"
 
         if re.search(
             r"\b(?:retroperitoneal\s+(?:and\s+pelvic\s+)?lymph\s+node\s+metastases?|retroperitoneal\s+lymphadenopathy|metastat(?:ic|es)\s+(?:to|in)\s+retroperitoneal\s+lymph\s+nodes?|intra[- ]abdominal\s+lymph\s+node\s+metastases?|paraaortic\s+and\s+aortocaval\s+nodes?|aortocaval\s+nodes?|paraaortic\s+nodes?|peripancreatic.*?(?:lymph\s+)?nodes?|peri-?portal.*?(?:lymph\s+)?nodes?|precaval.*?(?:lymph\s+)?nodes?|porto-?caval.*?(?:lymph\s+)?nodes?|gastrohepatic.*?(?:lymph\s+)?nodes?|central\s+mesentric\s+vessels)\b",
             clean,
             re.IGNORECASE,
         ):
-            return "Secondary and unspecified malignant neoplasm of intra-abdominal lymph nodes"
+            return "Retroperitoneal lymph node metastases" if "metast" in clean.lower() or "node" in clean.lower() else "Retroperitoneal lymphadenopathy"
 
         if re.search(
             r"\b(?:inguinal\s+and\s+lower\s+limb\s+lymph\s+nodes?|external\s+iliac\s+nodes?|proximal\s+femoral\s+lymph\s+node|femoral\s+lymph\s+node|external\s+iliac\s+lymph\s+nodes?|inguinal\s+lymph\s+nodes?)\b",
             clean,
             re.IGNORECASE,
         ):
-            return "Secondary and unspecified malignant neoplasm of inguinal and lower limb lymph nodes"
+            return "Inguinal lymph node metastases"
 
         if re.search(
             r"\b(?:pelvic\s+lymph\s+node\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+pelvic\s+lymph\s+nodes?)\b",
             clean,
             re.IGNORECASE,
         ):
-            return "Secondary and unspecified malignant neoplasm of intrapelvic lymph nodes"
+            return "Pelvic lymph node metastases"
 
         if re.search(
             r"\b(?:lymph\s+node\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+lymph\s+nodes?|nodal\s+metastases?|distant\s+lymphadenopathy)\b",
             clean,
             re.IGNORECASE,
         ):
-            return "Secondary and unspecified malignant neoplasm of lymph nodes"
+            return "Lymph node metastases"
 
         if re.search(r"\b(?:liver\s+metastases?|hepatic\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+liver|multiple\s+lesions\s+in\s+both\s+(?:the\s+)?lobes\s+of\s+liver|discrete\s+lesions\s+in\s+both\s+lobes|metastatic\s+liver\s+disease|discrete\s+(?:heterogeneously\s+enhancing\s+)?lesions\s+involving\s+segment.*?-?\s*metastatic)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of liver and intrahepatic bile duct"
+            return "Liver metastases"
 
         if re.search(r"\b(?:peritoneal\s+involvement|peritoneal\s+metastases?|peritoneal\s+metastasis|omental\s+fat\s+stranding.*?(?:nodularities|reticulations)|omental\s+nodularities|metastat(?:ic|es)\s+to\s+peritoneum)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of retroperitoneum and peritoneum"
+            return "Peritoneal metastases"
 
         if re.search(r"\b(?:lung\s+metastases?|pulmonary\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+lung)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of lung"
+            return "Lung metastases"
 
         if re.search(r"\b(?:brain\s+metastases?|cerebral\s+metastases?|metastat(?:ic|es)\s+(?:to|in)\s+brain)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of brain"
+            return "Brain metastases"
 
         if re.search(r"\b(?:pleural\s+metastases?|pleural\s+metastasis|metastasis\s+to\s+pleura|malignant\s+pleural\s+effusion|malignant\s+pleural\s+metastasis)\b", clean, re.IGNORECASE):
-            return "Secondary malignant neoplasm of pleura"
+            return "Pleural metastases"
 
         if re.search(r"\b(?:prostate\s+cancer|prostate\s+carcinoma|adenocarcinoma\s+of\s+(?:the\s+)?prostate|prostate\s+adenocarcinoma|malignant\s+neoplasm\s+of\s+prostate)\b", clean, re.IGNORECASE):
-            return "Malignant neoplasm of prostate"
+            return "Prostate adenocarcinoma" if "adenocarcinoma" in clean.lower() else "Prostate cancer"
 
         # 3. Urology & Renal Conditions
         if re.search(r"\b(?:vuj\s+calculus|right\s+vuj\s+calculus|vesicoureteric\s+junction\s+calculus|vesicoureteral\s+junction\s+calculus|calculus\s+near\s+the\s+vuj|tightly\s+impacted\s+stone\s+in\s+the\s+lower\s+right\s+ureter|impacted\s+stone\s+in\s+the\s+lower\s+right\s+ureter|right\s+ureteric\s+stone|ureteric\s+calculus|ureteral\s+calculus)\b", clean, re.IGNORECASE):
-            return "Calculus of ureter"
+            return "VUJ calculus" if "vuj" in clean.lower() else ("Ureteric calculus" if "ureter" in clean.lower() else "Calculus of ureter")
 
         if re.search(r"\b(?:puj\s+calculus\s+with\s+(?:moderate\s+)?hydronephrosis|left\s+puj\s+calculus\s+with\s+(?:moderate\s+)?hydronephrosis|pelviureteric\s+junction\s+calculus\s+with\s+hydronephrosis|calculus\s+causing\s+(?:moderate\s+)?hydronephrosis|hydronephrosis\s+with\s+(?:renal\s+and\s+ureteral\s+)?calcul(?:us|ous)\s+obstruction)\b", clean, re.IGNORECASE):
-            return "Hydronephrosis with renal and ureteral calculous obstruction"
+            return "PUJ calculus with hydronephrosis" if "puj" in clean.lower() else ("Hydronephrosis with calculous obstruction" if "calculous obstruction" in clean.lower() else "Hydronephrosis with calculus")
 
         if re.search(r"\b(?:puj\s+calculus|left\s+puj\s+calculus|pelviureteric\s+junction\s+calculus|non-obstructive\s+left\s+(?:lower\s+calyceal\s+)?renal\s+calculus|lower\s+calyceal\s+calculus|calyceal\s+calculus|renal\s+calculus|calculus\s+of\s+kidney)\b", clean, re.IGNORECASE):
-            return "Calculus of kidney"
+            return "PUJ calculus" if "puj" in clean.lower() else "Renal calculus"
 
         if re.search(r"\b(?:hypertensive\s+emergency|severe\s+hypertension)\b", clean, re.IGNORECASE):
             return "Hypertensive emergency"
@@ -2619,7 +2623,7 @@ class EvidenceFirstFactExtractor:
             return "Acute kidney injury"
 
         if re.search(r"\b(?:acute\s+kidney\s+failure|acute\s+renal\s+failure)\b", clean, re.IGNORECASE):
-            return "Acute kidney failure, unspecified"
+            return "Acute kidney failure"
 
         # 4. Hepatology & GI Conditions
         if re.search(r"\b(?:high[\s\-]?risk\s+esophageal\s+varices\s+with\s+bleed|esophageal\s+varices\s+with\s+bleed(?:ing)?|bleeding\s+esophageal\s+varices)\b", clean, re.IGNORECASE):
@@ -2629,7 +2633,7 @@ class EvidenceFirstFactExtractor:
             return "Esophageal varices without bleeding"
 
         if re.search(r"\b(?:chronic\s+liver\s+disease|cld\s+with\s+portal\s+hypertension|chronic\s+liver\s+disease\s+with\s+portal\s+hypertension|cirrhosis\s+of\s+liver|liver\s+cirrhosis|cld)\b", clean, re.IGNORECASE):
-            return "Unspecified cirrhosis of liver"
+            return "Cirrhosis of liver" if "cirrhos" in clean.lower() else "Chronic liver disease"
 
         if re.search(r"\b(?:portal\s+vein\s+thrombosis|pvt)\b", clean, re.IGNORECASE) and not re.search(r"\bsmv\b", clean, re.IGNORECASE):
             return "Portal vein thrombosis"
@@ -2641,26 +2645,31 @@ class EvidenceFirstFactExtractor:
             return "Portal hypertensive gastropathy"
 
         if re.search(r"\b(?:colitis|noninfective\s+colitis|mild\s+colitis)\b", clean, re.IGNORECASE):
-            return "Noninfective gastroenteritis and colitis, unspecified"
+            return "Colitis"
 
         if re.search(r"\b(?:thrombocytopenia|secondary\s+thrombocytopenia|chemotherapy[\s\-]?induced\s+thrombocytopenia)\b", clean, re.IGNORECASE):
-            return "Other secondary thrombocytopenia"
+            return "Secondary thrombocytopenia" if ("secondary" in clean.lower() or "chemotherapy" in clean.lower()) else "Thrombocytopenia"
 
         # 5. Pulmonology & Medicine
-        if re.search(r"\b(?:viral\s+flu\s+like\s+illness|viral\s+lower\s+respiratory\s+tract\s+infection|viral\s+respiratory\s+infection)\b", clean, re.IGNORECASE):
-            return "Unspecified acute lower respiratory infection"
+        if re.search(r"\b(?:viral\s+flu\s+like\s+illness|flu\s+like\s+illness)\b", clean, re.IGNORECASE):
+            return "Flu-like illness"
+
+        if re.search(r"\b(?:viral\s+lower\s+respiratory\s+tract\s+infection|viral\s+respiratory\s+infection)\b", clean, re.IGNORECASE):
+            return "Viral respiratory infection"
 
         if re.search(r"\b(?:acute\s+exacerbation\s+of\s+copd|copd\s+with\s+(?:acute\s+)?exacerbation|chronic\s+obstructive\s+pulmonary\s+disease\s+with\s+(?:acute\s+)?exacerbation)\b", clean, re.IGNORECASE):
-            return "Chronic obstructive pulmonary disease with (acute) exacerbation"
+            if "copd" in clean.lower():
+                return "Acute exacerbation of COPD" if "acute" in clean.lower() else "COPD with acute exacerbation"
+            return "Chronic obstructive pulmonary disease with acute exacerbation"
 
         if re.search(r"\b(?:type\s+2\s+diabetes|t2dm|diabetes\s+mellitus\s+type\s+2|type\s+ii\s+diabetes)\b", clean, re.IGNORECASE):
-            return "Type 2 diabetes mellitus"
+            return "Type 2 diabetes mellitus" if ("mellitus" in clean.lower() or "t2dm" in clean.lower()) else "Type 2 diabetes"
 
         if re.search(r"\bportal\s+hypertension\b", clean, re.IGNORECASE):
             return "Portal hypertension"
 
         if re.search(r"\b(?:essential\s+hypertension|primary\s+hypertension|systemic\s+hypertension|arterial\s+hypertension|hypertension|htn)\b", clean, re.IGNORECASE) and not re.search(r"\b(?:portal|pulmonary|intracranial|ocular)\s+hypertension\b", clean, re.IGNORECASE):
-            return "Essential hypertension"
+            return "Essential hypertension" if "essential" in clean.lower() else "Hypertension"
 
         if clean.lower() in ("urticarial", "urticarial rash", "rash urticarial"):
             return "Urticaria"
@@ -3025,6 +3034,8 @@ class EvidenceFirstFactExtractor:
                         "syndrome", "failure", "infarction", "disease", "disorder", "calculus",
                         "lithiasis", "ulcer", "pneumonia", "infection", "carcinoma", "cancer",
                         "neoplasm", "adenocarcinoma", "lymphoma", "leukemia", "sepsis", "shock", "fracture",
+                        "varices", "cirrhosis", "thrombosis", "embolism", "viral", "virus", "bacterial",
+                        "hypotension", "emergency", "injury", "trauma", "poisoning", "hemorrhage",
                     ])
                 )
                 return is_sym and not has_def
@@ -3048,30 +3059,38 @@ class EvidenceFirstFactExtractor:
             if re.search(r"\b(?:acute\s+exacerbation\s+of\s+copd|copd\s+with\s+(?:acute\s+)?exacerbation|acute\s+copd\s+exacerbation)\b", full_narrative_lower):
                 for cand in valid_active:
                     if cand.normalized_diagnosis.lower() in ("chronic obstructive pulmonary disease", "copd", "chronic obstructive pulmonary disease, unspecified"):
-                        cand.normalized_diagnosis = "Chronic obstructive pulmonary disease with (acute) exacerbation"
-                        cand.raw_term = "Chronic obstructive pulmonary disease with (acute) exacerbation"
+                        cand.normalized_diagnosis = "Acute exacerbation of COPD" if "copd" in full_narrative_lower else "Chronic obstructive pulmonary disease with acute exacerbation"
+                        cand.raw_term = cand.normalized_diagnosis
 
             if valid_active:
                 # Select the top candidate adhering to UHDDS: if definitive driver exists, pick highest definitive candidate
-                chosen_idx = 0
+                chosen_idx = None
                 if has_definitive_driver:
                     for idx, cand in enumerate(valid_active):
                         if not _is_pure_symptom_cand(cand) and not _is_chronic_baseline_cand(cand):
                             chosen_idx = idx
                             break
+                else:
+                    for idx, cand in enumerate(valid_active):
+                        if any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in cand.evidence):
+                            chosen_idx = idx
+                            break
 
-                top = valid_active.pop(chosen_idx)
-                top.role = DiagnosisRole.PRIMARY
-                top.is_authorized = True
-                is_explicit = any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in top.evidence)
-                top.clinical_attributes["explicitly_designated_primary"] = is_explicit
-                top.clinical_attributes["clinically_inferred_primary"] = not is_explicit
-                designation_type = "Explicitly documented provider principal diagnosis" if is_explicit else "Clinically inferred principal diagnosis under UHDDS"
-                top.primary_justification = f"{designation_type} occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
-                primary_diag = top
+                top_norm = ""
+                top_canon = ""
+                if chosen_idx is not None:
+                    top = valid_active.pop(chosen_idx)
+                    top.role = DiagnosisRole.PRIMARY
+                    top.is_authorized = True
+                    is_explicit = any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in top.evidence)
+                    top.clinical_attributes["explicitly_designated_primary"] = is_explicit
+                    top.clinical_attributes["clinically_inferred_primary"] = not is_explicit
+                    designation_type = "Explicitly documented provider principal diagnosis" if is_explicit else "Clinically inferred principal diagnosis under UHDDS"
+                    top.primary_justification = f"{designation_type} occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
+                    primary_diag = top
 
-                top_norm = top.normalized_diagnosis.lower()
-                top_canon = self._canonicalize_term(top.normalized_diagnosis).lower()
+                    top_norm = top.normalized_diagnosis.lower()
+                    top_canon = self._canonicalize_term(top.normalized_diagnosis).lower()
 
                 # Remaining active candidates become SECONDARY
                 for sec_cand in valid_active:
@@ -3080,8 +3099,7 @@ class EvidenceFirstFactExtractor:
 
                     # Exact duplicate check against top or already accepted secondary conditions
                     is_exact_dup = (
-                        sec_norm == top_norm
-                        or sec_canon == top_canon
+                        (bool(top_norm) and (sec_norm == top_norm or sec_canon == top_canon))
                         or any(sec_norm == s.normalized_diagnosis.lower() for s in secondary_diags)
                         or any(sec_canon == self._canonicalize_term(s.normalized_diagnosis).lower() for s in secondary_diags)
                     )

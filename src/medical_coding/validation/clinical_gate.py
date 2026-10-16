@@ -263,6 +263,45 @@ HYPOTHETICAL_PATTERNS = [
     r"\b(?:if\s+symptoms?\s+worsen|in\s+the\s+event\s+of|in\s+case\s+of|contingent\s+upon)\b",
 ]
 
+# 10. Normal exam findings, negative lab results, and routine inpatient care
+NORMAL_FINDING_PATTERNS = [
+    # Normal physical examination observations
+    r"\b(?:per\s+abdomen\s*:?\s*|p/a\s*:?\s*)?soft[,\s]+non[\s\-]?tender\b",
+    r"\b(?:chest|lungs?)\s*:?\s*clear\b",
+    r"\b(?:bilateral\s+|b/l\s+)?air\s+entry\s+equal\b",
+    r"\baebe\b",
+    r"\bs1[,\s]+s2\s+(?:heard\s+well|heard|present|normal)\b",
+    r"\bbowel\s+sounds\s+(?:present|normal|heard)\b",
+    r"\bgcs\s*(?:15(?:/15)?|is\s*15)\b",
+    r"\bconscious[,\s]+alert\s+(?:and\s+oriented)?\b",
+    r"\balert\s+and\s+oriented\b",
+    r"\bno\s+(?:pedal\s+)?edema\b",
+    r"\bno\s+organomegaly\b",
+    r"\bno\s+hepatosplenomegaly\b",
+    r"\bno\s+(?:icterus|jaundice|pallor|cyanosis|clubbing|lymphadenopathy)\b",
+    r"\bno\s+focal\s+neuro(?:logical)?\s+deficit\b",
+    r"\bpupils\s+equal\s+and\s+reactive\b",
+    r"\bpearl\b",
+    r"\bafebrile\b",
+    r"\bhemodynamically\s+stable\b",
+    r"\bvitals\s+(?:stable|normal)\b",
+
+    # Normal lab results / negative investigations
+    r"\b(?:cbc|lft|kft|rft|bmp|cmp|urine\s+routine|cxr|ecg|echo)\s*(?:is|was)?\s*(?:normal|within\s+normal\s+limits|wnl|unremarkable)\b",
+    r"\bwithin\s+normal\s+limits\b",
+    r"\b(?:blood|urine|sputum)\s+culture(?:\s+shows?)?\s+(?:sterile|no\s+growth)\b",
+    r"\bno\s+growth\s+(?:after\s+\d+\s+hours?|seen)\b",
+    r"\b(?:covid(?:-19)?|rtpcr|hiv|hbsag|hcv)\s*(?:is|was)?\s*(?:negative|non[\s\-]?reactive)\b",
+
+    # Routine inpatient care, diet, nursing directives
+    r"\b(?:tolerating\s+(?:oral|normal|soft|regular)\s+diet|diet\s+tolerated(?:\s+well)?)\b",
+    r"\b(?:adequate\s+urine\s+output|urine\s+output\s+adequate)\b",
+    r"\b(?:iv\s+fluids?|normal\s+saline|rl|dns)\s*(?:given|infused|continued|administered)?\b",
+    r"\b(?:wound\s+dressing|dressing\s+change|suture\s+removal|staple\s+removal)\b",
+    r"\b(?:foley\s+(?:catheter\s+)?|drain\s+|ryles\s+tube\s+)removed\b",
+    r"\b(?:mobilized|ambulated|chest\s+physiotherapy|incentive\s+spirometry)\b",
+]
+
 
 class HardClinicalCandidateGate:
     """Deterministic clinical candidate gate enforcing Section 4 & Section 11 specifications."""
@@ -364,6 +403,14 @@ class HardClinicalCandidateGate:
         for pat in GENERIC_PROCEDURE_PATTERNS:
             if re.search(pat, term_lower):
                 return False, f"Generic procedure statement or completion notice: '{clean_term}'"
+
+        # Check 0c: Normal exam findings, negative lab results, and routine inpatient care
+        for pat in NORMAL_FINDING_PATTERNS:
+            if re.search(pat, term_lower):
+                return False, f"Normal examination finding, benign lab result, or routine care observation: '{clean_term}'"
+            if evidence_text and re.search(pat, evidence_text.lower()) and len(term_lower.split()) <= 4:
+                if any(w in term_lower for w in ["normal", "clear", "equal", "soft", "sterile", "negative", "stable", "wnl", "tolerated", "dressing"]):
+                    return False, f"Candidate evidence confirms normal examination finding or routine care: '{clean_term}'"
 
         # Check 1: Absence statements (both in term and documented evidence)
         for pat in ABSENCE_PATTERNS:
@@ -737,3 +784,8 @@ class HardClinicalCandidateGate:
     def is_metadata_or_heading(cls, text: str) -> bool:
         t = text.strip().lower()
         return any(bool(re.search(pat, t)) for pat in METADATA_PATTERNS)
+
+    @classmethod
+    def is_normal_finding(cls, text: str) -> bool:
+        t = text.strip().lower()
+        return any(bool(re.search(pat, t)) for pat in NORMAL_FINDING_PATTERNS)

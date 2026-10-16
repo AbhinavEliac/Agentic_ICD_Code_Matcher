@@ -101,7 +101,7 @@ def compute_concept_match_score(
     )
     if not is_attr_valid:
         has_hard_fail = any(
-            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "hypertension", "hypotension", "shock"))
+            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "hypertension", "hypotension", "shock", "anatomical site", "laterality", "quadrant"))
             for u in unsupp
         )
         if has_hard_fail:
@@ -135,7 +135,7 @@ def compute_concept_match_score(
 
     # If core entity does not match at all (e.g. kidney vs skin), candidate is incompatible
     if core_fraction == 0.0 and len(core_concept_tokens) >= 1:
-        return 0.05, "core clinical entity mismatch", False
+        return 0.0, "core clinical entity mismatch", False
 
     # 3. Base score derived from core fraction and token overlap
     shared_tokens = cand_token_set & concept_token_set
@@ -209,12 +209,11 @@ def compute_concept_match_score(
     )
     if not is_attr_valid:
         has_hard_fail = any(
-            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen"))
+            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "anatomical site", "laterality", "quadrant"))
             for u in unsupp
         )
         if has_hard_fail:
-            base_score = 0.0
-            rationale_parts.append(f"disqualified by clinical contradiction: {', '.join(unsupp)}")
+            return 0.0, f"disqualified by clinical contradiction: {', '.join(unsupp)}", False
         else:
             base_score -= min(0.40, 0.15 * len(unsupp))
             rationale_parts.append(f"unsupported attributes: {', '.join(unsupp)}")
