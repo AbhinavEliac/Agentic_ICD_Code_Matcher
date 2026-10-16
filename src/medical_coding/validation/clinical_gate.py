@@ -345,6 +345,7 @@ class HardClinicalCandidateGate:
                 "stenting", "clearance", "in situ", "stents in situ", "non-obstructive", "non obstructive",
                 "minimal pneumobilia", "pneumobilia", "minimal pneumobilia in left lobe", "aerobilia",
                 "viral", "bacterial", "fungal", "parasitic", "flu", "like", "illness",
+                "viral illness", "viral like illness", "flu like illness", "feverish feeling",
                 "acute", "chronic", "mild", "moderate", "severe",
                 "proximal obstructive changes", "obstructive changes", "proximal changes",
             )
@@ -364,10 +365,14 @@ class HardClinicalCandidateGate:
             if re.search(pat, term_lower):
                 return False, f"Generic procedure statement or completion notice: '{clean_term}'"
 
-        # Check 1: Absence statements
+        # Check 1: Absence statements (both in term and documented evidence)
         for pat in ABSENCE_PATTERNS:
             if re.search(pat, term_lower):
                 return False, f"Absence statement describing absence of disease or complication: '{clean_term}'"
+            if evidence_text and re.search(pat, evidence_text.lower()) and any(
+                w in term_lower for w in ["complication", "adverse", "reaction", "toxicity", "event", "abnormality", "bleeding", "ischemia", "distress"]
+            ):
+                return False, f"Candidate evidence confirms absence of disease or complication: '{clean_term}'"
 
         # Check 2: Treatment instructions and monitoring
         for pat in INSTRUCTION_PATTERNS:

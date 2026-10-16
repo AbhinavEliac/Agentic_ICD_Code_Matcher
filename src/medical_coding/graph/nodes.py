@@ -1044,7 +1044,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     doc_id = state.get("document_id", "doc-unknown")
     logger.info("Executing Node [10/10]: Final Output Generation for doc_id=%s", doc_id)
 
-    validated = state.get("validated_diagnoses", [])
+    validated = state.get("validated_diagnoses", []) or state.get("validated_codes", [])
     abstentions = list(state.get("abstentions", []))
     audit_trail = list(state.get("audit_trail", []))
     classified = state.get("classified_diagnoses", [])
@@ -1142,20 +1142,24 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     if primary_response is None:
         clin_primary = None
         for c in classified:
-            if c.role == DiagnosisRole.PRIMARY:
+            c_role = getattr(c, "role", None) or getattr(c, "initial_role", None)
+            if c_role == DiagnosisRole.PRIMARY:
                 clin_primary = c
                 break
         if not clin_primary and diag_state and diag_state.primary_diagnosis:
             clin_primary = diag_state.primary_diagnosis
 
         if clin_primary:
-            term = getattr(clin_primary, "normalized_diagnosis", None) or getattr(clin_primary, "raw_term", "")
-            clin_primary_id = getattr(clin_primary, "diagnosis_id", "")
+            term = (
+                getattr(clin_primary, "normalized_diagnosis", None)
+                or getattr(clin_primary, "raw_term", "")
+                or getattr(clin_primary, "normalized_description", "")
+                or getattr(clin_primary, "original_mention", "")
+            )
+            clin_primary_id = getattr(clin_primary, "diagnosis_id", "") or getattr(clin_primary, "condition_id", "")
             if _is_abstained_or_rejected(clin_primary_id, term):
                 logger.info("Primary diagnosis '%s' was explicitly abstained/rejected in validation; honoring decision.", term)
-                if secondary_responses:
-                    primary_response = secondary_responses.pop(0)
-                    primary_response.role = DiagnosisRole.PRIMARY
+                primary_response = None
             else:
                 c_ev = (
                     getattr(clin_primary, "evidence_quote", None)
@@ -1215,19 +1219,18 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                         icdo=icdo_val,
                         cpt=cpt_val,
                     )
-                elif not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE and a.raw_term and a.raw_term.lower() == term.lower() for a in abstentions):
-                    abstentions.append(
-                        AbstentionRecord(
-                            diagnosis_id=getattr(clin_primary, "diagnosis_id", "primary"),
-                            raw_term=term,
-                            reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
-                            detail=f"Clinical primary diagnosis '{term}' lacked verified local code match; strictly abstained under coding rules.",
-                            stage=PipelineStage.VALIDATION,
+                else:
+                    if not any(a.reason == AbstentionReason.NO_MATCHING_ICD_CANDIDATE and a.raw_term and a.raw_term.lower() == term.lower() for a in abstentions):
+                        abstentions.append(
+                            AbstentionRecord(
+                                diagnosis_id=getattr(clin_primary, "diagnosis_id", "primary"),
+                                raw_term=term,
+                                reason=AbstentionReason.NO_MATCHING_ICD_CANDIDATE,
+                                detail=f"Clinical primary diagnosis '{term}' lacked verified local code match; strictly abstained under coding rules.",
+                                stage=PipelineStage.VALIDATION,
+                            )
                         )
-                    )
-                    if secondary_responses:
-                        primary_response = secondary_responses.pop(0)
-                        primary_response.role = DiagnosisRole.PRIMARY
+                    primary_response = None
 
     # SEPARATION OF CLINICAL DIAGNOSIS AND ICD CODE MAPPING FOR SECONDARIES
     seen_sec_terms = set()
@@ -1410,9 +1413,8 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                 seen_sec_terms.add(c_norm)
 
     # Suppress Z71.1 ("feared health complaint in whom no diagnosis is made") when real clinical conditions exist
-    if primary_response and primary_response.code == "Z71.1" and secondary_responses:
-        primary_response = secondary_responses.pop(0)
-        primary_response.role = DiagnosisRole.PRIMARY
+    if primary_response and primary_response.code == "Z71.1":
+        primary_response = None
     secondary_responses = [s for s in secondary_responses if s.code != "Z71.1"]
 
     # Filter secondary_responses so ONLY items with verified local codes or nearest relatable matches are retained; uncoded items without matches are strictly abstained
@@ -1509,11 +1511,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
                             stage=PipelineStage.VALIDATION,
                         )
                     )
-                if secondary_responses:
-                    primary_response = secondary_responses.pop(0)
-                    primary_response.role = DiagnosisRole.PRIMARY
-                else:
-                    primary_response = None
+                primary_response = None
 
     # Audit & Output Consistency: Retain all abstentions without resurrecting rejected/abstained candidates into accepted codes
 
@@ -1729,6 +1727,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
 
     return {
         "final_result": result,
+        "final_report": result.model_dump() if hasattr(result, "model_dump") else (result.dict() if hasattr(result, "dict") else result),
         "current_stage": PipelineStage.FINALIZATION,
     }
 

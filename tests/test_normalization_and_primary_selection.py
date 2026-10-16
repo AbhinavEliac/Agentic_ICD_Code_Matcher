@@ -288,7 +288,7 @@ def test_no_arbitrary_secondary_promotion_in_finalize_output():
     the secondary diagnosis (e.g. I10 Hypertension) is strictly NOT promoted to primary."""
     state = {
         "document_id": "test-doc-001",
-        "validated_codes": [
+        "validated_diagnoses": [
             # Only the secondary condition could be validated
             type("MockCoded", (), {
                 "raw_term": "Essential hypertension",
@@ -640,7 +640,7 @@ def test_concept_recall_captures_symptoms_and_findings():
 def test_output_audit_consistency_abstained_candidate_never_output():
     """Verify an abstained candidate is strictly preserved in abstentions and never resurrected in final report."""
     from medical_coding.schemas.validation import AbstentionRecord
-    from medical_coding.schemas.candidate import RankedSelection
+    from medical_coding.schemas.icd import RankedSelection
 
     state = {
         "document_id": "test-audit-consistency",

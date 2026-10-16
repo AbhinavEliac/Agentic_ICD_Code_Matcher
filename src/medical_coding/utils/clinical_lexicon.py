@@ -234,6 +234,10 @@ GENERAL_STOPWORDS: set[str] = {
 CLINICAL_MORPHOLOGY: dict[str, list[str]] = {
     "choledocholithiasis": ["calculus of bile duct", "calculus bile duct", "gallstone bile duct", "choledocholithiasis"],
     "cancer": ["neoplasm", "carcinoma", "malignancy", "adenocarcinoma", "cancer"],
+    "petechiae": ["ecchymoses", "ecchymosis", "purpura", "petechia"],
+    "ecchymoses": ["petechiae", "ecchymosis", "purpura", "petechia"],
+    "ecchymosis": ["petechiae", "ecchymoses", "purpura", "petechia"],
+    "purpura": ["petechiae", "ecchymoses", "ecchymosis", "petechia"],
     "neoplasm": ["cancer", "carcinoma", "malignancy", "adenocarcinoma", "neoplasm"],
     "carcinoma": ["cancer", "neoplasm", "malignancy", "adenocarcinoma", "carcinoma"],
     "adenocarcinoma": ["cancer", "neoplasm", "carcinoma", "malignancy", "adenocarcinoma"],

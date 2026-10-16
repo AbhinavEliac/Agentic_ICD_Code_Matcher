@@ -178,9 +178,11 @@ class ICDCandidate(BaseModel):
         "fallback_token_scan",
         "vector_numpy",
     ] = Field(
+        default="hybrid",
         description="Algorithm that produced or consolidated this candidate.",
     )
     is_valid_billable: bool = Field(
+        default=True,
         description="Indicates whether this candidate is terminal/billable in the catalog.",
     )
     semantic_score: float | None = Field(

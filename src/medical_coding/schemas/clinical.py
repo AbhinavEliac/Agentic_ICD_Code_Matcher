@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from medical_coding.schemas.enums import (
     AbstentionReason,
@@ -99,6 +99,32 @@ class ExtractedClinicalCondition(BaseModel):
     4. Cannot infer unwritten clinical facts.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_compatibility_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "original_mention" not in data and "raw_term" in data:
+                data["original_mention"] = data["raw_term"]
+            if "normalized_description" not in data and "normalized_diagnosis" in data:
+                data["normalized_description"] = data["normalized_diagnosis"]
+            if "evidence_text" not in data and "evidence_quote" in data:
+                data["evidence_text"] = data["evidence_quote"]
+            if "section" not in data:
+                if "evidence_location" in data and hasattr(data["evidence_location"], "section"):
+                    data["section"] = data["evidence_location"].section
+                elif isinstance(data.get("evidence_location"), dict) and "section" in data["evidence_location"]:
+                    data["section"] = data["evidence_location"]["section"]
+                else:
+                    data["section"] = "DISCHARGE_DIAGNOSES"
+            if "role" in data and "initial_role" not in data:
+                data["initial_role"] = data["role"]
+            elif "initial_role" in data and "role" not in data:
+                data["role"] = data["initial_role"]
+            if "evidence_location" not in data:
+                sec = data.get("section", "DISCHARGE_DIAGNOSES")
+                data["evidence_location"] = EvidenceLocation(section=sec)
+        return data
+
     condition_id: str = Field(
         default_factory=lambda: str(uuid4()),
         description="Unique condition entity identifier.",
@@ -162,6 +188,10 @@ class ExtractedClinicalCondition(BaseModel):
     initial_role: DiagnosisRole | None = Field(
         default=None,
         description="Initial role identified during clinical fact extraction.",
+    )
+    role: DiagnosisRole | None = Field(
+        default=None,
+        description="Assigned role for this condition (PRIMARY, SECONDARY, etc.).",
     )
 
 

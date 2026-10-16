@@ -91,6 +91,22 @@ def compute_concept_match_score(
     evidence_clean = (evidence_text or "").lower()
     full_context = f"{concept_clean.lower()} {evidence_clean}"
 
+    # 0. Early Reverse attributes check to block hard clinical contradictions
+    from medical_coding.validation.reverse_attributes import ReverseAttributeChecker
+    is_attr_valid, unsupp = ReverseAttributeChecker.validate_code_attributes(
+        code_description=cand_desc_clean,
+        evidence_text=evidence_clean,
+        diagnosis_term=concept_clean,
+        code=candidate_code,
+    )
+    if not is_attr_valid:
+        has_hard_fail = any(
+            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "hypertension", "hypotension", "shock"))
+            for u in unsupp
+        )
+        if has_hard_fail:
+            return 0.0, f"disqualified by clinical contradiction: {', '.join(unsupp)}", False
+
     # 1. Normalized string comparisons
     cand_norm = normalize_for_concept_matching(cand_desc_clean)
     concept_norm = normalize_for_concept_matching(concept_clean)
@@ -127,6 +143,11 @@ def compute_concept_match_score(
 
     base_score = 0.50 + (0.35 * core_fraction) + (0.15 * jaccard)
     rationale_parts: list[str] = [f"core entity match ({core_matches}/{len(core_concept_tokens)})"]
+
+    # Canonical mapping for unspecified viral syndrome
+    if candidate_code == "B34.9" and ("viral" in concept_norm or "virus" in concept_norm):
+        base_score += 0.15
+        rationale_parts.append("canonical ICD code for viral syndrome")
 
     # If all concept tokens appear in candidate
     if concept_token_set.issubset(cand_token_set):

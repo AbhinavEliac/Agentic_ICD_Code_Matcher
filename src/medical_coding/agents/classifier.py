@@ -1442,11 +1442,16 @@ class PrimarySecondaryClassifier(BaseAgent):
                     "symptom", "pain", "fatigue", "edema", "overload", "dyspnea",
                     "shortness of breath", "nausea", "vomiting", "weakness", "fever",
                     "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress", "dysuria",
+                    "malaise", "lethargy", "dizziness", "lightheadedness", "loss of appetite", "anorexia",
                 ]
             )
             has_def = (
                 any(d_lower.endswith(sfx) or f"{sfx} " in d_lower for sfx in ("itis", "oma", "osis"))
-                or any(dx in d_lower for dx in ["syndrome", "failure", "infarction", "disease", "disorder", "calculus", "lithiasis", "ulcer", "pneumonia", "infection"])
+                or any(dx in d_lower for dx in [
+                    "syndrome", "failure", "infarction", "disease", "disorder", "calculus",
+                    "lithiasis", "ulcer", "pneumonia", "infection", "carcinoma", "cancer",
+                    "neoplasm", "adenocarcinoma", "lymphoma", "leukemia", "sepsis", "shock", "fracture",
+                ])
             )
             return is_sym and not has_def
 
@@ -1454,11 +1459,11 @@ class PrimarySecondaryClassifier(BaseAgent):
             d_l = cand_asm.diagnosis.lower()
             return bool(
                 re.search(
-                    r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|bph)\b",
+                    r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|bph|chronic\s+kidney\s+disease|ckd)\b",
                     d_l,
                 )
                 and not re.search(
-                    r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated)\b",
+                    r"\b(?:ketoacidosis|dka|hyperosmolar|crisis|emergency|urgency|acute|gangrene|severe|decompensated|failure)\b",
                     d_l,
                 )
             )
@@ -1475,7 +1480,7 @@ class PrimarySecondaryClassifier(BaseAgent):
                 and asm.temporality in (Temporality.CURRENT, "CURRENT")
                 and bool(asm.evidence and asm.evidence.strip())
             ):
-                if has_definitive_candidates and _is_pure_symptom(asm):
+                if has_definitive_candidates and (_is_pure_symptom(asm) or _is_chronic_baseline(asm)):
                     continue
                 is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
                 if is_valid:
@@ -1489,6 +1494,8 @@ class PrimarySecondaryClassifier(BaseAgent):
                     asm.temporality in (Temporality.CURRENT, "CURRENT")
                     and bool(asm.evidence and asm.evidence.strip())
                 ):
+                    if has_definitive_candidates and (_is_pure_symptom(asm) or _is_chronic_baseline(asm)):
+                        continue
                     is_valid, _ = HardClinicalCandidateGate.evaluate_candidate(asm.diagnosis, asm.evidence or "")
                     if is_valid:
                         chosen_primary_idx = i
@@ -1510,13 +1517,15 @@ class PrimarySecondaryClassifier(BaseAgent):
         if chosen_primary_idx is not None:
             # Primary selected (either unique or prioritized under UHDDS Section II.C)
             top_ev_quote = (top_asm.evidence or "").strip()
+            is_explicit = any(r.startswith("Explicitly documented as PRIMARY/PRINCIPAL") for r in top_reasons)
+            designation_str = "Explicitly designated by provider" if is_explicit else "Clinically inferred principal diagnosis under UHDDS criteria"
             pri_reason = (
-                f"Designated as Primary Diagnosis under UHDDS Guidelines (chief condition established after study to be responsible for occasioning admission). "
+                f"Designated as Primary Diagnosis under UHDDS Guidelines ({designation_str}; chief condition established after study to be responsible for occasioning admission). "
                 f"Documented evidence: \"{top_ev_quote}\". "
                 f"Clinical criteria: {'; '.join(top_reasons)}."
             )
             pri_just = (
-                f"Chief condition occasioning admission and inpatient care: \"{top_ev_quote}\"."
+                f"{designation_str} occasioning admission and inpatient care: \"{top_ev_quote}\"."
             )
             classifications.append(
                 ConditionClassification(
@@ -1802,6 +1811,60 @@ class PrimarySecondaryClassifier(BaseAgent):
         doc_id = kwargs.get("document_id")
         result, _ = self.classify_conditions(assessments, clinical_text, doc_id)
         return result
+
+    def classify_diagnoses(
+        self,
+        conditions: list[Any],
+        clinical_text: str = "",
+        document_id: str | None = None,
+    ) -> list[ConditionClassification]:
+        """Convenience and backwards-compatible classification returning list of classified conditions."""
+        assessments: list[ContextAssessment] = []
+        for c in conditions:
+            if isinstance(c, ContextAssessment):
+                assessments.append(c)
+            elif hasattr(c, "normalized_description") or hasattr(c, "original_mention"):
+                diag = getattr(c, "normalized_description", None) or getattr(c, "original_mention", "")
+                ev = getattr(c, "evidence_text", "") or ""
+                sec = getattr(c, "section", "DISCHARGE_DIAGNOSES")
+                stat = getattr(c, "status", ConditionStatus.ACTIVE)
+                cert = getattr(c, "certainty", Certainty.CONFIRMED)
+                temp = getattr(c, "temporality", Temporality.CURRENT)
+                neg = getattr(c, "negation", NegationStatus.AFFIRMATIVE)
+                assessments.append(
+                    ContextAssessment(
+                        condition_id=getattr(c, "condition_id", str(uuid4())),
+                        diagnosis=diag,
+                        original_mention=getattr(c, "original_mention", diag),
+                        evidence=ev,
+                        section=sec,
+                        current_relevance=cert != Certainty.RULED_OUT and neg != NegationStatus.NEGATED,
+                        coding_candidate=cert != Certainty.RULED_OUT and neg != NegationStatus.NEGATED,
+                        status=stat,
+                        certainty=cert,
+                        temporality=temp,
+                        negation=neg,
+                        reason=f"Extracted from {sec}",
+                    )
+                )
+            elif isinstance(c, dict):
+                diag = c.get("normalized_description") or c.get("diagnosis") or c.get("raw_term") or ""
+                assessments.append(
+                    ContextAssessment(
+                        condition_id=c.get("condition_id", str(uuid4())),
+                        diagnosis=diag,
+                        original_mention=c.get("original_mention", diag),
+                        evidence=c.get("evidence_text") or c.get("evidence") or "",
+                        section=c.get("section", "DISCHARGE_DIAGNOSES"),
+                        current_relevance=True,
+                        coding_candidate=True,
+                        status=c.get("status", ConditionStatus.ACTIVE),
+                        certainty=c.get("certainty", Certainty.CONFIRMED),
+                        reason="Dict condition",
+                    )
+                )
+        res, _ = self.classify_conditions(assessments, clinical_text=clinical_text, document_id=document_id)
+        return res.all_classifications
 
 
 class ClassificationAgent(PrimarySecondaryClassifier):

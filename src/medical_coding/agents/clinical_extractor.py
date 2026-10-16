@@ -2666,6 +2666,29 @@ class EvidenceFirstFactExtractor:
             return "Urticaria"
         return clean
 
+    @staticmethod
+    def _is_term_negated_or_ruled_out(term: str, sentence: str) -> bool:
+        """Detect if clinical term is explicitly negated, absent, or ruled out in a sentence."""
+        t_clean = term.lower().strip()
+        s_lower = sentence.lower()
+        if not t_clean or len(t_clean) < 2:
+            return False
+        absence_patterns = [
+            rf"\b(?:no|not|without|denies|denied|free\s+of|negative\s+for|no\s+evidence\s+of|no\s+signs?\s+of|rules?\s+out|ruled\s+out|unlikely)\s+(?:evidence\s+of\s+|signs?\s+of\s+|acute\s+|active\s+)?{re.escape(t_clean)}\b",
+            rf"\b{re.escape(t_clean)}\s+(?:is\s+|was\s+)?ruled\s+out\b",
+            rf"\b{re.escape(t_clean)}\s+(?:is\s+|was\s+)?negative\b",
+        ]
+        if any(re.search(pat, s_lower) for pat in absence_patterns):
+            return True
+        if "shock" in t_clean:
+            shock_neg_patterns = [
+                r"\b(?:normotensive\s+without\s+shock|hemodynamically\s+stable|no\s+(?:evidence\s+of\s+)?(?:septic\s+|cardiogenic\s+|hypovolemic\s+)?shock|without\s+shock|not\s+in\s+shock)\b",
+                r"\bno\s+evidence\s+of\s+(?:septic\s+)?shock\b",
+            ]
+            if any(re.search(p, s_lower) for p in shock_neg_patterns):
+                return True
+        return False
+
     def _corroborate_with_hospital_course_and_procedures(
         self,
         candidates: list[ClinicalDiagnosisCandidate],
@@ -2725,6 +2748,44 @@ class EvidenceFirstFactExtractor:
             cand_norm = cand.normalized_diagnosis.lower()
             words = [w for w in cand_norm.split() if len(w) > 3 and w not in ("with", "without", "acute", "chronic", "type", "history", "disease", "disorder")]
 
+            combined_course_and_meds = f"{hospital_course_text} {medications_text}"
+            course_sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", combined_course_and_meds) if s.strip()]
+
+            # Check for contradiction / rule-out across clinical examination, course, and investigations
+            all_contradictory_sentences: list[str] = []
+            for s in course_sentences:
+                if self._is_term_negated_or_ruled_out(cand.raw_term, s) or self._is_term_negated_or_ruled_out(cand.normalized_diagnosis, s):
+                    all_contradictory_sentences.append(s)
+            if exam_text:
+                for s in re.split(r"[\.\n]+", exam_text):
+                    if self._is_term_negated_or_ruled_out(cand.raw_term, s) or self._is_term_negated_or_ruled_out(cand.normalized_diagnosis, s):
+                        all_contradictory_sentences.append(s)
+
+            if all_contradictory_sentences:
+                cand.certainty = Certainty.RULED_OUT
+                cand.assertion_status = AssertionStatus.RULED_OUT
+                cand.role = DiagnosisRole.RULED_OUT
+                cand.is_authorized = False
+                cand.scores.admitting_score = -50.0
+                cand.scores.encounter_relevance = 0.0
+                cand.clinical_relevance = 0.0
+                cand.treatment_relevance = 0.0
+                cand.encounter_relevance = 0.0
+                cand.classification_reason = f"Ruled out / documented as absent in clinical evaluation: {all_contradictory_sentences[0].strip()}"
+                cand.evidence.append(
+                    StructuredEvidence(
+                        text=all_contradictory_sentences[0].strip(),
+                        section="HOSPITAL_COURSE",
+                        sentence=all_contradictory_sentences[0].strip(),
+                        polarity=NegationStatus.NEGATED,
+                        certainty=Certainty.RULED_OUT,
+                        temporality=Temporality.CURRENT,
+                        evidence_type=EvidenceType.HOSPITAL_COURSE,
+                        clinical_relevance=0.0,
+                    )
+                )
+                continue
+
             # Find relevant domain markers for this candidate
             relevant_markers: list[str] = []
             for cond_key, markers in condition_care_markers.items():
@@ -2732,9 +2793,6 @@ class EvidenceFirstFactExtractor:
                     relevant_markers.extend(markers)
 
             # Check hospital course and medications for active inpatient care
-            combined_course_and_meds = f"{hospital_course_text} {medications_text}"
-            course_sentences = [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", combined_course_and_meds) if s.strip()]
-
             found_management_sentences: list[str] = []
             for sent in course_sentences:
                 sent_lower = sent.lower()
@@ -2872,11 +2930,31 @@ class EvidenceFirstFactExtractor:
         ruled_out_conditions: list[ClinicalDiagnosisCandidate] = []
         uncertain_conditions: list[ClinicalDiagnosisCandidate] = []
 
+        all_doc_text = " \n".join(s.content for s in sections).lower()
+
         for cand in candidates:
             # Check ruled out
-            if cand.certainty == Certainty.RULED_OUT:
+            cand_term = cand.raw_term.lower().strip()
+            is_explicitly_ruled_out = (
+                cand.certainty == Certainty.RULED_OUT
+                or cand.assertion_status == AssertionStatus.RULED_OUT
+                or cand.role == DiagnosisRole.RULED_OUT
+                or (
+                    self._is_term_negated_or_ruled_out(cand_term, all_doc_text)
+                    and not any(ev.section in ("FINAL_DIAGNOSES", "DISCHARGE_DIAGNOSES") for ev in cand.evidence)
+                )
+            )
+
+            if is_explicitly_ruled_out:
+                cand.certainty = Certainty.RULED_OUT
+                cand.assertion_status = AssertionStatus.RULED_OUT
                 cand.role = DiagnosisRole.RULED_OUT
                 cand.is_authorized = False
+                cand.scores.admitting_score = -50.0
+                cand.scores.encounter_relevance = 0.0
+                cand.clinical_relevance = 0.0
+                cand.treatment_relevance = 0.0
+                cand.encounter_relevance = 0.0
                 ruled_out_conditions.append(cand)
                 continue
 
@@ -2921,7 +2999,7 @@ class EvidenceFirstFactExtractor:
                 c_term = c.normalized_diagnosis.lower()
                 return bool(
                     re.search(
-                        r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|benign\s+prostatic\s+hyperplasia|bph)\b",
+                        r"\b(?:type\s*(?:2|ii)?\s*diabetes|diabetes\s+mellitus|essential\s+hypertension|hyperlipidemia|dyslipidemia|hypothyroidism|osteoporosis|gerd|benign\s+prostatic\s+hyperplasia|bph|chronic\s+kidney\s+disease|ckd)\b",
                         c_term,
                     )
                     and not re.search(
@@ -2930,15 +3008,37 @@ class EvidenceFirstFactExtractor:
                     )
                 )
 
-            has_acute_driver = any(
-                (c.scores.admitting_score >= 4.0 or any(w in c.normalized_diagnosis.lower() for w in ("acute", "fever", "hypotension", "sepsis", "shock", "infarction", "fracture", "appendicitis", "cholecystitis", "pneumonia")))
-                and not _is_chronic_baseline_cand(c)
+            def _is_pure_symptom_cand(c: ClinicalDiagnosisCandidate) -> bool:
+                c_term = c.normalized_diagnosis.lower()
+                is_sym = any(
+                    sym in c_term
+                    for sym in [
+                        "symptom", "pain", "fatigue", "edema", "overload", "dyspnea",
+                        "shortness of breath", "nausea", "vomiting", "weakness", "fever",
+                        "cough", "dyspepsia", "discomfort", "wheezing", "respiratory distress",
+                        "malaise", "lethargy", "dizziness", "lightheadedness", "loss of appetite", "anorexia",
+                    ]
+                )
+                has_def = (
+                    any(c_term.endswith(sfx) or f"{sfx} " in c_term for sfx in ("itis", "oma", "osis"))
+                    or any(dx in c_term for dx in [
+                        "syndrome", "failure", "infarction", "disease", "disorder", "calculus",
+                        "lithiasis", "ulcer", "pneumonia", "infection", "carcinoma", "cancer",
+                        "neoplasm", "adenocarcinoma", "lymphoma", "leukemia", "sepsis", "shock", "fracture",
+                    ])
+                )
+                return is_sym and not has_def
+
+            has_definitive_driver = any(
+                not _is_pure_symptom_cand(c) and not _is_chronic_baseline_cand(c)
                 for c in valid_active
             )
-            if has_acute_driver:
+            if has_definitive_driver:
                 for c in valid_active:
                     if _is_chronic_baseline_cand(c):
-                        c.scores.admitting_score = min(c.scores.admitting_score, 3.5)
+                        c.scores.admitting_score = min(c.scores.admitting_score, 2.5)
+                    elif _is_pure_symptom_cand(c):
+                        c.scores.admitting_score = min(c.scores.admitting_score, 2.0)
 
             # 2. Sort active candidates by admitting score descending
             valid_active.sort(key=lambda c: c.scores.admitting_score, reverse=True)
@@ -2952,18 +3052,29 @@ class EvidenceFirstFactExtractor:
                         cand.raw_term = "Chronic obstructive pulmonary disease with (acute) exacerbation"
 
             if valid_active:
-                # Rank 1 is unconditionally PRIMARY
-                top = valid_active[0]
+                # Select the top candidate adhering to UHDDS: if definitive driver exists, pick highest definitive candidate
+                chosen_idx = 0
+                if has_definitive_driver:
+                    for idx, cand in enumerate(valid_active):
+                        if not _is_pure_symptom_cand(cand) and not _is_chronic_baseline_cand(cand):
+                            chosen_idx = idx
+                            break
+
+                top = valid_active.pop(chosen_idx)
                 top.role = DiagnosisRole.PRIMARY
                 top.is_authorized = True
-                top.primary_justification = f"Documented chief condition occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
+                is_explicit = any(ev.section in ("PRINCIPAL_DIAGNOSIS", "PRIMARY_DIAGNOSIS") for ev in top.evidence)
+                top.clinical_attributes["explicitly_designated_primary"] = is_explicit
+                top.clinical_attributes["clinically_inferred_primary"] = not is_explicit
+                designation_type = "Explicitly documented provider principal diagnosis" if is_explicit else "Clinically inferred principal diagnosis under UHDDS"
+                top.primary_justification = f"{designation_type} occasioning admission and inpatient treatment: {top.primary_evidence_quote}"
                 primary_diag = top
 
                 top_norm = top.normalized_diagnosis.lower()
                 top_canon = self._canonicalize_term(top.normalized_diagnosis).lower()
 
-                # Rank 2..N are unconditionally SECONDARY (dropping only exact duplicates of primary/secondaries)
-                for sec_cand in valid_active[1:]:
+                # Remaining active candidates become SECONDARY
+                for sec_cand in valid_active:
                     sec_norm = sec_cand.normalized_diagnosis.lower()
                     sec_canon = self._canonicalize_term(sec_cand.normalized_diagnosis).lower()
 
