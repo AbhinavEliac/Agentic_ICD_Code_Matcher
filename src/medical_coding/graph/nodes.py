@@ -1049,6 +1049,7 @@ def finalize_output_node(state: PipelineGraphState) -> dict[str, Any]:
     audit_trail = list(state.get("audit_trail", []))
     classified = state.get("classified_diagnoses", [])
     diag_state: ClinicalDiagnosisState | None = state.get("clinical_diagnosis_state")
+    raw_doc_text = state.get("raw_text", "") or state.get("clinical_text", "") or state.get("text", "") or ""
 
     primary_response: CodedDiagnosisResponse | None = None
     secondary_responses: list[CodedDiagnosisResponse] = []
