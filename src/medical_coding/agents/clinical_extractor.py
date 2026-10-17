@@ -629,13 +629,12 @@ class EvidenceFirstFactExtractor:
 
             from medical_coding.validation.clinical_gate import HardClinicalCandidateGate
 
-            # Skip absence statements, treatment instructions, non-clinical activities, generic procedures, normal findings, and cross-reference boilerplate
+            # Skip absence statements, treatment instructions, non-clinical activities, generic procedures, and cross-reference boilerplate
             if (
                 HardClinicalCandidateGate.is_absence_statement(sent_clean)
                 or HardClinicalCandidateGate.is_treatment_instruction(sent_clean)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent_clean)
                 or HardClinicalCandidateGate.is_generic_procedure(sent_clean)
-                or HardClinicalCandidateGate.is_normal_finding(sent_clean)
                 or re.search(r"\b(?:symptoms?|complaints?)\s+described\s+in\b|\bdescribed\s+in\s+(?:the\s+)?final\s+diagnosis\b|\babove\s+mentioned\s+complaints\b", sent_clean, re.IGNORECASE)
             ):
                 continue
@@ -658,8 +657,12 @@ class EvidenceFirstFactExtractor:
                 )
                 if diag_prefix_m:
                     clause = diag_prefix_m.group(1).strip()
-                else:
+                elif sec.section_name in ("DISCHARGE_DIAGNOSES", "PRINCIPAL_DIAGNOSIS", "SECONDARY_DIAGNOSES", "CHIEF_COMPLAINT", "IMPRESSION"):
                     clause = sent_clean
+                elif re.search(r"\b(?:diagnos[ei]s|impression|assessment|syndrome|failure|disease|disorder|infection|infarction|calculus|effusion|edema|pneumonia|copd|diabetes|hypertension|sepsis|varices|cirrhosis|carcinoma|cancer|fracture|stone|bleed|bleeding|pain|fever|cough|dyspnea)\b", sent_clean, re.IGNORECASE):
+                    clause = sent_clean
+                else:
+                    continue
 
             if clause:
                 clause = re.sub(
@@ -1156,7 +1159,6 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(sent)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent)
                 or HardClinicalCandidateGate.is_generic_procedure(sent)
-                or HardClinicalCandidateGate.is_normal_finding(sent)
             ):
                 continue
 
@@ -1317,7 +1319,6 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(sent)
                 or HardClinicalCandidateGate.is_non_clinical_activity(sent)
                 or HardClinicalCandidateGate.is_generic_procedure(sent)
-                or HardClinicalCandidateGate.is_normal_finding(sent)
             ):
                 continue
 
@@ -1450,7 +1451,6 @@ class EvidenceFirstFactExtractor:
                 or HardClinicalCandidateGate.is_treatment_instruction(line_clean)
                 or HardClinicalCandidateGate.is_non_clinical_activity(line_clean)
                 or HardClinicalCandidateGate.is_generic_procedure(line_clean)
-                or HardClinicalCandidateGate.is_normal_finding(line_clean)
             ):
                 continue
 

@@ -26,6 +26,7 @@ gpt4all
 sentence-transformers
 transformers
 torch
+accelerate
 
 # ============================================================
 # VECTOR SEARCH
@@ -48,13 +49,14 @@ xlrd
 PyMuPDF
 pdfplumber
 rapidocr_onnxruntime
-
+Pillow
 
 # ============================================================
 # TEXT / NLP
 # ============================================================
 regex
 nltk
+beautifulsoup4
 
 # ============================================================
 # API & UI

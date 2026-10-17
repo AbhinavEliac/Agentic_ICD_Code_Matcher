@@ -107,7 +107,7 @@ METADATA_PATTERNS = [
     r"^\s*(?:bp|hr|pulse|rr|temp|spo2|gcs|creatinine|cbc|wbc|hemoglobin|hgb|platelets?)\s*(?::|=|\s+\d)\b",
     r"^\s*[\d\.\,\/]+\s*(?:mg/dl|mmol/l|g/dl|mmhg|bpm|%|cells/cumm)?\s*$",
     r"^\s*(?:ecg|ekg|cxr|chest\s+x[\s\-]?ray|ct\s+scan|mri|ultrasound|usg|2d\s+echo|cbc|bmp|cmp|lft|kft|rft|urinalysis|blood\s+culture|troponin|hba1c)\s*(?:normal|clear|pending|done|negative|reviewed)?\s*$",
-    r"^\s*(?:patient\s+name|mrn|admission\s+date|discharge\s+date|admit\s+date|date\s+of\s+admission|date\s+of\s+discharge|dob|age|sex|gender)\s*[:\-–—]",
+    r"^\s*(?:patient\s+name|mrn|admission\s+date|discharge\s+date|admit\s+date|date\s+of\s+admission|date\s+of\s+discharge|dob|age|sex|gender|patient\s+encounter|encounter(?:\s+id|\s+number)?|attending\s+physician|service|department)\s*[:\-–—]",
     r"^\s*metastatic\s+sites?\s*(?::\s*)?$",
     r"^\s*(?:oncology\s+attributes?(?:\s*(?:&|and)?\s*biomarkers?)?|biomarkers?\s*(?:&|and)?\s*receptor\s+status)\s*(?::\s*)?$",
     r"^\s*castration[- ]resistant\s+status(?:\s+on.*)?$",
@@ -302,6 +302,16 @@ NORMAL_FINDING_PATTERNS = [
     r"\b(?:mobilized|ambulated|chest\s+physiotherapy|incentive\s+spirometry)\b",
 ]
 
+# 11. Narrative prose statements, full sentence descriptions, and clinical events (not diagnoses)
+NARRATIVE_PROSE_PATTERNS = [
+    r"^\s*(?:the\s+)?patient\s+(?:is|was|had|has|achieved|tolerated|underwent|received|complained|reported|presented|denies|denied|presents|noted)\b",
+    r"^\s*who\s+(?:presented|is|was|had|has|underwent|presents)\b",
+    r"^\s*(?:he|she|they)\s+(?:was|is|had|has|achieved|tolerated|underwent|received|complained|reported|presented)\b",
+    r"\b(?:was\s+transitioned|transitioned\s+to|fluid\s+reduction|closely\s+monitored|levels\s+and\s+renal|levels\s+were|were\s+closely\s+monitored|initiated\s+with\s+significant)\b",
+    r"^\s*(?:intensive\s+|routine\s+)?(?:intravenous\s+|oral\s+)?(?:diuresis|hydration|infusion|monitoring)\s+(?:was\s+)?(?:initiated|given|started)\b",
+    r"^\s*presented\s+(?:to|with)\s+",
+]
+
 
 class HardClinicalCandidateGate:
     """Deterministic clinical candidate gate enforcing Section 4 & Section 11 specifications."""
@@ -350,7 +360,7 @@ class HardClinicalCandidateGate:
 
         # Check 00c: Dangling fragment starting with verb, preposition, or conjunction
         if (
-            re.search(r"^\s*(?:was\s+noted\s+following|noted\s+following|following|and\s+a|and\s+an|and\s+the|with\s+a|with\s+an|is\s+seen\s+in|are\s+seen\s+in|were\s+seen\s+in|noted\s+to\s+have|found\s+to\s+have|and\s+a\s+non[\s\-]?obstructive|causing|composed\s+of|associated\s+with|associated|complaints\s+of|bouts\s+of)\b", term_lower)
+            re.search(r"^\s*(?:was\s+noted\s+following|noted\s+following|following|and\s+a|and\s+an|and\s+the|with\s+a|with\s+an|is\s+seen\s+in|are\s+seen\s+in|were\s+seen\s+in|noted\s+to\s+have|found\s+to\s+have|and\s+a\s+non[\s\-]?obstructive|causing|composed\s+of|associated\s+with|associated|complaints\s+of|bouts\s+of|unspecified\s+with)\b", term_lower)
             or re.search(r"^\s*(?:of|in|at|on|for|from|with|by|and|or|as|to|like)\s+", term_lower)
             or re.search(r"\b(?:was\s+noted\s+following|noted\s+following)\b", term_lower)
             or re.search(r"^\s*(?:extent\s+of|size\s+of|interval\s+(?:increase|decrease|change|progression)|increase\s+in|decrease\s+in|change\s+in)\b", term_lower)
@@ -399,6 +409,11 @@ class HardClinicalCandidateGate:
             if re.search(pat, term_lower):
                 return False, f"Non-clinical activity, everyday personal action, or household event: '{clean_term}'"
 
+        # Check 0a2: Narrative prose, sentence fragments, or event clauses
+        for pat in NARRATIVE_PROSE_PATTERNS:
+            if re.search(pat, term_lower):
+                return False, f"Narrative prose clause or clinical event description, not a clinical diagnosis entity: '{clean_term}'"
+
         # Check 0b: Generic procedural completion or intervention statements
         for pat in GENERIC_PROCEDURE_PATTERNS:
             if re.search(pat, term_lower):
@@ -408,9 +423,6 @@ class HardClinicalCandidateGate:
         for pat in NORMAL_FINDING_PATTERNS:
             if re.search(pat, term_lower):
                 return False, f"Normal examination finding, benign lab result, or routine care observation: '{clean_term}'"
-            if evidence_text and re.search(pat, evidence_text.lower()) and len(term_lower.split()) <= 4:
-                if any(w in term_lower for w in ["normal", "clear", "equal", "soft", "sterile", "negative", "stable", "wnl", "tolerated", "dressing"]):
-                    return False, f"Candidate evidence confirms normal examination finding or routine care: '{clean_term}'"
 
         # Check 1: Absence statements (both in term and documented evidence)
         for pat in ABSENCE_PATTERNS:

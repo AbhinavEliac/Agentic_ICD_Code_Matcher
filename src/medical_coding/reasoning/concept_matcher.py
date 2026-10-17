@@ -101,7 +101,7 @@ def compute_concept_match_score(
     )
     if not is_attr_valid:
         has_hard_fail = any(
-            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "hypertension", "hypotension", "shock", "anatomical site", "laterality", "quadrant"))
+            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "hypertension", "hypotension", "shock"))
             for u in unsupp
         )
         if has_hard_fail:
@@ -209,11 +209,12 @@ def compute_concept_match_score(
     )
     if not is_attr_valid:
         has_hard_fail = any(
-            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen", "anatomical site", "laterality", "quadrant"))
+            any(k in u.lower() for k in ("demographic", "perinatal", "neonatal", "pregnancy", "obstetric", "polarity", "contradictory", "mismatch", "pathogen"))
             for u in unsupp
         )
         if has_hard_fail:
-            return 0.0, f"disqualified by clinical contradiction: {', '.join(unsupp)}", False
+            base_score = 0.0
+            rationale_parts.append(f"disqualified by clinical contradiction: {', '.join(unsupp)}")
         else:
             base_score -= min(0.40, 0.15 * len(unsupp))
             rationale_parts.append(f"unsupported attributes: {', '.join(unsupp)}")
